@@ -32,11 +32,6 @@ export interface ScannerConfiguration {
   minimumScore: number;
 }
 
-export interface ScannerRiskContext {
-  riskBudget: number;
-  blockedReason: string | null;
-}
-
 export interface ScannerContribution {
   factor: string;
   weight: number;
@@ -98,14 +93,10 @@ export interface MarketScannerCandidate {
   status: 'READY' | 'WAIT' | 'STALE' | 'DATA_UNAVAILABLE';
   setup: {
     entryPrice: number;
-    quantity: number;
     initialStop: number;
-    trailingPercent: number;
     tp1: number;
     tp2: number;
     tp3: number;
-    estimatedRisk: number;
-    riskReward: [1, 2, 3];
   } | null;
   rationale: string;
   warnings: string[];
@@ -123,7 +114,7 @@ export interface MarketScannerResponse {
 }
 
 export interface MarketScannerProvider {
-  scan(config: ScannerConfiguration, risk: ScannerRiskContext): Promise<MarketScannerResponse>;
+  scan(config: ScannerConfiguration): Promise<MarketScannerResponse>;
 }
 
 export function calculateAtr(candles: MarketCandle[], period: number): number | null {
@@ -509,19 +500,9 @@ function createSetup(
   side: 'LONG' | 'SHORT',
   entryPrice: number,
   atr: number,
-  riskBudget: number,
 ): MarketScannerCandidate['setup'] {
-  if (
-    ![entryPrice, atr, riskBudget].every(Number.isFinite) ||
-    entryPrice <= 0 ||
-    atr <= 0 ||
-    riskBudget <= 0
-  ) {
-    return null;
-  }
+  if (![entryPrice, atr].every(Number.isFinite) || entryPrice <= 0 || atr <= 0) return null;
   const stopDistance = atr * 1.5;
-  const quantity = Number((riskBudget / stopDistance).toPrecision(8));
-  if (!Number.isFinite(quantity) || quantity <= 0) return null;
   const initialStop = side === 'LONG' ? entryPrice - stopDistance : entryPrice + stopDistance;
   const reward = stopDistance;
   const target = (multiple: number) =>
@@ -529,14 +510,10 @@ function createSetup(
   if (initialStop <= 0 || target(3) <= 0) return null;
   return {
     entryPrice,
-    quantity,
     initialStop,
-    trailingPercent: Math.min(25, Math.max(0.1, (stopDistance / entryPrice) * 100)),
     tp1: target(1),
     tp2: target(2),
     tp3: target(3),
-    estimatedRisk: Math.abs(entryPrice - initialStop) * quantity,
-    riskReward: [1, 2, 3],
   };
 }
 
@@ -549,7 +526,7 @@ export class BinanceMarketScannerService implements MarketScannerProvider {
     private readonly now: () => number = Date.now,
   ) {}
 
-  async scan(config: ScannerConfiguration, risk: ScannerRiskContext): Promise<MarketScannerResponse> {
+  async scan(config: ScannerConfiguration): Promise<MarketScannerResponse> {
     const snapshot = await this.markets.list();
     const eligibleMarkets = snapshot.symbols
       .filter(
@@ -610,7 +587,7 @@ export class BinanceMarketScannerService implements MarketScannerProvider {
       const results = await Promise.all(
         batch.map(async ({ market, ranks }) => {
           try {
-            return await this.analyzeMarket(market, snapshot.updatedAt, config, risk, [...ranks]);
+            return await this.analyzeMarket(market, snapshot.updatedAt, config, [...ranks]);
           } catch (error) {
             const message = error instanceof Error ? error.message : 'Unknown candle provider error.';
             return unavailableCandidate(market, config, [...ranks], `Candle data unavailable: ${message}`);
@@ -669,7 +646,6 @@ export class BinanceMarketScannerService implements MarketScannerProvider {
     },
     marketUpdatedAt: string,
     config: ScannerConfiguration,
-    risk: ScannerRiskContext,
     marketRank: MarketRank[],
   ): Promise<MarketScannerCandidate> {
     const candles = await this.getCandles(market.symbol, config.timeframe);
@@ -809,16 +785,12 @@ export class BinanceMarketScannerService implements MarketScannerProvider {
       warnings.unshift(
         'The nearest opposing support/resistance pivot is too close to the proposed first target.',
       );
-    } else if (risk.blockedReason) {
-      status = 'WAIT';
-      finalSide = 'WAIT';
-      warnings.unshift(risk.blockedReason);
     } else {
-      setup = createSetup(side, market.lastPrice!, indicator.atr, risk.riskBudget);
+      setup = createSetup(side, market.lastPrice!, indicator.atr);
       if (!setup) {
         status = 'WAIT';
         finalSide = 'WAIT';
-        warnings.unshift('A valid risk-bounded setup could not be calculated.');
+        warnings.unshift('Technical reference levels could not be calculated.');
       }
     }
 

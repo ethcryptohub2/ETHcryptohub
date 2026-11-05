@@ -176,6 +176,7 @@ export function createApp(
   options: {
     anonymousUserId?: string;
     bridgeSecret?: string;
+    paperTradingEnabled?: boolean;
     nearRpcRequest?: typeof fetch;
     nearNetwork?: NearNetwork;
     marketScannerService?: MarketScannerProvider;
@@ -187,7 +188,7 @@ export function createApp(
   const auth = new NearAuthService(db, options.nearRpcRequest, undefined, nearNetwork);
   const nearIntents = createNearIntentsAdapter();
   const marketScanner = options.marketScannerService ?? new BinanceMarketScannerService(marketsService);
-  const allowedOrigins = configuredAppOrigins();
+  const allowedOrigins = options.paperTradingEnabled ? configuredAppOrigins() : new Set<string>();
   const challengeRateLimit = createNearAuthRateLimiter(20);
   const loginRateLimit = createNearAuthRateLimiter(10);
   const app = express();
@@ -205,7 +206,7 @@ export function createApp(
     try {
       await db.query('SELECT 1');
       response.json({
-        data: { status: 'ok', mode: 'PAPER', database: 'connected', liveOrdersEnabled: false },
+        data: { status: 'ok', mode: 'MARKET_DATA_ONLY', database: 'connected', tradingEnabled: false },
       });
     } catch {
       response
@@ -213,6 +214,20 @@ export function createApp(
         .json({ error: { code: 'DATABASE_UNAVAILABLE', message: 'The Supabase database is unavailable.' } });
     }
   });
+
+  if (!options.paperTradingEnabled) {
+    app.use('/api', (request, response, next) => {
+      if (request.path === '/markets/futures-symbols' || request.path === '/market-scanner/candidates') {
+        return next();
+      }
+      return response.status(410).json({
+        error: {
+          code: 'FEATURE_DISABLED',
+          message: 'Paper-trading and wallet features are no longer available.',
+        },
+      });
+    });
+  }
 
   app.get('/api/auth/near/config', (_request, response) => {
     response.json({ data: { network: nearNetwork, rpcUrls: nearRpcUrls(nearNetwork) } });
@@ -287,7 +302,11 @@ export function createApp(
         error: { code: 'ORIGIN_NOT_ALLOWED', message: 'Request origin is not allowed.' },
       });
     }
-    if (request.path === '/auth/me' || request.path === '/markets/futures-symbols') return next();
+    if (
+      request.path === '/auth/me' ||
+      request.path === '/markets/futures-symbols' ||
+      request.path === '/market-scanner/candidates'
+    ) return next();
     if (options.anonymousUserId) {
       await ensureAnonymousPaperAccount(db, options.anonymousUserId);
       request.userId = options.anonymousUserId;
@@ -632,34 +651,8 @@ export function createApp(
     const parsed = marketScannerQuerySchema.safeParse(request.query);
     if (!parsed.success) return next(parsed.error);
     const config = { ...parsed.data, quoteAsset: parsed.data.quoteAsset.toUpperCase() };
-    const risk = getRisk(request);
-    const settings = await risk.get();
-    let blockedReason = settings.killSwitchEnabled
-      ? 'Risk Guardian kill switch is enabled; proposed setups are blocked.'
-      : (await risk.openPositionCount()) >= settings.maxOpenPositions
-        ? 'Risk Guardian maximum open-position limit has been reached.'
-        : (await risk.dailyRisk()).blocked
-          ? 'Risk Guardian daily loss limit is active; proposed setups are blocked.'
-          : null;
-    let riskBudget = (settings.paperEquity * settings.maxRiskPerTradePercent) / 100;
-    if (config.quoteAsset !== 'USDT') {
-      try {
-        const usdtPerQuoteUnit = await getUsdtRate(config.quoteAsset);
-        if (usdtPerQuoteUnit === null) {
-          blockedReason ??= `Risk conversion for ${config.quoteAsset} to USDT is unavailable; setup sizing is blocked.`;
-          riskBudget = 0;
-        } else {
-          riskBudget /= usdtPerQuoteUnit;
-        }
-      } catch (error) {
-        return next(error);
-      }
-    }
     try {
-      const result = await marketScanner.scan(config, {
-        riskBudget,
-        blockedReason,
-      });
+      const result = await marketScanner.scan(config);
       response.json({ data: result });
     } catch (error) {
       next(error);

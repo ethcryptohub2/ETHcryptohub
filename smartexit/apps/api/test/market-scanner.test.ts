@@ -151,12 +151,12 @@ describe('Binance market scanner service', () => {
       () => now,
     );
 
-    const result = await service.scan({ ...config, limit: 1 }, { riskBudget: 100, blockedReason: null });
+    const result = await service.scan({ ...config, limit: 1 });
 
     expect(result.candidates.map((candidate) => candidate.symbol).sort()).toEqual(['BTCUSDT', 'ETHUSDT']);
   });
 
-  it('uses completed candles only and creates directionally valid risk-bounded setup values', async () => {
+  it('uses completed candles only and creates directionally valid informational levels', async () => {
     const now = 241 * 60_000;
     const closedCandles = Array.from({ length: 240 }, (_, index) => candle(100 + index * 0.2, index));
     const unfinishedCandle: MarketCandle = {
@@ -170,7 +170,7 @@ describe('Binance market scanner service', () => {
     const fetcher: typeof fetch = async () =>
       new Response(JSON.stringify([...closedCandles.map(binanceRow), binanceRow(unfinishedCandle)]));
     const service = new BinanceMarketScannerService({ list: async () => snapshot(now) }, fetcher, () => now);
-    const result = await service.scan(config, { riskBudget: 100, blockedReason: null });
+    const result = await service.scan(config);
     const candidate = result.candidates[0]!;
 
     expect(result.status).toBe('LIVE');
@@ -193,7 +193,8 @@ describe('Binance market scanner service', () => {
     expect(candidate.setup!.entryPrice).toBeLessThan(candidate.setup!.tp1);
     expect(candidate.setup!.tp1).toBeLessThan(candidate.setup!.tp2);
     expect(candidate.setup!.tp2).toBeLessThan(candidate.setup!.tp3);
-    expect(candidate.setup!.estimatedRisk).toBeCloseTo(100, 4);
+    expect(candidate.setup).not.toHaveProperty('quantity');
+    expect(candidate.setup).not.toHaveProperty('estimatedRisk');
   });
 
   it('creates correctly ordered SHORT levels from a confirmed bearish trend', async () => {
@@ -208,7 +209,7 @@ describe('Binance market scanner service', () => {
       fetcher,
       () => now,
     );
-    const result = await service.scan(config, { riskBudget: 100, blockedReason: null });
+    const result = await service.scan(config);
     const candidate = result.candidates[0]!;
 
     expect(candidate.status).toBe('READY');
@@ -219,7 +220,8 @@ describe('Binance market scanner service', () => {
     expect(candidate.setup!.tp2).toBeLessThan(candidate.setup!.tp1);
     expect(candidate.setup!.tp1).toBeLessThan(candidate.setup!.entryPrice);
     expect(candidate.setup!.entryPrice).toBeLessThan(candidate.setup!.initialStop);
-    expect(candidate.setup!.estimatedRisk).toBeCloseTo(100, 4);
+    expect(candidate.setup).not.toHaveProperty('quantity');
+    expect(candidate.setup).not.toHaveProperty('estimatedRisk');
   });
 
   it('returns WAIT when the last completed candle exceeds the configured age', async () => {
@@ -227,10 +229,7 @@ describe('Binance market scanner service', () => {
     const closedCandles = Array.from({ length: 240 }, (_, index) => candle(100 + index * 0.2, index));
     const fetcher: typeof fetch = async () => new Response(JSON.stringify(closedCandles.map(binanceRow)));
     const service = new BinanceMarketScannerService({ list: async () => snapshot(now) }, fetcher, () => now);
-    const result = await service.scan(
-      { ...config, maxAgeSeconds: 180 },
-      { riskBudget: 100, blockedReason: null },
-    );
+    const result = await service.scan({ ...config, maxAgeSeconds: 180 });
 
     expect(result.status).toBe('DEGRADED');
     expect(result.candidates[0]?.status).toBe('STALE');
@@ -242,7 +241,7 @@ describe('Binance market scanner service', () => {
     const now = 241 * 60_000;
     const fetcher: typeof fetch = async () => new Response('[]', { status: 429 });
     const service = new BinanceMarketScannerService({ list: async () => snapshot(now) }, fetcher, () => now);
-    const result = await service.scan(config, { riskBudget: 100, blockedReason: null });
+    const result = await service.scan(config);
 
     expect(result.status).toBe('DEGRADED');
     expect(result.candidates[0]?.status).toBe('DATA_UNAVAILABLE');
@@ -251,19 +250,16 @@ describe('Binance market scanner service', () => {
     expect(result.candidates[0]?.warnings[0]).toContain('429');
   });
 
-  it('does not propose setups when Risk Guardian blocks new positions', async () => {
+  it('provides technical analysis without paper-account risk settings', async () => {
     const now = 241 * 60_000;
     const candles = Array.from({ length: 240 }, (_, index) => candle(100 + index * 0.2, index));
     const fetcher: typeof fetch = async () => new Response(JSON.stringify(candles.map(binanceRow)));
     const service = new BinanceMarketScannerService({ list: async () => snapshot(now) }, fetcher, () => now);
-    const result = await service.scan(config, {
-      riskBudget: 100,
-      blockedReason: 'Risk Guardian kill switch is enabled.',
-    });
+    const result = await service.scan(config);
 
-    expect(result.candidates[0]?.side).toBe('WAIT');
-    expect(result.candidates[0]?.setup).toBeNull();
-    expect(result.candidates[0]?.warnings[0]).toContain('kill switch');
+    expect(result.candidates[0]?.side).toBe('LONG');
+    expect(result.candidates[0]?.setup).not.toBeNull();
+    expect(result.candidates[0]?.setup).not.toHaveProperty('quantity');
   });
 
   it('includes top gainers and losers alongside the volume-ranked pool', async () => {
@@ -301,7 +297,7 @@ describe('Binance market scanner service', () => {
       async () => new Response(JSON.stringify(candles.map(binanceRow))),
       () => now,
     );
-    const result = await service.scan({ ...config, limit: 1 }, { riskBudget: 100, blockedReason: null });
+    const result = await service.scan({ ...config, limit: 1 });
     const candidates = new Map(result.candidates.map((candidate) => [candidate.symbol, candidate]));
 
     expect(candidates.size).toBe(3);

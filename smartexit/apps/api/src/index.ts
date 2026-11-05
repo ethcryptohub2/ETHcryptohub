@@ -8,7 +8,7 @@ const port = Number(process.env.PORT ?? 3001);
 const host = configuredApiHost();
 const { app, db } = createApp();
 const server = app.listen(port, host, () => {
-  console.log(`SmartExit PAPER API listening at http://${host}:${port}`);
+  console.log(`Market data API listening at http://${host}:${port}`);
 });
 
 for (const signal of ['SIGINT', 'SIGTERM'] as const) {

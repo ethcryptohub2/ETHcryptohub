@@ -31,7 +31,15 @@ function toBase58(bytes: Buffer): string {
 function setup() {
   const db = openTestDatabase();
   databases.push(db);
-  return { db, app: createApp(db, undefined, { anonymousUserId: 'test-user' }).app };
+  return { db, app: createLegacyApp(db, undefined, { anonymousUserId: 'test-user' }).app };
+}
+
+function createLegacyApp(
+  db: ReturnType<typeof openTestDatabase>,
+  markets?: Parameters<typeof createApp>[1],
+  options: Parameters<typeof createApp>[2] = {},
+) {
+  return createApp(db, markets, { ...options, paperTradingEnabled: true });
 }
 
 function ethcryptohubBridgeHeaders(
@@ -81,7 +89,18 @@ afterEach(() => {
   for (const db of databases.splice(0)) void db.close();
 });
 
-describe('SmartExit paper trading API', () => {
+describe('market data API and disabled legacy routes', () => {
+  it('disables paper-trading and wallet routes by default', async () => {
+    const db = openTestDatabase();
+    databases.push(db);
+    const app = createApp(db).app;
+
+    await request(app).get('/api/trades').expect(410);
+    await request(app).get('/api/portfolio').expect(410);
+    await request(app).get('/api/risk').expect(410);
+    await request(app).post('/api/auth/near/challenge').expect(410);
+  });
+
   it('uses a configurable listener host with secure Supabase TLS settings', () => {
     expect(configuredApiHost({})).toBe('127.0.0.1');
     expect(configuredApiHost({ HOST: '0.0.0.0' })).toBe('0.0.0.0');
@@ -169,7 +188,7 @@ describe('SmartExit paper trading API', () => {
   it('exposes the configured NEAR network to the wallet client', async () => {
     const db = openTestDatabase();
     databases.push(db);
-    const app = createApp(db, undefined, { nearNetwork: 'testnet' }).app;
+    const app = createLegacyApp(db, undefined, { nearNetwork: 'testnet' }).app;
     await request(app)
       .get('/api/auth/near/config')
       .expect(200)
@@ -196,7 +215,7 @@ describe('SmartExit paper trading API', () => {
   it('only issues NEAR login challenges for allowed app origins and matching recipients', async () => {
     const db = openTestDatabase();
     databases.push(db);
-    const app = createApp(db).app;
+    const app = createLegacyApp(db).app;
     await request(app)
       .post('/api/auth/near/challenge')
       .set('Origin', 'https://attacker.example')
@@ -222,7 +241,7 @@ describe('SmartExit paper trading API', () => {
   it('rate limits repeated NEAR challenge requests by client IP', async () => {
     const db = openTestDatabase();
     databases.push(db);
-    const app = createApp(db).app;
+    const app = createLegacyApp(db).app;
     for (let attempt = 0; attempt < 20; attempt += 1) {
       await request(app)
         .post('/api/auth/near/challenge')
@@ -242,7 +261,7 @@ describe('SmartExit paper trading API', () => {
   it('rate limits NEAR login proof verification by client IP', async () => {
     const db = openTestDatabase();
     databases.push(db);
-    const app = createApp(db).app;
+    const app = createLegacyApp(db).app;
     const proof = {
       challengeId: randomUUID(),
       accountId: 'rate-limit.testnet',
@@ -279,7 +298,7 @@ describe('SmartExit paper trading API', () => {
       userId,
       new Date(Date.now() + 60_000).toISOString(),
     );
-    const app = createApp(db).app;
+    const app = createLegacyApp(db).app;
     await request(app)
       .post('/api/auth/logout')
       .set('Cookie', `smartexit_session=${token}`)
@@ -350,7 +369,7 @@ describe('SmartExit paper trading API', () => {
   it('requires an authenticated paper account for portfolio and trade data', async () => {
     const db = openTestDatabase();
     databases.push(db);
-    const app = createApp(db).app;
+    const app = createLegacyApp(db).app;
     await request(app)
       .get('/api/auth/me')
       .expect(200)
@@ -360,14 +379,13 @@ describe('SmartExit paper trading API', () => {
     await request(app).get('/api/trades').expect(401);
     await request(app).get('/api/portfolio').expect(401);
     await request(app).post('/api/portfolio/reset').expect(401);
-    await request(app).get('/api/market-scanner/candidates').expect(401);
   });
 
   it('authenticates PHP users through signed requests and isolates their paper portfolios', async () => {
     const db = openTestDatabase();
     databases.push(db);
     const secret = 'a'.repeat(64);
-    const app = createApp(db, undefined, { bridgeSecret: secret }).app;
+    const app = createLegacyApp(db, undefined, { bridgeSecret: secret }).app;
 
     await request(app)
       .get('/api/auth/me')
@@ -415,7 +433,7 @@ describe('SmartExit paper trading API', () => {
 
   it('resets only the authenticated paper portfolio and restores its default balance atomically', async () => {
     const { db, app } = setup();
-    const otherAccount = createApp(db, undefined, { anonymousUserId: 'other-user' }).app;
+    const otherAccount = createLegacyApp(db, undefined, { anonymousUserId: 'other-user' }).app;
     await request(app).put('/api/portfolio/balance').send({ startingBalance: 25000 }).expect(200);
     await request(app)
       .put('/api/risk')
@@ -464,7 +482,7 @@ describe('SmartExit paper trading API', () => {
     expect((await request(otherAccount).get('/api/portfolio')).body.data.startingBalance).toBe(10000);
   });
 
-  it('scopes market-scanner proposals to the authenticated Risk Guardian limits', async () => {
+  it('serves informational market-scanner data without paper-account risk settings', async () => {
     const db = openTestDatabase();
     databases.push(db);
     const scanner = {
@@ -488,38 +506,20 @@ describe('SmartExit paper trading API', () => {
         candidates: [],
       })),
     };
-    const app = createApp(db, undefined, {
-      anonymousUserId: 'scanner-user',
+    const app = createLegacyApp(db, undefined, {
       marketScannerService: scanner,
     }).app;
 
     await request(app).get('/api/market-scanner/candidates').expect(200);
     expect(scanner.scan).toHaveBeenCalledWith(
       expect.objectContaining({ quoteAsset: 'USDT', timeframe: '15m' }),
-      expect.objectContaining({ riskBudget: 100, blockedReason: null }),
-    );
-
-    await request(app)
-      .put('/api/risk')
-      .send({
-        paperEquity: 10000,
-        maxOpenPositions: 3,
-        maxRiskPerTradePercent: 1,
-        maxDailyLossPercent: 3,
-        killSwitchEnabled: true,
-      })
-      .expect(200);
-    await request(app).get('/api/market-scanner/candidates').expect(200);
-    expect(scanner.scan).toHaveBeenLastCalledWith(
-      expect.any(Object),
-      expect.objectContaining({ blockedReason: expect.stringContaining('kill switch') }),
     );
     await request(app).get('/api/market-scanner/candidates?timeframe=1m').expect(400);
   });
 
   it('isolates each paper account and updates its portfolio when automated paper exits trigger', async () => {
     const { db, app } = setup();
-    const otherAccount = createApp(db, undefined, { anonymousUserId: 'other-user' }).app;
+    const otherAccount = createLegacyApp(db, undefined, { anonymousUserId: 'other-user' }).app;
     const created = await request(app).post('/api/trades').send(longTrade()).expect(201);
     expect((await request(otherAccount).get('/api/trades')).body.data).toHaveLength(0);
 
@@ -565,7 +565,7 @@ describe('SmartExit paper trading API', () => {
         },
       ],
     };
-    const app = createApp(db, { list: async () => snapshot }, { anonymousUserId: 'test-user' }).app;
+    const app = createLegacyApp(db, { list: async () => snapshot }, { anonymousUserId: 'test-user' }).app;
     const created = await request(app)
       .post('/api/trades')
       .send(longTrade({ symbol: 'ETHBTC', quoteAsset: 'BTC', initialStop: 9999 }))
@@ -591,14 +591,14 @@ describe('SmartExit paper trading API', () => {
     );
   });
 
-  it('reports paper mode and a connected database', async () => {
+  it('reports informational market-data mode and a connected database', async () => {
     const { app } = setup();
     const response = await request(app).get('/api/health').expect(200);
     expect(response.body.data).toMatchObject({
       status: 'ok',
-      mode: 'PAPER',
+      mode: 'MARKET_DATA_ONLY',
       database: 'connected',
-      liveOrdersEnabled: false,
+      tradingEnabled: false,
     });
   });
 
@@ -759,7 +759,7 @@ describe('SmartExit paper trading API', () => {
   it('preserves open positions and risk settings across API instances', async () => {
     const db = openTestDatabase();
     databases.push(db);
-    const firstApp = createApp(db, undefined, { anonymousUserId: 'test-user' }).app;
+    const firstApp = createLegacyApp(db, undefined, { anonymousUserId: 'test-user' }).app;
     const created = await request(firstApp).post('/api/trades').send(longTrade()).expect(201);
     const tradeId = created.body.data.id as string;
     await request(firstApp)
@@ -772,7 +772,7 @@ describe('SmartExit paper trading API', () => {
         killSwitchEnabled: false,
       })
       .expect(200);
-    const secondApp = createApp(db, undefined, { anonymousUserId: 'test-user' }).app;
+    const secondApp = createLegacyApp(db, undefined, { anonymousUserId: 'test-user' }).app;
     const loaded = await request(secondApp).get(`/api/trades/${tradeId}`).expect(200);
     expect(loaded.body.data.status).toBe('OPEN');
     expect(loaded.body.data.currentPrice).toBe(10000);
@@ -883,7 +883,7 @@ describe('SmartExit paper trading API', () => {
       ],
     };
     const { db } = setup();
-    const app = createApp(db, { list: async () => snapshot }).app;
+    const app = createLegacyApp(db, { list: async () => snapshot }).app;
     const response = await request(app)
       .get('/api/markets/futures-symbols?quoteAsset=USDT&minimumVolume=1000000&search=ETH')
       .expect(200);

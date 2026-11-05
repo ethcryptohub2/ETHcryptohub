@@ -2,7 +2,10 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
-import type { MarketScannerResponse, ScannerCandidate } from '../../smartexit/apps/web/src/api';
+import type {
+  MarketScannerCandidate as ScannerCandidate,
+  MarketScannerResponse,
+} from '../../smartexit/apps/api/src/services/market-scanner';
 
 export function Scanner() {
   const [data, setData] = useState<MarketScannerResponse | null>(null);
@@ -32,13 +35,13 @@ export function Scanner() {
   const ready = (data?.candidates ?? []).filter((item) => item.status === 'READY' && item.setup);
   return <main className="shell">
     <header className="topbar"><Link className="brand" href="/">ETHCRYPTOHUB</Link><nav className="links"><Link href="/dashboard">Dashboard</Link><Link href="/settings">Settings</Link><button onClick={() => void load()} disabled={loading}>{loading ? 'Scanning…' : 'Refresh'}</button></nav></header>
-    <section className="hero"><p className="mono">BINANCE USDⓈ-M FUTURES · LIVE PUBLIC DATA</p><h1>Market scanner.</h1><p className="muted">Completed-candle technical setups. Review-only; no live orders are placed.</p></section>
+    <section className="hero"><p className="mono">BINANCE USDⓈ-M FUTURES · LIVE PUBLIC DATA</p><h1>Market scanner.</h1><p className="muted">Technical indicators and reference levels from completed candles, for information only.</p></section>
     <section className="card stack">
       <div className="links"><label>Timeframe<select value={timeframe} onChange={(event) => setTimeframe(event.target.value as ScannerCandidate['timeframe'])}><option value="5m">5 minutes</option><option value="15m">15 minutes</option><option value="1h">1 hour</option><option value="4h">4 hours</option></select></label><span className="mono">{data ? `${ready.length} READY · ${data.status}` : 'CONNECTING'}</span><span className="mono">{data ? `Updated ${new Date(data.updatedAt).toLocaleTimeString()}` : ''}</span></div>
       {error && <div role="alert" className="error"><strong>Live scanner data unavailable</strong><br />{error}</div>}
       {!error && loading && !data && <p className="muted">Loading Binance market data…</p>}
       {data && ready.length === 0 && <p className="muted">No valid READY setups now. No trade is the correct outcome when criteria are not met.</p>}
-      {ready.length > 0 && <div style={{ overflowX: 'auto' }}><table className="scan-table"><thead><tr><th>Pair</th><th>Side</th><th>Price</th><th>Score</th><th>Stop</th><th>TP1 / TP2 / TP3</th><th>Risk</th></tr></thead><tbody>{ready.map((item) => <tr key={item.symbol}><td>{item.symbol}</td><td>{item.side}</td><td>{item.price?.toLocaleString(undefined, { maximumFractionDigits: 8 })}</td><td>{item.score.value}/100</td><td>{item.setup?.initialStop.toLocaleString(undefined, { maximumFractionDigits: 8 })}</td><td>{item.setup?.tp1.toPrecision(6)} / {item.setup?.tp2.toPrecision(6)} / {item.setup?.tp3.toPrecision(6)}</td><td>{item.setup?.estimatedRisk.toFixed(2)} USDT</td></tr>)}</tbody></table></div>}
+      {ready.length > 0 && <div style={{ overflowX: 'auto' }}><table className="scan-table"><thead><tr><th>Pair</th><th>Direction</th><th>Price</th><th>Score</th><th>Reference stop</th><th>Reference levels (1 / 2 / 3)</th></tr></thead><tbody>{ready.map((item) => <tr key={item.symbol}><td>{item.symbol}</td><td>{item.side}</td><td>{item.price?.toLocaleString(undefined, { maximumFractionDigits: 8 })}</td><td>{item.score.value}/100</td><td>{item.setup?.initialStop.toLocaleString(undefined, { maximumFractionDigits: 8 })}</td><td>{item.setup?.tp1.toPrecision(6)} / {item.setup?.tp2.toPrecision(6)} / {item.setup?.tp3.toPrecision(6)}</td></tr>)}</tbody></table></div>}
     </section>
   </main>;
 }
