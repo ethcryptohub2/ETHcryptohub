@@ -29,6 +29,7 @@ The application no longer uses a PHP origin, PHP proxy, MySQL database, or PHP r
 | `SUPABASE_DB_URL` | PostgreSQL connection string; or use the `SUPABASE_DB_HOST`, `SUPABASE_DB_PORT`, `SUPABASE_DB_NAME`, `SUPABASE_DB_USER`, and `SUPABASE_DB_PASSWORD` variables |
 | `SUPABASE_DB_SSLMODE` | `require` enables TLS encryption without certificate verification; unset to verify the server certificate using Node's trusted CAs |
 | `AUTH_SECRET` | At least 32 random characters |
+| `APP_URL` | Optional canonical public app origin for activation links, e.g. `https://cryptohub.vercel.app`; defaults to Vercel's production host |
 | `GMAIL_USER` | Gmail address used as the verification-email sender (optional if using Resend) |
 | `GMAIL_APP_PASSWORD` | Google App Password for `GMAIL_USER`; requires Google 2-Step Verification. Never use your normal Google password. |
 | `GMAIL_SMTP_PORT` | Optional Gmail SMTP port: `465` (SSL, default) or `587` (STARTTLS) |

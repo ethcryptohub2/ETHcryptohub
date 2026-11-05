@@ -10,7 +10,31 @@ type MailTransportFailure = Error & {
   responseCode?: number;
 };
 
+function verificationLink(email: string, code: string) {
+  const configuredOrigin = process.env.APP_URL?.trim();
+  const productionHost = process.env.VERCEL_PROJECT_PRODUCTION_URL?.trim();
+  const deploymentHost = process.env.VERCEL_URL?.trim();
+  const origin = configuredOrigin
+    || (productionHost ? `https://${productionHost}` : deploymentHost ? `https://${deploymentHost}` : 'http://localhost:3000');
+  let url: URL;
+  try {
+    url = new URL('/verify-email', origin);
+  } catch {
+    throw new EmailDeliveryError('APP_URL must be a valid HTTP or HTTPS origin.');
+  }
+  if (url.protocol !== 'https:' && url.hostname !== 'localhost') {
+    throw new EmailDeliveryError('APP_URL must use HTTPS in production.');
+  }
+  url.searchParams.set('email', email);
+  url.searchParams.set('code', code);
+  return url.toString();
+}
+
 export async function sendVerificationCode(email: string, code: string) {
+  const verifyUrl = verificationLink(email, code);
+  const text = `Your verification code is ${code}. It expires in 10 minutes.\n\nActivate your account: ${verifyUrl}`;
+  const htmlLink = verifyUrl.replace(/&/g, '&amp;');
+  const html = `<p>Your verification code is <strong>${code}</strong>. It expires in 10 minutes.</p><p><a href="${htmlLink}">Activate your ETHcryptohub account</a></p>`;
   const gmailUser = process.env.GMAIL_USER?.trim();
   const gmailAppPassword = process.env.GMAIL_APP_PASSWORD?.replace(/\s/g, '');
   if (gmailUser || gmailAppPassword) {
@@ -39,7 +63,8 @@ export async function sendVerificationCode(email: string, code: string) {
         from: { name: 'ETHcryptohub', address: gmailUser },
         to: email,
         subject: 'Your ETHcryptohub verification code',
-        text: `Your verification code is ${code}. It expires in 10 minutes.`,
+        text,
+        html,
       });
       return;
     } catch (error) {
@@ -77,7 +102,8 @@ export async function sendVerificationCode(email: string, code: string) {
         from,
         to: [email],
         subject: 'Your ETHcryptohub verification code',
-        text: `Your verification code is ${code}. It expires in 10 minutes.`,
+        text,
+        html,
       }),
       signal: AbortSignal.timeout(10_000),
     });

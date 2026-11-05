@@ -2,6 +2,8 @@
 
 ETHcryptohub sends a six-digit activation code after signup. Configure one email provider using server-side environment variables in `.env.local` for local development or in Vercel project settings for production.
 
+- `APP_URL`: optional public app origin used for activation links, such as `https://cryptohub.vercel.app`. Vercel's production host is used automatically if this is unset.
+
 For Gmail SMTP:
 
 - `GMAIL_USER`: the Gmail address used as the sender.

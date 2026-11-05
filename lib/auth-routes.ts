@@ -89,7 +89,12 @@ export async function authRoute(action: string, request: NextRequest) {
       if (!user || !(await bcrypt.compare(body.password, user.password_hash))) {
         return jsonError('Email or password is incorrect.', 401);
       }
-      if (Number(user.is_email_verified) !== 1) return jsonError('Verify your email before signing in.', 403);
+      if (Number(user.is_email_verified) !== 1) {
+        return NextResponse.json(
+          { error: 'Verify your email to continue.', code: 'EMAIL_NOT_VERIFIED' },
+          { status: 403, headers: { 'Cache-Control': 'no-store' } },
+        );
+      }
       if (Number(user.is_active) !== 1) return jsonError('This account is currently unavailable.', 403);
       await query('UPDATE public.users SET last_login = NOW() WHERE id = $1', [user.id]);
       await createSession(user.id);

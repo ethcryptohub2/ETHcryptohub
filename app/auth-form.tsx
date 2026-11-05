@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, type FormEvent } from 'react';
+import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 
@@ -14,19 +14,29 @@ async function csrf() {
 export function AuthForm({
   mode,
   initialEmail = '',
+  initialCode = '',
   emailVerified = false,
 }: {
   mode: 'signup' | 'login' | 'verify' | 'resend';
   initialEmail?: string;
+  initialCode?: string;
   emailVerified?: boolean;
 }) {
   const router = useRouter();
+  const formRef = useRef<HTMLFormElement>(null);
+  const autoSubmittedCode = useRef('');
   const [email, setEmail] = useState(initialEmail);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
   const [busy, setBusy] = useState(false);
   const [signupComplete, setSignupComplete] = useState(false);
   const [canResend, setCanResend] = useState(false);
+
+  useEffect(() => {
+    if (mode !== 'verify' || !initialEmail || !/^[0-9]{6}$/.test(initialCode) || autoSubmittedCode.current === initialCode) return;
+    autoSubmittedCode.current = initialCode;
+    formRef.current?.requestSubmit();
+  }, [initialCode, initialEmail, mode]);
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -53,6 +63,10 @@ export function AuthForm({
       };
       if (!response.ok) {
         if (result.code === 'EMAIL_DELIVERY_FAILED') setCanResend(true);
+        if (mode === 'login' && result.code === 'EMAIL_NOT_VERIFIED') {
+          router.push(`/verify-email?email=${encodeURIComponent(email)}`);
+          return;
+        }
         throw new Error(result.error ?? 'Request could not be completed.');
       }
       if (mode === 'signup') {
@@ -83,7 +97,7 @@ export function AuthForm({
       {error && <p role="alert" className="error">{error}</p>}
       {canResend && <p><Link href={`/resend-verification?email=${encodeURIComponent(email)}`}>Request another verification email</Link></p>}
       {notice && <p role="status" className="success">{notice}</p>}
-      <form className="stack" onSubmit={submit}>
+      <form ref={formRef} className="stack" onSubmit={submit}>
         <label>Email<input name="email" type="email" required maxLength={255} autoComplete="email" value={email} onChange={(event) => setEmail(event.target.value)} /></label>
         {mode === 'signup' && <>
           <label>Password<input name="password" type="password" required minLength={8} maxLength={72} autoComplete="new-password" /></label>
@@ -94,7 +108,7 @@ export function AuthForm({
           </div>
         </>}
         {mode === 'login' && <label>Password<input name="password" type="password" required maxLength={72} autoComplete="current-password" /></label>}
-        {mode === 'verify' && <label>Six-digit code<input name="code" inputMode="numeric" pattern="[0-9]{6}" minLength={6} maxLength={6} required autoComplete="one-time-code" /></label>}
+        {mode === 'verify' && <label>Six-digit code<input name="code" inputMode="numeric" pattern="[0-9]{6}" minLength={6} maxLength={6} required autoComplete="one-time-code" defaultValue={initialCode} /></label>}
         <button disabled={busy}>{busy ? 'Please wait…' : mode === 'signup' ? 'Create account' : mode === 'login' ? 'Sign in' : mode === 'verify' ? 'Verify email' : 'Send new code'}</button>
       </form>
       <p className="form-footer">{mode === 'signup' ? <>Already registered? <a href="/login">Sign in</a></> : mode === 'login' ? <>New to ETHcryptohub? <a href="/signup">Create an account</a><br /><a href="/resend-verification">Resend verification code</a></> : <> <a href="/login">Back to sign in</a></>}</p>
