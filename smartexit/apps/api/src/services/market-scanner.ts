@@ -1,7 +1,8 @@
 import { z } from 'zod';
-import type { FuturesMarketsProvider } from './binance-futures-markets.js';
+import type { FuturesMarketSnapshot, FuturesMarketsProvider } from './binance-futures-markets.js';
 
 const BINANCE_FUTURES_BASE_URL = 'https://fapi.binance.com';
+const BYBIT_BASE_URL = 'https://api.bybit.com';
 const CANDLE_CACHE_MS = 15_000;
 const REQUEST_TIMEOUT_MS = 10_000;
 const CANDLE_LIMIT = 400;
@@ -11,6 +12,11 @@ const EXCLUDED_BASE_ASSETS = new Set(['USDC', 'BUSD', 'TUSD', 'FDUSD', 'USDP', '
 const LEVERAGED_SUFFIXES = ['UP', 'DOWN', 'BULL', 'BEAR', '2L', '2S', '3L', '3S'];
 
 const candleRowSchema = z.array(z.union([z.string(), z.number()])).min(7);
+
+function intervalMilliseconds(timeframe: ScannerConfiguration['timeframe']): number {
+  const minutes = timeframe === '5m' ? 5 : timeframe === '15m' ? 15 : timeframe === '1h' ? 60 : 240;
+  return minutes * 60_000;
+}
 
 export interface MarketCandle {
   openTime: number;
@@ -103,8 +109,8 @@ export interface MarketScannerCandidate {
 }
 
 export interface MarketScannerResponse {
-  exchange: 'BINANCE';
-  market: 'USDⓈ-M FUTURES';
+  exchange: FuturesMarketSnapshot['exchange'];
+  market: FuturesMarketSnapshot['market'];
   source: string;
   updatedAt: string;
   timeframe: ScannerConfiguration['timeframe'];
@@ -553,7 +559,7 @@ export class BinanceMarketScannerService implements MarketScannerProvider {
         else rankedMarkets.set(market.symbol, { market, ranks: new Set([rank]) });
       }
     };
-    addRankedMarkets(eligibleMarkets, 'TOP_VOLUME');
+    addRankedMarkets(eligibleMarkets.slice(0, config.limit), 'TOP_VOLUME');
     const gainers = eligibleMarkets.filter(
       (market) => market.priceChangePercent24h !== null && market.priceChangePercent24h > 0,
     );
@@ -587,7 +593,7 @@ export class BinanceMarketScannerService implements MarketScannerProvider {
       const results = await Promise.all(
         batch.map(async ({ market, ranks }) => {
           try {
-            return await this.analyzeMarket(market, snapshot.updatedAt, config, [...ranks]);
+            return await this.analyzeMarket(market, snapshot.updatedAt, config, [...ranks], snapshot.exchange);
           } catch (error) {
             const message = error instanceof Error ? error.message : 'Unknown candle provider error.';
             return unavailableCandidate(market, config, [...ranks], `Candle data unavailable: ${message}`);
@@ -605,9 +611,9 @@ export class BinanceMarketScannerService implements MarketScannerProvider {
       (candidate) => candidate.status === 'DATA_UNAVAILABLE' || candidate.status === 'STALE',
     );
     return {
-      exchange: 'BINANCE',
-      market: 'USDⓈ-M FUTURES',
-      source: `${BINANCE_FUTURES_BASE_URL}/fapi/v1/klines and /fapi/v1/ticker/24hr`,
+      exchange: snapshot.exchange,
+      market: snapshot.market,
+      source: snapshot.source,
       updatedAt: new Date(this.now()).toISOString(),
       timeframe: config.timeframe,
       configuration: config,
@@ -619,20 +625,59 @@ export class BinanceMarketScannerService implements MarketScannerProvider {
   private async getCandles(
     symbol: string,
     timeframe: ScannerConfiguration['timeframe'],
+    preferredExchange: FuturesMarketSnapshot['exchange'],
   ): Promise<MarketCandle[]> {
-    const key = `${symbol}:${timeframe}`;
+    const key = `${preferredExchange}:${symbol}:${timeframe}`;
     const cached = this.candleCache.get(key);
     if (cached && cached.expiresAt > this.now()) return cached.candles;
-    const url = new URL(`${BINANCE_FUTURES_BASE_URL}/fapi/v1/klines`);
-    url.searchParams.set('symbol', symbol);
-    url.searchParams.set('interval', timeframe);
-    url.searchParams.set('limit', String(CANDLE_LIMIT));
-    const response = await this.request(url, { signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS) });
-    if (!response.ok) throw new Error(`Binance candle request failed (${response.status}).`);
-    const candles = parseCandles(await response.json());
-    if (!candles || candles.length === 0) throw new Error('Binance returned malformed candle data.');
-    this.candleCache.set(key, { expiresAt: this.now() + CANDLE_CACHE_MS, candles });
-    return candles;
+    const providers = preferredExchange === 'BYBIT' ? ['BYBIT', 'BINANCE'] as const : ['BINANCE', 'BYBIT'] as const;
+    const failures: string[] = [];
+    for (const provider of providers) {
+      try {
+        const url = new URL(provider === 'BYBIT'
+          ? `${BYBIT_BASE_URL}/v5/market/kline`
+          : `${BINANCE_FUTURES_BASE_URL}/fapi/v1/klines`);
+        if (provider === 'BYBIT') {
+          url.searchParams.set('category', 'linear');
+          url.searchParams.set('interval', timeframe === '1h' ? '60' : timeframe === '4h' ? '240' : timeframe.slice(0, -1));
+        } else {
+          url.searchParams.set('interval', timeframe);
+        }
+        url.searchParams.set('symbol', symbol);
+        url.searchParams.set('limit', String(CANDLE_LIMIT));
+        const response = await this.request(url, { signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS) });
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        const body = await response.json();
+        let candles: MarketCandle[] | null;
+        if (provider === 'BYBIT') {
+          const parsed = z.object({
+            retCode: z.literal(0),
+            result: z.object({ list: z.array(candleRowSchema) }),
+          }).safeParse(body);
+          candles = parsed.success
+            ? parsed.data.result.list.map((row) => ({
+                openTime: Number(row[0]),
+                high: Number(row[2]),
+                low: Number(row[3]),
+                close: Number(row[4]),
+                volume: Number(row[5]),
+                closeTime: Number(row[0]) + intervalMilliseconds(timeframe) - 1,
+              })).sort((left, right) => left.openTime - right.openTime)
+            : null;
+        } else {
+          candles = parseCandles(body);
+        }
+        if (!candles?.length || candles.some((candle) =>
+          ![candle.openTime, candle.high, candle.low, candle.closeTime].every(Number.isFinite) ||
+          ![candle.high, candle.low, candle.close, candle.volume].every(Number.isFinite)
+        )) throw new Error('invalid candle response');
+        this.candleCache.set(key, { expiresAt: this.now() + CANDLE_CACHE_MS, candles });
+        return candles;
+      } catch (error) {
+        failures.push(`${provider}: ${error instanceof Error ? error.message : 'unknown error'}`);
+      }
+    }
+    throw new Error(`Candle data is unavailable from public futures providers (${failures.join('; ')}).`);
   }
 
   private async analyzeMarket(
@@ -647,8 +692,9 @@ export class BinanceMarketScannerService implements MarketScannerProvider {
     marketUpdatedAt: string,
     config: ScannerConfiguration,
     marketRank: MarketRank[],
+    exchange: FuturesMarketSnapshot['exchange'],
   ): Promise<MarketScannerCandidate> {
-    const candles = await this.getCandles(market.symbol, config.timeframe);
+    const candles = await this.getCandles(market.symbol, config.timeframe, exchange);
     const now = this.now();
     const closedCandles = candles.filter((candle) => candle.closeTime < now);
     const indicator = calculateSupertrend(closedCandles, config.atrPeriod, config.multiplier);

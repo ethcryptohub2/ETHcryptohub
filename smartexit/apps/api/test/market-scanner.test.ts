@@ -126,7 +126,24 @@ describe('market scanner indicators', () => {
 });
 
 describe('Binance market scanner service', () => {
-  it('scans every eligible USDT perpetual even when the legacy limit is lower', async () => {
+  it('falls back to Binance candles when the selected public exchange candle request fails', async () => {
+    const now = 241 * 60_000;
+    const closedCandles = Array.from({ length: 240 }, (_, index) => candle(100 + index * 0.2, index));
+    const market = snapshot(now);
+    const fetcher: typeof fetch = async (input) => {
+      if (String(input).includes('api.bybit.com')) return new Response('unavailable', { status: 503 });
+      return new Response(JSON.stringify(closedCandles.map(binanceRow)));
+    };
+    const bybitSnapshot = { ...market, exchange: 'BYBIT' as const, market: 'USDT LINEAR PERPETUALS' as const };
+    const service = new BinanceMarketScannerService({ list: async () => bybitSnapshot }, fetcher, () => now);
+
+    const result = await service.scan(config);
+
+    expect(result.exchange).toBe('BYBIT');
+    expect(result.candidates[0]?.status).toBe('READY');
+  });
+
+  it('limits top-volume results while including the leading gainers and losers', async () => {
     const now = 241 * 60_000;
     const closedCandles = Array.from({ length: 240 }, (_, index) => candle(100 + index * 0.2, index));
     const markets = snapshot(now);
@@ -154,6 +171,29 @@ describe('Binance market scanner service', () => {
     const result = await service.scan({ ...config, limit: 1 });
 
     expect(result.candidates.map((candidate) => candidate.symbol).sort()).toEqual(['BTCUSDT', 'ETHUSDT']);
+  });
+
+  it('bounds candle requests to the configured market limit plus the top mover lists', async () => {
+    const now = 241 * 60_000;
+    const markets = snapshot(now);
+    const neutralMarket = { ...markets.symbols[0]!, symbol: 'NEUTRALUSDT', baseAsset: 'NEUTRAL', priceChangePercent24h: 0, quoteVolume24h: 50_000_000 };
+    const movers = Array.from({ length: 20 }, (_, index) => ({
+      ...markets.symbols[0]!,
+      symbol: `COIN${index}USDT`,
+      baseAsset: `COIN${index}`,
+      priceChangePercent24h: index < 10 ? index + 1 : -(index - 9),
+      quoteVolume24h: 20_000_000,
+    }));
+    const request = async () => new Response('[]');
+    const service = new BinanceMarketScannerService(
+      { list: async () => ({ ...markets, symbols: [neutralMarket, ...movers] }) },
+      request as typeof fetch,
+      () => now,
+    );
+
+    const result = await service.scan({ ...config, limit: 1 });
+
+    expect(result.candidates).toHaveLength(11);
   });
 
   it('uses completed candles only and creates directionally valid informational levels', async () => {

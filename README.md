@@ -1,12 +1,13 @@
 # ETHcryptohub
 
-ETHcryptohub is a Next.js 16 application for account verification, user settings, administration, Binance USDⓈ-M market information, and technical scanning.
+ETHcryptohub is a Next.js 16 application for account verification, user settings, administration, public futures market information, and technical scanning.
 
 - Next.js App Router, React, and TypeScript; no PHP runtime or `.php` routes.
 - PostgreSQL on Supabase, accessed server-side with parameterized queries.
 - Email verification through Resend; password hashes use bcrypt.
 - User sessions are stored as hashes in PostgreSQL and protected by secure, HTTP-only cookies.
 - Binance API credentials are encrypted at rest. The Binance integration is read-only; live order submission is disabled.
+- The scanner uses Bybit linear-perpetual data first and Binance USDⓈ-M as a fallback. It labels the active source and limits the candle requests per scan.
 - The application is informational only: paper-trading UI, routes, and wallet features are disabled.
 
 ## Local development

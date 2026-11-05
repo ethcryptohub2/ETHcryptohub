@@ -1,13 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { requireUser, AuthError } from '../../../lib/auth';
 import { marketScannerQuerySchema } from '../../../smartexit/apps/api/src/schemas';
-import { BinanceFuturesMarketsService } from '../../../smartexit/apps/api/src/services/binance-futures-markets';
+import { PublicFuturesMarketsService } from '../../../smartexit/apps/api/src/services/binance-futures-markets';
 import { BinanceMarketScannerService } from '../../../smartexit/apps/api/src/services/market-scanner';
 
 export const runtime = 'nodejs';
 export const maxDuration = 60;
 
-const markets = new BinanceFuturesMarketsService();
+const markets = new PublicFuturesMarketsService();
 const scanner = new BinanceMarketScannerService(markets);
 
 export async function GET(request: NextRequest) {
@@ -27,9 +27,9 @@ export async function GET(request: NextRequest) {
     const result = await scanner.scan({ ...parsed.data, quoteAsset: 'USDT' });
     return NextResponse.json({ data: result }, { headers: { 'Cache-Control': 'no-store' } });
   } catch (error) {
-    console.error('Binance scanner request failed:', error instanceof Error ? error.message : 'Unknown error');
+    console.error('Public futures scanner request failed:', error instanceof Error ? error.message : 'Unknown error');
     return NextResponse.json(
-      { error: error instanceof Error ? error.message : 'Live Binance market data is temporarily unavailable.' },
+      { error: error instanceof Error ? error.message : 'Public futures market data is temporarily unavailable.' },
       { status: 502, headers: { 'Cache-Control': 'no-store' } },
     );
   }

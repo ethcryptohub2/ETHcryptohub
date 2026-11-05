@@ -66,7 +66,7 @@ export const marketScannerQuerySchema = z.object({
   quoteAsset: z.literal('USDT').default('USDT'),
   timeframe: z.enum(['5m', '15m', '1h', '4h']).default('15m'),
   minimumVolume: z.coerce.number().finite().min(0).max(1_000_000_000_000).default(10_000_000),
-  limit: z.coerce.number().int().min(1).max(1000).default(1000),
+  limit: z.coerce.number().int().min(1).max(100).default(30),
   atrPeriod: z.coerce.number().int().min(2).max(50).default(10),
   multiplier: z.coerce.number().finite().min(0.5).max(10).default(3),
   maxAgeSeconds: z.coerce.number().int().min(30).max(86_400).default(1800),

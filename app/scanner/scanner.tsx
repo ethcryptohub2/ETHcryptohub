@@ -16,7 +16,7 @@ export function Scanner() {
     setLoading(true);
     setError('');
     try {
-      const params = new URLSearchParams({ timeframe, minimumVolume: '10000000', limit: '1000', atrPeriod: '10', multiplier: '3', maxAgeSeconds: '1800', minimumScore: '60', quoteAsset: 'USDT' });
+      const params = new URLSearchParams({ timeframe, minimumVolume: '10000000', limit: '30', atrPeriod: '10', multiplier: '3', maxAgeSeconds: '1800', minimumScore: '60', quoteAsset: 'USDT' });
       const response = await fetch(`/api/scanner?${params}`, { credentials: 'same-origin', cache: 'no-store' });
       const body = await response.json() as { data?: MarketScannerResponse; error?: string };
       if (!response.ok || !body.data) throw new Error(body.error ?? `Scanner request failed (${response.status}).`);
@@ -33,14 +33,17 @@ export function Scanner() {
     return () => { window.clearTimeout(initial); window.clearInterval(timer); };
   }, [load]);
   const ready = (data?.candidates ?? []).filter((item) => item.status === 'READY' && item.setup);
+  const unavailable = (data?.candidates ?? []).filter((item) => item.status === 'DATA_UNAVAILABLE' || item.status === 'STALE').length;
   return <main className="shell">
     <header className="topbar"><Link className="brand" href="/">ETHCRYPTOHUB</Link><nav className="links"><Link href="/dashboard">Dashboard</Link><Link href="/settings">Settings</Link><button onClick={() => void load()} disabled={loading}>{loading ? 'Scanning…' : 'Refresh'}</button></nav></header>
-    <section className="hero"><p className="mono">BINANCE USDⓈ-M FUTURES · LIVE PUBLIC DATA</p><h1>Market scanner.</h1><p className="muted">Technical indicators and reference levels from completed candles, for information only.</p></section>
+    <section className="hero"><p className="mono">{data ? `${data.exchange} · ${data.market} · LIVE PUBLIC DATA` : 'PUBLIC PERPETUAL FUTURES · LIVE DATA'}</p><h1>Market scanner.</h1><p className="muted">Technical indicators and reference levels from completed candles, for information only.</p></section>
     <section className="card stack">
       <div className="links"><label>Timeframe<select value={timeframe} onChange={(event) => setTimeframe(event.target.value as ScannerCandidate['timeframe'])}><option value="5m">5 minutes</option><option value="15m">15 minutes</option><option value="1h">1 hour</option><option value="4h">4 hours</option></select></label><span className="mono">{data ? `${ready.length} READY · ${data.status}` : 'CONNECTING'}</span><span className="mono">{data ? `Updated ${new Date(data.updatedAt).toLocaleTimeString()}` : ''}</span></div>
       {error && <div role="alert" className="error"><strong>Live scanner data unavailable</strong><br />{error}</div>}
-      {!error && loading && !data && <p className="muted">Loading Binance market data…</p>}
-      {data && ready.length === 0 && <p className="muted">No valid READY setups now. No trade is the correct outcome when criteria are not met.</p>}
+      {data?.status === 'DEGRADED' && <p role="status" className="muted">Partial market data: {unavailable} symbols are stale or unavailable. Treat this scan as incomplete and refresh before relying on its indicators.</p>}
+      {!error && loading && !data && <p className="muted">Loading public futures market data…</p>}
+      {data && ready.length === 0 && data.status === 'LIVE' && <p className="muted">No symbols currently meet the scanner&apos;s technical criteria.</p>}
+      {data && ready.length === 0 && data.status === 'DEGRADED' && unavailable === data.candidates.length && <p className="muted">No complete candidate data is available right now. Refresh shortly.</p>}
       {ready.length > 0 && <div style={{ overflowX: 'auto' }}><table className="scan-table"><thead><tr><th>Pair</th><th>Direction</th><th>Price</th><th>Score</th><th>Reference stop</th><th>Reference levels (1 / 2 / 3)</th></tr></thead><tbody>{ready.map((item) => <tr key={item.symbol}><td>{item.symbol}</td><td>{item.side}</td><td>{item.price?.toLocaleString(undefined, { maximumFractionDigits: 8 })}</td><td>{item.score.value}/100</td><td>{item.setup?.initialStop.toLocaleString(undefined, { maximumFractionDigits: 8 })}</td><td>{item.setup?.tp1.toPrecision(6)} / {item.setup?.tp2.toPrecision(6)} / {item.setup?.tp3.toPrecision(6)}</td></tr>)}</tbody></table></div>}
     </section>
   </main>;
