@@ -226,7 +226,7 @@ export function getCsrfToken(): Promise<string> {
     csrfTokenPromise = (async () => {
       let response: Response;
       try {
-        response = await fetch('/smartexit-api.php?csrf=1', {
+        response = await fetch('/api/csrf', {
           credentials: 'same-origin',
           headers: { Accept: 'application/json' },
         });
@@ -255,7 +255,7 @@ export async function api<T>(
   const csrfToken = ['GET', 'HEAD', 'OPTIONS'].includes(method) ? null : await getCsrfToken();
   let response: Response;
   try {
-    response = await fetch(`/smartexit-api.php?path=${encodeURIComponent(`/api${path}`)}`, {
+    response = await fetch(`/api/smartexit/api${path}`, {
       ...init,
       credentials: 'same-origin',
       headers: {

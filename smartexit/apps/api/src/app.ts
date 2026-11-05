@@ -45,7 +45,7 @@ declare module 'express-serve-static-core' {
   interface Request {
     userId?: string;
     sessionToken?: string;
-    phpBridgeAuthenticated?: boolean;
+    ethcryptohubBridgeAuthenticated?: boolean;
   }
 }
 
@@ -69,9 +69,9 @@ function verifyEthcryptohubBridge(request: Request, secret: string): string | nu
   return timingSafeEqual(expected, supplied) ? userId : null;
 }
 
-async function ensureEthcryptohubPaperAccount(db: Database, phpUserId: string): Promise<string> {
-  const userId = `ethcryptohub-${phpUserId}`;
-  await ensurePaperAccount(db, userId, `php-user-${phpUserId}`);
+async function ensureEthcryptohubPaperAccount(db: Database, ethcryptohubUserId: string): Promise<string> {
+  const userId = `ethcryptohub-${ethcryptohubUserId}`;
+  await ensurePaperAccount(db, userId, `php-user-${ethcryptohubUserId}`);
   return userId;
 }
 
@@ -175,7 +175,7 @@ export function createApp(
   marketsService: FuturesMarketsProvider = new BinanceFuturesMarketsService(),
   options: {
     anonymousUserId?: string;
-    phpBridgeSecret?: string;
+    bridgeSecret?: string;
     nearRpcRequest?: typeof fetch;
     nearNetwork?: NearNetwork;
     marketScannerService?: MarketScannerProvider;
@@ -183,7 +183,7 @@ export function createApp(
 ) {
   const db = database ?? openDatabase();
   const nearNetwork = configuredNearNetwork(options.nearNetwork);
-  const phpBridgeSecret = options.phpBridgeSecret ?? process.env.SMARTEXIT_BRIDGE_SECRET ?? '';
+  const bridgeSecret = options.bridgeSecret ?? process.env.SMARTEXIT_BRIDGE_SECRET ?? '';
   const auth = new NearAuthService(db, options.nearRpcRequest, undefined, nearNetwork);
   const nearIntents = createNearIntentsAdapter();
   const marketScanner = options.marketScannerService ?? new BinanceMarketScannerService(marketsService);
@@ -272,10 +272,10 @@ export function createApp(
       .find((part) => part.startsWith('smartexit_session='))
       ?.slice('smartexit_session='.length);
     if (token) request.sessionToken = decodeURIComponent(token);
-    const phpUserId = verifyEthcryptohubBridge(request, phpBridgeSecret);
-    if (phpUserId !== null) {
-      request.userId = await ensureEthcryptohubPaperAccount(db, phpUserId);
-      request.phpBridgeAuthenticated = true;
+    const ethcryptohubUserId = verifyEthcryptohubBridge(request, bridgeSecret);
+    if (ethcryptohubUserId !== null) {
+      request.userId = await ensureEthcryptohubPaperAccount(db, ethcryptohubUserId);
+      request.ethcryptohubBridgeAuthenticated = true;
       return next();
     }
     if (
@@ -304,7 +304,7 @@ export function createApp(
   });
 
   app.get('/api/auth/me', async (request, response) => {
-    if (request.phpBridgeAuthenticated && request.userId) {
+    if (request.ethcryptohubBridgeAuthenticated && request.userId) {
       const { rows } = await db.query(
         'SELECT id, near_account_id, starting_balance, realized_pnl FROM paper_users WHERE id = $1',
         [request.userId],

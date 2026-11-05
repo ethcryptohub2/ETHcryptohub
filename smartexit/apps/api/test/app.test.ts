@@ -367,7 +367,7 @@ describe('SmartExit paper trading API', () => {
     const db = openTestDatabase();
     databases.push(db);
     const secret = 'a'.repeat(64);
-    const app = createApp(db, undefined, { phpBridgeSecret: secret }).app;
+    const app = createApp(db, undefined, { bridgeSecret: secret }).app;
 
     await request(app)
       .get('/api/auth/me')

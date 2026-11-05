@@ -1,96 +1,69 @@
-# ETHcryptohub deployment
+# Deployment
 
 ## Architecture
 
-- **GitHub:** source repository `ethcryptohub2/ETHcryptohub` (public, as requested).
-- **Supabase:** PostgreSQL database for ETHcryptohub accounts and SmartExit paper-trading records.
-- **Railway:** PHP/Apache application and private SmartExit Node API services.
-- **Vercel:** same-origin reverse proxy to the Railway PHP application.
+- **Vercel:** Next.js web application and server routes.
+- **Supabase:** PostgreSQL database for users, sessions, rate limits, and SmartExit paper-trading data.
+- **Resend:** email verification delivery.
+- **Optional Node service:** SmartExit paper-trading API. It can be hosted on a separate Node-capable provider; the Next.js bridge accepts signed requests over HTTPS.
 
-Vercel does not run the PHP application directly. Its proxy requires `PHP_ORIGIN` to be set to the HTTPS origin Railway assigns to the PHP service. The proxy has a 60-second function limit; some Vercel plans impose a lower maximum duration. If SmartExit market scans time out through Vercel, use the Railway URL directly or configure a static external rewrite after the Railway origin is known.
+The application no longer uses a PHP origin, PHP proxy, MySQL database, or PHP runtime.
 
 ## 1. Supabase
 
-1. Create a Supabase project in **South Asia (Mumbai)**. Keep the database password private; do not put it in this repository or send it in chat.
-2. In the SQL editor, run `supabase/migrations/202611050001_initial_schema.sql`, then `supabase/migrations/202611050002_smartexit.sql`.
-3. Keep automatic exposure of new tables to the Data API disabled. The migrations enable RLS and revoke access from `anon` and `authenticated`; the server connects directly using PostgreSQL credentials.
-4. Copy the database host, port, database name, and username from **Project Settings → Database**. Use the session-pooler connection details if the direct database host is unreachable from Railway.
+1. Create a Supabase project and keep its database credentials private.
+2. Apply these migrations in order using the SQL editor or a trusted migration runner:
+   - `supabase/migrations/202611050001_initial_schema.sql`
+   - `supabase/migrations/202611050002_smartexit.sql`
+   - `supabase/migrations/202611050003_nextjs_auth.sql`
+3. Keep the database reachable only through server-side credentials. The app does not expose database credentials to browser code.
+4. Copy the PostgreSQL connection string or host, port, database name, user, and password from Supabase project settings.
 
-The initial migration creates the account, OTP, admin-rate-limit, and encrypted Binance-credential tables. The second migration creates the user-scoped SmartExit portfolio and paper-trading tables. Applying migrations does not copy local SQLite records or create a production administrator.
+## 2. Vercel
 
-## 2. Railway
+1. Import `ethcryptohub2/ETHcryptohub` from GitHub and use the repository root. Vercel should detect the Next.js framework.
+2. Configure these values as **private Vercel environment variables** for Preview and Production as appropriate:
 
-Create two services from the GitHub repository:
-
-### PHP web service
-
-- Repository: `ethcryptohub2/ETHcryptohub`.
-- Root directory: `/`.
-- Builder: Dockerfile (`/Dockerfile`).
-- Generate a public domain and keep one replica until shared PHP session storage is configured.
-
-Set these variables in the Railway service; enter secret values directly in Railway:
-
-| Variable | Value |
+| Variable | Requirement |
 |---|---|
-| `SUPABASE_DB_HOST` | Supabase database host |
-| `SUPABASE_DB_PORT` | Supabase database port (usually `5432`; use the port from connection details) |
-| `SUPABASE_DB_NAME` | `postgres` unless Supabase specifies otherwise |
-| `SUPABASE_DB_USER` | Supabase database username |
-| `SUPABASE_DB_PASSWORD` | Database password entered privately |
+| `SUPABASE_DB_URL` | PostgreSQL connection string; or use the `SUPABASE_DB_HOST`, `SUPABASE_DB_PORT`, `SUPABASE_DB_NAME`, `SUPABASE_DB_USER`, and `SUPABASE_DB_PASSWORD` variables |
 | `SUPABASE_DB_SSLMODE` | `require` |
-| `SMARTEXIT_API_URL` | `http://<private-node-service>.railway.internal:3001` |
-| `SMARTEXIT_BRIDGE_SECRET` | A random secret of at least 32 characters |
-| `REQUIRE_VERCEL_PROXY` | `1` |
-| `PHP_PROXY_SECRET` | A separate random secret of at least 32 characters |
+| `AUTH_SECRET` | At least 32 random characters |
+| `RESEND_API_KEY` | Required for real verification-email delivery |
+| `MAIL_FROM` | Sender address on a domain verified with Resend |
 | `BINANCE_CREDENTIALS_KEY` | 32 random bytes encoded as 64 hex characters |
-| `RESEND_API_KEY` | Optional Resend key for production email |
-| `MAIL_FROM` | Optional sender on a Resend-verified domain |
+| `ADMIN_SETUP_TOKEN` | Optional, temporary token for one-time administrator setup |
 
-### SmartExit API service
+3. Deploy and verify the landing page and account routes. Apply database migrations before testing signup or login.
+4. Create the first admin through `/admin/setup` using the temporary setup token. Remove `ADMIN_SETUP_TOKEN` after provisioning.
 
-- Use the same repository.
-- Root directory: `/smartexit`.
-- Builder: Dockerfile (`/smartexit/Dockerfile`).
-- Enable private networking; do not generate a public domain for this service.
-- Set `SUPABASE_DB_*` to the same database connection, `SMARTEXIT_BRIDGE_SECRET` to the exact same secret as the PHP service, `HOST=0.0.0.0`, and `APP_ORIGIN` to the Vercel HTTPS origin.
-- Set `NEAR_NETWORK=testnet` unless mainnet access is separately approved.
+## 3. Optional SmartExit API
 
-The Node API uses the same Supabase project but only accepts PHP-signed user requests through Railway private networking. It remains paper-only and does not place exchange orders.
+The SmartExit UI includes portfolio, trade-intent, risk, market, and audit views. Its API is a separate Node service and must be deployed if those features are needed in production.
 
-Generate secrets locally instead of reusing passwords:
+Configure the Next.js deployment with:
 
-```powershell
-php -r "echo bin2hex(random_bytes(32)), PHP_EOL;"
-```
+- `SMARTEXIT_API_URL`: the SmartExit API's public HTTPS origin, with no path or credentials.
+- `SMARTEXIT_BRIDGE_SECRET`: a private random secret of at least 32 characters.
 
-Use one generated value for `SMARTEXIT_BRIDGE_SECRET` and a separate generated value for `BINANCE_CREDENTIALS_KEY`. Paste each directly into the appropriate Railway variable fields. Never expose the Binance key or secret in application logs; Binance withdrawal permission must remain disabled.
+Configure the SmartExit API with the same `SMARTEXIT_BRIDGE_SECRET`, the Supabase database settings, `APP_ORIGIN` set to the exact HTTPS Vercel origin, and `NODE_ENV=production`. The API authenticates bridge calls with an HMAC signature; do not expose this secret or put it in a `NEXT_PUBLIC_*` variable. The API should only be deployed over HTTPS.
 
-## 3. Vercel
+If these values are not configured, SmartExit returns an explicit unavailable response; the rest of the Next.js app can still run.
 
-1. Import `ethcryptohub2/ETHcryptohub` from GitHub.
-2. Use the repository root and the Vercel Node.js runtime for `api/proxy.js`.
-3. Add `PHP_ORIGIN` as the Railway PHP service's HTTPS origin, with no trailing path or credentials (for example `https://your-php-service.up.railway.app`).
-4. Add `PHP_PROXY_SECRET` with the exact secret configured on the Railway PHP service.
-5. Deploy and confirm that `/`, `/login.php`, `/signup.php`, and `/dashboard.php` resolve through the proxy. The PHP service rejects direct requests that do not carry the signed proxy header.
-6. Add the final Vercel origin to the Node API's `APP_ORIGIN`, redeploy that service, and verify SmartExit's authenticated API calls.
+## 4. Email and exchange safeguards
 
-The proxy preserves methods, request bodies, cookies, status codes, and response headers. Do not expose the SmartExit API publicly.
+- Verify the sender domain with Resend before testing signup or resend-verification.
+- Binance credentials are encrypted at rest and account connectivity checks are read-only. Keep withdrawal permissions disabled.
+- Live trading is not implemented or enabled. SmartExit's trade intents are paper-only.
+- Do not create a shared default user or password. Provision accounts through signup and the protected admin setup.
 
-## 4. Initial admin account
+## 5. Production verification
 
-After deployment, use the existing protected admin setup flow to create the first administrator. Do not seed a shared/default password. Store the administrator credentials in a password manager and remove or disable any one-time setup route as directed by its page.
+1. Check `/`, `/login`, and `/signup`.
+2. Register with a mailbox you control and verify delivery in Resend's event log and the recipient inbox.
+3. Verify that unverified accounts cannot sign in and that resend verification works.
+4. Sign in and test `/dashboard`, `/settings`, `/binance`, `/scanner`, `/smartexit`, and `/admin`.
+5. Confirm the scanner reports errors when market data, account risk settings, or the database are unavailable; it must not substitute guessed risk values.
+6. Confirm SmartExit reports paper mode and `liveOrdersEnabled: false`.
 
-## 5. Verification
-
-1. Confirm the Vercel landing page and PHP health route load.
-2. Register a new account and verify that the Resend sender is configured before testing real inbox delivery. A local development OTP is never shown in production.
-3. Sign in, open settings, and verify account changes persist after a service restart.
-4. Open SmartExit and confirm its health status reports a connected database and `liveOrdersEnabled: false`.
-5. Verify an account cannot read another user's SmartExit portfolio.
-
-## Data and secret handling
-
-- The public repository excludes `.env`, SQLite databases, database dumps, Node dependencies, built assets, and private key files.
-- The database migrations contain schema only. Local accounts, trades, Binance credentials, passwords, and API keys are not uploaded.
-- Rotate any secret that was ever committed or shared. Use Railway/Vercel/Supabase secret-variable interfaces for production values.
+Do not treat a successful Vercel build or local server as proof of production deployment. Public deployment also requires the GitHub push, Vercel project configuration, applied database migrations, and private provider credentials.

@@ -1,3 +1,5 @@
+'use client';
+
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
 import {
   api,
@@ -45,6 +47,7 @@ function formatAssetAmount(value: number, asset: string): string {
 }
 
 function initialScreen(): Screen {
+  if (typeof window === 'undefined') return 'dashboard';
   const requestedScreen = new URLSearchParams(window.location.search).get('screen');
   return requestedScreen === 'scanner' || requestedScreen === 'create' ? requestedScreen : 'dashboard';
 }
@@ -300,23 +303,18 @@ function App() {
   };
 
   const signOut = async () => {
-    const form = document.getElementById('ethcryptohub-logout-form');
-    if (form instanceof HTMLFormElement) {
-      try {
-        const token = await getCsrfToken();
-        const tokenInput = form.elements.namedItem('csrf_token');
-        if (!(tokenInput instanceof HTMLInputElement)) {
-          throw new Error('The secure sign-out form is unavailable.');
-        }
-        tokenInput.value = token;
-      } catch (reason) {
-        setError(reason instanceof Error ? reason.message : 'Unable to prepare secure sign-out.');
-        return;
-      }
-      form.requestSubmit();
-      return;
+    try {
+      const token = await getCsrfToken();
+      const response = await fetch('/api/auth/logout', {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: { 'X-CSRF-Token': token },
+      });
+      if (!response.ok) throw new Error('Secure sign-out could not be completed.');
+      window.location.assign('/login');
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : 'Unable to sign out securely.');
     }
-    setError('Sign out is unavailable. Return to ETHcryptohub and try again.');
   };
 
   if (authLoading) {
@@ -334,7 +332,7 @@ function App() {
           <div className="eyebrow">ETHCRYPTOHUB SESSION REQUIRED</div>
           <h1>Your session needs attention.</h1>
           <p>{error || 'Sign in to ETHcryptohub to access your SmartExit paper trading desk.'}</p>
-          <a className="button button-primary login-button" href="/login.php">
+          <a className="button button-primary login-button" href="/login">
             Return to sign in →
           </a>
         </section>
@@ -392,10 +390,10 @@ function App() {
         </nav>
         <div className="workspace-label">ACCOUNT</div>
         <nav aria-label="Account navigation">
-          <a className="nav-item" href="/settings.php">
+          <a className="nav-item" href="/settings">
             <span>⚙</span> Profile settings
           </a>
-          <a className="nav-item" href="/binance-settings.php">
+          <a className="nav-item" href="/binance">
             <span>⌘</span> Binance API
           </a>
         </nav>
@@ -420,7 +418,7 @@ function App() {
             {activeTrade ? 'TRADE DETAIL' : screen.toUpperCase()}
           </div>
           <div className="topbar-actions">
-            <a className="button button-outline app-home-link" href="/dashboard.php">
+            <a className="button button-outline app-home-link" href="/dashboard">
               ETHcryptohub
             </a>
             <span className="mode-pill">
@@ -906,7 +904,7 @@ function LiveTradesScreen() {
             Configure and test your account connection in Binance API settings. This does not enable trading:
             live order submission remains disabled until its safeguards are implemented and explicitly enabled.
           </p>
-          <a className="button button-outline" href="/binance-settings.php">
+          <a className="button button-outline" href="/binance">
             Open Binance API settings
           </a>
         </div>

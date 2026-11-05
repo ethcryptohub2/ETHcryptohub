@@ -1,0 +1,37 @@
+@import url('https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Space+Grotesk:wght@400;500;600;700&display=swap');
+
+:root {
+  color-scheme: dark;
+  font-family: 'Space Grotesk', sans-serif;
+  background: #07090e;
+  color: #e2e8f0;
+  font-synthesis: none;
+}
+
+* { box-sizing: border-box; }
+body { margin: 0; min-height: 100vh; background: radial-gradient(ellipse at 50% -20%, #10202b 0, #07090e 55%); }
+a { color: #67e8f9; text-decoration: none; }
+a:hover { color: #a5f3fc; }
+button, input, select { font: inherit; }
+button, .button { border: 0; border-radius: 10px; padding: 12px 16px; background: #22d3ee; color: #071017; font-weight: 700; cursor: pointer; }
+button:disabled { opacity: .55; cursor: wait; }
+input, select { width: 100%; padding: 12px; color: #e2e8f0; border: 1px solid #263244; border-radius: 9px; background: #090c13; }
+label { display: grid; gap: 7px; color: #94a3b8; font-size: 13px; }
+.shell { width: min(1120px, calc(100% - 32px)); margin: 0 auto; }
+.topbar { display:flex; align-items:center; justify-content:space-between; gap:16px; padding:20px 0; border-bottom:1px solid #1e293b; }
+.brand { color:#e2e8f0; font-weight:700; letter-spacing:.12em; }
+.links { display:flex; gap:18px; align-items:center; flex-wrap:wrap; }
+.card { border:1px solid #1e293b; border-radius:18px; background:#0f1420dd; padding:24px; box-shadow:0 24px 80px #0005; }
+.auth { width:min(480px, calc(100% - 32px)); margin:8vh auto; }
+.stack { display:grid; gap:16px; }
+.muted { color:#94a3b8; }
+.error { border:1px solid #7f1d1d; background:#450a0a66; color:#fecaca; padding:12px; border-radius:10px; }
+.success { border:1px solid #14532d; background:#052e1666; color:#bbf7d0; padding:12px; border-radius:10px; }
+.hero { padding:72px 0 42px; }
+.hero h1 { max-width:760px; font-size:clamp(38px, 7vw, 72px); line-height:1.04; letter-spacing:-.05em; margin:14px 0; }
+.grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(230px,1fr)); gap:16px; }
+.mono { font-family:'DM Mono', monospace; color:#64748b; font-size:11px; letter-spacing:.12em; }
+.form-footer { color:#94a3b8; font-size:14px; text-align:center; }
+.scan-table { width:100%; border-collapse:collapse; font-size:13px; }
+.scan-table th,.scan-table td { text-align:left; border-bottom:1px solid #1e293b; padding:12px 8px; }
+@media (max-width:640px) { .topbar { align-items:flex-start; flex-direction:column; } .card { padding:18px; } .hero { padding-top:48px; } }

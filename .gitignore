@@ -12,6 +12,7 @@
 *.pem
 *.key
 *.log
+*.tsbuildinfo
 
 /vendor/
 /tmp/
@@ -22,3 +23,6 @@
 /smartexit/apps/*/.vite/
 /smartexit/data/
 /smartexit/coverage/
+node_modules/
+.next/
+out/
