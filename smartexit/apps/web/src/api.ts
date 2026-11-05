@@ -202,6 +202,23 @@ interface ApiResponse<T> {
   meta?: { duplicate?: boolean; estimatedRisk?: number; riskBudget?: number };
 }
 
+async function readApiResponse<T>(response: Response): Promise<ApiResponse<T>> {
+  const contentType = response.headers.get('content-type') ?? '';
+  if (!contentType.toLowerCase().includes('application/json')) {
+    throw new Error(
+      response.status >= 500
+        ? 'The SmartExit server is temporarily unavailable. Check that the PHP bridge and SmartExit API are running.'
+        : `The SmartExit server returned an unexpected response (${response.status}).`,
+    );
+  }
+
+  try {
+    return (await response.json()) as ApiResponse<T>;
+  } catch {
+    throw new Error(`The SmartExit server returned invalid JSON (${response.status}).`);
+  }
+}
+
 export async function api<T>(
   path: string,
   init?: RequestInit,
@@ -211,18 +228,27 @@ export async function api<T>(
   if (!['GET', 'HEAD', 'OPTIONS'].includes(method) && !csrfToken) {
     throw new Error('Your secure session token is missing. Reload the page and try again.');
   }
-  const response = await fetch(`/smartexit-api.php?path=${encodeURIComponent(`/api${path}`)}`, {
-    ...init,
-    credentials: 'same-origin',
-    headers: {
-      'Content-Type': 'application/json',
-      ...(csrfToken && !['GET', 'HEAD', 'OPTIONS'].includes(method)
-        ? { 'X-CSRF-Token': csrfToken }
-        : {}),
-      ...init?.headers,
-    },
-  });
-  const body = (await response.json()) as ApiResponse<T>;
+  let response: Response;
+  try {
+    response = await fetch(`/smartexit-api.php?path=${encodeURIComponent(`/api${path}`)}`, {
+      ...init,
+      credentials: 'same-origin',
+      headers: {
+        Accept: 'application/json',
+        'Content-Type': 'application/json',
+        ...(csrfToken && !['GET', 'HEAD', 'OPTIONS'].includes(method)
+          ? { 'X-CSRF-Token': csrfToken }
+          : {}),
+        ...init?.headers,
+      },
+    });
+  } catch (reason) {
+    if (reason instanceof Error && reason.name === 'AbortError') throw reason;
+    throw new Error(
+      'Could not reach the SmartExit API. Check the PHP bridge URL and the backend connection, then retry.',
+    );
+  }
+  const body = await readApiResponse<T>(response);
   if (!response.ok || body.data === undefined) {
     throw new Error(body.error?.message ?? `Request failed (${response.status}).`);
   }
