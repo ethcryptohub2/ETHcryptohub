@@ -3,7 +3,12 @@ import type { FuturesMarketSnapshot } from '../src/services/binance-futures-mark
 import {
   BinanceMarketScannerService,
   calculateAtr,
+  calculateAdx,
+  calculateBollingerBands,
   calculateEma,
+  calculateMacd,
+  calculateRsi,
+  calculateRollingVwap,
   calculateSupportResistance,
   calculateSupertrend,
   type MarketCandle,
@@ -95,9 +100,62 @@ describe('market scanner indicators', () => {
     }));
     expect(calculateSupportResistance(swings, 15)).toEqual({ support: 9, resistance: 20 });
   });
+
+  it('calculates RSI, MACD, rolling VWAP, Bollinger Bands, and ADX from candles', () => {
+    const rising = Array.from({ length: 60 }, (_, index) => candle(100 + index + index ** 2 * 0.1, index));
+    const falling = Array.from({ length: 60 }, (_, index) => candle(220 - index - index ** 2 * 0.1, index));
+
+    expect(calculateRsi(rising)).toBe(100);
+    expect(calculateRsi(falling)).toBe(0);
+    expect(calculateRsi([candle(1, 0)], 14)).toBeNull();
+    expect(calculateMacd(rising)?.histogram).toBeGreaterThan(0);
+    expect(calculateMacd(falling)?.histogram).toBeLessThan(0);
+    expect(calculateMacd(rising.slice(0, 34))).not.toBeNull();
+    expect(calculateMacd(rising.slice(0, 33))).toBeNull();
+    expect(calculateRollingVwap(rising)).toBeGreaterThan(rising[39]!.close);
+    expect(calculateRollingVwap(rising.slice(0, 19))).toBeNull();
+    expect(calculateBollingerBands(rising)?.lower).toBeLessThan(
+      calculateBollingerBands(rising)!.middle,
+    );
+    expect(calculateBollingerBands(rising)!.middle).toBeLessThan(
+      calculateBollingerBands(rising)!.upper,
+    );
+    expect(calculateAdx(rising)).toBeGreaterThan(20);
+    expect(calculateAdx(rising.slice(0, 28))).toBeNull();
+  });
 });
 
 describe('Binance market scanner service', () => {
+  it('scans every eligible USDT perpetual even when the legacy limit is lower', async () => {
+    const now = 241 * 60_000;
+    const closedCandles = Array.from({ length: 240 }, (_, index) => candle(100 + index * 0.2, index));
+    const markets = snapshot(now);
+    const btc = markets.symbols[0]!;
+    const service = new BinanceMarketScannerService(
+      {
+        list: async () => ({
+          ...markets,
+          symbols: [
+            btc,
+            {
+              ...btc,
+              symbol: 'ETHUSDT',
+              baseAsset: 'ETH',
+              lastPrice: 147.8,
+              priceChangePercent24h: -1,
+            },
+          ],
+        }),
+      },
+      async () => new Response(JSON.stringify(closedCandles.map(binanceRow))),
+      () => now,
+    );
+
+    const result = await service.scan({ ...config, limit: 1 }, { riskBudget: 100, blockedReason: null });
+
+    expect(result.candidates.map((candidate) => candidate.symbol).sort()).toEqual(['BTCUSDT', 'ETHUSDT']);
+  });
+
   it('uses completed candles only and creates directionally valid risk-bounded setup values', async () => {
     const now = 241 * 60_000;
     const closedCandles = Array.from({ length: 240 }, (_, index) => candle(100 + index * 0.2, index));
@@ -119,11 +177,15 @@ describe('Binance market scanner service', () => {
     expect(candidate.status).toBe('READY');
     expect(candidate.side).toBe('LONG');
     expect(candidate.ema.direction).toBe('BULLISH');
+    expect(candidate.ema.ema9).not.toBeNull();
     expect(candidate.supertrend.direction).toBe('BULLISH');
+    expect(candidate.indicators.rsi14).toBeGreaterThan(50);
+    expect(candidate.indicators.macdHistogram).toBeGreaterThan(0);
+    expect(candidate.indicators.adx14).toBeGreaterThan(20);
     expect(candidate.lastCandleCloseAt).toBe(new Date(closedCandles.at(-1)!.closeTime).toISOString());
     expect(candidate.newsSentiment.status).toBe('UNAVAILABLE');
     expect(candidate.socialSentiment.status).toBe('UNAVAILABLE');
-    expect(candidate.score.coverage).toBe(80);
+    expect(candidate.score.coverage).toBe(95);
     expect(candidate.marketRank).toContain('TOP_GAINER');
     expect(candidate.ema.ema200).not.toBeNull();
     expect(candidate.setup).not.toBeNull();
@@ -136,10 +198,13 @@ describe('Binance market scanner service', () => {
 
   it('creates correctly ordered SHORT levels from a confirmed bearish trend', async () => {
     const now = 241 * 60_000;
-    const closedCandles = Array.from({ length: 240 }, (_, index) => candle(200 - index * 0.2, index));
+    const closedCandles = Array.from(
+      { length: 240 },
+      (_, index) => candle(200 - index * 0.1 - index ** 2 * 0.001, index),
+    );
     const fetcher: typeof fetch = async () => new Response(JSON.stringify(closedCandles.map(binanceRow)));
     const service = new BinanceMarketScannerService(
-      { list: async () => snapshot(now, { price: 152.2, change: -2 }) },
+      { list: async () => snapshot(now, { price: closedCandles.at(-1)!.close, change: -2 }) },
       fetcher,
       () => now,
     );

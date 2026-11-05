@@ -4,8 +4,8 @@ import type { FuturesMarketsProvider } from './binance-futures-markets.js';
 const BINANCE_FUTURES_BASE_URL = 'https://fapi.binance.com';
 const CANDLE_CACHE_MS = 15_000;
 const REQUEST_TIMEOUT_MS = 10_000;
-const CANDLE_LIMIT = 240;
-const MAX_CONCURRENT_CANDLE_REQUESTS = 5;
+const CANDLE_LIMIT = 400;
+const MAX_CONCURRENT_CANDLE_REQUESTS = 10;
 const TOP_MOVER_LIMIT = 5;
 const EXCLUDED_BASE_ASSETS = new Set(['USDC', 'BUSD', 'TUSD', 'FDUSD', 'USDP', 'DAI']);
 const LEVERAGED_SUFFIXES = ['UP', 'DOWN', 'BULL', 'BEAR', '2L', '2S', '3L', '3S'];
@@ -44,6 +44,16 @@ export interface ScannerContribution {
   contribution: number;
 }
 
+export interface TechnicalIndicators {
+  rsi14: number | null;
+  macdLine: number | null;
+  macdSignal: number | null;
+  macdHistogram: number | null;
+  rollingVwap20: number | null;
+  bollingerBands20: { lower: number; middle: number; upper: number } | null;
+  adx14: number | null;
+}
+
 export type MarketRank = 'TOP_VOLUME' | 'TOP_GAINER' | 'TOP_LOSER';
 
 export interface MarketScannerCandidate {
@@ -63,11 +73,14 @@ export interface MarketScannerCandidate {
     multiplier: number;
   };
   ema: {
+    ema9: number | null;
     ema20: number | null;
     ema50: number | null;
+    ema100: number | null;
     ema200: number | null;
     direction: 'BULLISH' | 'BEARISH' | 'MIXED' | 'UNAVAILABLE';
   };
+  indicators: TechnicalIndicators;
   supportResistance: {
     support: number | null;
     resistance: number | null;
@@ -137,6 +150,154 @@ export function calculateEma(candles: MarketCandle[], period: number): number | 
   const smoothing = 2 / (period + 1);
   for (const close of closes.slice(period)) ema = close * smoothing + ema * (1 - smoothing);
   return Number.isFinite(ema) && ema > 0 ? ema : null;
+}
+
+function calculateEmaSeries(values: number[], period: number): Array<number | null> {
+  if (!Number.isInteger(period) || period < 1 || values.length < period) return [];
+  if (!values.every((value) => Number.isFinite(value))) return [];
+  const result: Array<number | null> = Array(values.length).fill(null);
+  let ema = values.slice(0, period).reduce((sum, value) => sum + value, 0) / period;
+  result[period - 1] = ema;
+  const smoothing = 2 / (period + 1);
+  for (let index = period; index < values.length; index += 1) {
+    ema = values[index]! * smoothing + ema * (1 - smoothing);
+    result[index] = ema;
+  }
+  return result;
+}
+
+export function calculateRsi(candles: MarketCandle[], period = 14): number | null {
+  if (!Number.isInteger(period) || period < 2 || candles.length <= period) return null;
+  const changes = candles.slice(1).map((current, index) => current.close - candles[index]!.close);
+  if (!changes.every(Number.isFinite)) return null;
+  let averageGain = changes.slice(0, period).reduce((sum, change) => sum + Math.max(change, 0), 0) / period;
+  let averageLoss = changes.slice(0, period).reduce((sum, change) => sum + Math.max(-change, 0), 0) / period;
+  for (const change of changes.slice(period)) {
+    averageGain = (averageGain * (period - 1) + Math.max(change, 0)) / period;
+    averageLoss = (averageLoss * (period - 1) + Math.max(-change, 0)) / period;
+  }
+  if (averageLoss === 0) return averageGain === 0 ? 50 : 100;
+  const rsi = 100 - 100 / (1 + averageGain / averageLoss);
+  return Number.isFinite(rsi) ? rsi : null;
+}
+
+export function calculateMacd(
+  candles: MarketCandle[],
+  fastPeriod = 12,
+  slowPeriod = 26,
+  signalPeriod = 9,
+): { line: number; signal: number; histogram: number } | null {
+  if (
+    !Number.isInteger(fastPeriod) ||
+    !Number.isInteger(slowPeriod) ||
+    !Number.isInteger(signalPeriod) ||
+    fastPeriod < 1 ||
+    fastPeriod >= slowPeriod ||
+    signalPeriod < 1
+  ) {
+    return null;
+  }
+  const closes = candles.map((candle) => candle.close);
+  const fast = calculateEmaSeries(closes, fastPeriod);
+  const slow = calculateEmaSeries(closes, slowPeriod);
+  const macdValues: number[] = [];
+  for (let index = 0; index < closes.length; index += 1) {
+    if (fast[index] !== null && slow[index] !== null) macdValues.push(fast[index]! - slow[index]!);
+  }
+  const signalSeries = calculateEmaSeries(macdValues, signalPeriod);
+  const line = macdValues.at(-1);
+  const signal = signalSeries.at(-1);
+  if (line === undefined || signal === undefined || signal === null) return null;
+  const rawHistogram = line - signal;
+  const precisionFloor = Number.EPSILON * Math.max(Math.abs(line), Math.abs(signal), 1) * 16;
+  return {
+    line,
+    signal,
+    histogram: Math.abs(rawHistogram) <= precisionFloor ? 0 : rawHistogram,
+  };
+}
+
+export function calculateRollingVwap(candles: MarketCandle[], period = 20): number | null {
+  if (!Number.isInteger(period) || period < 1 || candles.length < period) return null;
+  const recent = candles.slice(-period);
+  const totalVolume = recent.reduce((sum, candle) => sum + candle.volume, 0);
+  if (!Number.isFinite(totalVolume) || totalVolume <= 0) return null;
+  const weightedPrice = recent.reduce(
+    (sum, candle) => sum + ((candle.high + candle.low + candle.close) / 3) * candle.volume,
+    0,
+  );
+  const vwap = weightedPrice / totalVolume;
+  return Number.isFinite(vwap) && vwap > 0 ? vwap : null;
+}
+
+export function calculateBollingerBands(
+  candles: MarketCandle[],
+  period = 20,
+  deviations = 2,
+): { lower: number; middle: number; upper: number } | null {
+  if (
+    !Number.isInteger(period) ||
+    period < 2 ||
+    candles.length < period ||
+    !Number.isFinite(deviations) ||
+    deviations <= 0
+  ) {
+    return null;
+  }
+  const closes = candles.slice(-period).map((candle) => candle.close);
+  const middle = closes.reduce((sum, close) => sum + close, 0) / period;
+  const standardDeviation = Math.sqrt(
+    closes.reduce((sum, close) => sum + (close - middle) ** 2, 0) / period,
+  );
+  const bands = {
+    lower: middle - deviations * standardDeviation,
+    middle,
+    upper: middle + deviations * standardDeviation,
+  };
+  return Object.values(bands).every(Number.isFinite) ? bands : null;
+}
+
+export function calculateAdx(candles: MarketCandle[], period = 14): number | null {
+  if (!Number.isInteger(period) || period < 2 || candles.length < period * 2 + 1) return null;
+  const trueRanges: number[] = [];
+  const positiveMoves: number[] = [];
+  const negativeMoves: number[] = [];
+  for (let index = 1; index < candles.length; index += 1) {
+    const current = candles[index]!;
+    const previous = candles[index - 1]!;
+    trueRanges.push(
+      Math.max(
+        current.high - current.low,
+        Math.abs(current.high - previous.close),
+        Math.abs(current.low - previous.close),
+      ),
+    );
+    const upMove = current.high - previous.high;
+    const downMove = previous.low - current.low;
+    positiveMoves.push(upMove > downMove && upMove > 0 ? upMove : 0);
+    negativeMoves.push(downMove > upMove && downMove > 0 ? downMove : 0);
+  }
+
+  let smoothedTrueRange = trueRanges.slice(0, period).reduce((sum, value) => sum + value, 0);
+  let smoothedPositive = positiveMoves.slice(0, period).reduce((sum, value) => sum + value, 0);
+  let smoothedNegative = negativeMoves.slice(0, period).reduce((sum, value) => sum + value, 0);
+  const directionalIndexes: number[] = [];
+  for (let index = period - 1; index < trueRanges.length; index += 1) {
+    if (index >= period) {
+      smoothedTrueRange += trueRanges[index]! - smoothedTrueRange / period;
+      smoothedPositive += positiveMoves[index]! - smoothedPositive / period;
+      smoothedNegative += negativeMoves[index]! - smoothedNegative / period;
+    }
+    if (smoothedTrueRange <= 0) continue;
+    const positiveDi = (100 * smoothedPositive) / smoothedTrueRange;
+    const negativeDi = (100 * smoothedNegative) / smoothedTrueRange;
+    const denominator = positiveDi + negativeDi;
+    directionalIndexes.push(denominator === 0 ? 0 : (100 * Math.abs(positiveDi - negativeDi)) / denominator);
+  }
+  if (directionalIndexes.length < period) return null;
+  let adx = directionalIndexes.slice(0, period).reduce((sum, value) => sum + value, 0) / period;
+  for (const value of directionalIndexes.slice(period)) adx = (adx * (period - 1) + value) / period;
+  return Number.isFinite(adx) ? adx : null;
 }
 
 export function calculateSupportResistance(
@@ -283,7 +444,16 @@ function unavailableCandidate(
       period: config.atrPeriod,
       multiplier: config.multiplier,
     },
-    ema: { ema20: null, ema50: null, ema200: null, direction: 'UNAVAILABLE' },
+    ema: { ema9: null, ema20: null, ema50: null, ema100: null, ema200: null, direction: 'UNAVAILABLE' },
+    indicators: {
+      rsi14: null,
+      macdLine: null,
+      macdSignal: null,
+      macdHistogram: null,
+      rollingVwap20: null,
+      bollingerBands20: null,
+      adx14: null,
+    },
     supportResistance: { support: null, resistance: null, source: 'COMPLETED_CANDLE_SWINGS' },
     relativeVolume: null,
     newsSentiment: { status: 'UNAVAILABLE', source: null, updatedAt: null },
@@ -300,20 +470,28 @@ function unavailableCandidate(
 function normalizedScore(
   supertrend: number,
   ema: number,
+  rsi: number,
+  macd: number,
+  vwap: number,
+  adx: number,
   momentum: number,
   relativeVolume: number,
   structure: number | null,
 ): { value: number; coverage: number; contributions: ScannerContribution[] } {
   const factors = [
-    { factor: 'Supertrend alignment', weight: 20, value: supertrend },
-    { factor: 'EMA 20/50/200 alignment', weight: 30, value: ema },
-    { factor: '24-hour momentum alignment', weight: 15, value: momentum },
+    { factor: 'Supertrend alignment', weight: 15, value: supertrend },
+    { factor: 'EMA 9/20/50/100/200 alignment', weight: 20, value: ema },
+    { factor: 'RSI 14 direction', weight: 10, value: rsi },
+    { factor: 'MACD 12/26/9 direction', weight: 15, value: macd },
+    { factor: 'Rolling VWAP alignment', weight: 10, value: vwap },
+    { factor: 'ADX 14 trend strength', weight: 10, value: adx },
+    { factor: '24-hour momentum alignment', weight: 10, value: momentum },
     {
       factor: 'Relative volume',
-      weight: 15,
+      weight: 5,
       value: Math.min(100, Math.max(0, (relativeVolume / 1.5) * 100)),
     },
-    ...(structure === null ? [] : [{ factor: 'Support/resistance room', weight: 20, value: structure }]),
+    ...(structure === null ? [] : [{ factor: 'Support/resistance room', weight: 5, value: structure }]),
   ];
   const availableWeight = factors.reduce((sum, factor) => sum + factor.weight, 0);
   const raw = factors.reduce((sum, factor) => sum + (factor.value * factor.weight) / 100, 0);
@@ -398,7 +576,7 @@ export class BinanceMarketScannerService implements MarketScannerProvider {
         else rankedMarkets.set(market.symbol, { market, ranks: new Set([rank]) });
       }
     };
-    addRankedMarkets(eligibleMarkets.slice(0, config.limit), 'TOP_VOLUME');
+    addRankedMarkets(eligibleMarkets, 'TOP_VOLUME');
     const gainers = eligibleMarkets.filter(
       (market) => market.priceChangePercent24h !== null && market.priceChangePercent24h > 0,
     );
@@ -499,20 +677,40 @@ export class BinanceMarketScannerService implements MarketScannerProvider {
     const closedCandles = candles.filter((candle) => candle.closeTime < now);
     const indicator = calculateSupertrend(closedCandles, config.atrPeriod, config.multiplier);
     const lastCandle = closedCandles.at(-1);
+    const ema9 = calculateEma(closedCandles, 9);
     const ema20 = calculateEma(closedCandles, 20);
     const ema50 = calculateEma(closedCandles, 50);
+    const ema100 = calculateEma(closedCandles, 100);
     const ema200 = calculateEma(closedCandles, 200);
-    if (!indicator || !lastCandle || ema20 === null || ema50 === null || ema200 === null) {
+    const rsi14 = calculateRsi(closedCandles);
+    const macd = calculateMacd(closedCandles);
+    const rollingVwap20 = calculateRollingVwap(closedCandles);
+    const bollingerBands20 = calculateBollingerBands(closedCandles);
+    const adx14 = calculateAdx(closedCandles);
+    if (
+      !indicator ||
+      !lastCandle ||
+      ema9 === null ||
+      ema20 === null ||
+      ema50 === null ||
+      ema100 === null ||
+      ema200 === null ||
+      rsi14 === null ||
+      macd === null ||
+      rollingVwap20 === null ||
+      bollingerBands20 === null ||
+      adx14 === null
+    ) {
       const candidate = unavailableCandidate(market, config, marketRank);
       candidate.warnings = [
-        'At least 200 completed candles are required to confirm EMA 20/50/200 and Supertrend.',
+        'Completed candle history or volume is insufficient to calculate every required technical indicator.',
       ];
       return candidate;
     }
     const emaDirection =
-      lastCandle.close > ema20 && ema20 > ema50 && ema50 > ema200
+      lastCandle.close > ema9 && ema9 > ema20 && ema20 > ema50 && ema50 > ema100 && ema100 > ema200
         ? 'BULLISH'
-        : lastCandle.close < ema20 && ema20 < ema50 && ema50 < ema200
+        : lastCandle.close < ema9 && ema9 < ema20 && ema20 < ema50 && ema50 < ema100 && ema100 < ema200
           ? 'BEARISH'
           : 'MIXED';
     const supportResistance = calculateSupportResistance(closedCandles, market.lastPrice!);
@@ -539,6 +737,10 @@ export class BinanceMarketScannerService implements MarketScannerProvider {
         : emaDirection === 'BEARISH' && market.priceChangePercent24h <= 0);
     const isLong = emaDirection === 'BULLISH';
     const side = isLong ? 'LONG' : 'SHORT';
+    const rsiAligned = isLong ? rsi14 > 50 : rsi14 < 50;
+    const macdAligned = isLong ? macd.histogram > 0 : macd.histogram < 0;
+    const vwapAligned = isLong ? market.lastPrice! > rollingVwap20 : market.lastPrice! < rollingVwap20;
+    const adxStrong = adx14 >= 20;
     const opposingLevel = isLong ? supportResistance.resistance : supportResistance.support;
     const structuralRoom =
       opposingLevel === null ? null : Math.abs(opposingLevel - market.lastPrice!) / (indicator.atr * 1.5);
@@ -547,6 +749,10 @@ export class BinanceMarketScannerService implements MarketScannerProvider {
     const score = normalizedScore(
       trendAligned ? 100 : 0,
       emaDirection === 'MIXED' ? 0 : 100,
+      rsiAligned ? 100 : 0,
+      macdAligned ? 100 : 0,
+      vwapAligned ? 100 : 0,
+      adxStrong ? Math.min(100, (adx14 / 30) * 100) : 0,
       momentumAligned ? 100 : 0,
       relativeVolume,
       structureValue,
@@ -564,11 +770,27 @@ export class BinanceMarketScannerService implements MarketScannerProvider {
     } else if (emaDirection === 'MIXED') {
       status = 'WAIT';
       finalSide = 'WAIT';
-      warnings.unshift('EMA 20/50/200 are not in a confirmed directional stack.');
+      warnings.unshift('EMA 9/20/50/100/200 are not in a confirmed directional stack.');
     } else if (!trendAligned) {
       status = 'WAIT';
       finalSide = 'WAIT';
-      warnings.unshift('Supertrend conflicts with the confirmed EMA 20/50/200 direction.');
+      warnings.unshift('Supertrend conflicts with the confirmed EMA 9/20/50/100/200 direction.');
+    } else if (!rsiAligned) {
+      status = 'WAIT';
+      finalSide = 'WAIT';
+      warnings.unshift(`RSI 14 (${rsi14.toFixed(1)}) does not confirm the proposed ${side} direction.`);
+    } else if (!macdAligned) {
+      status = 'WAIT';
+      finalSide = 'WAIT';
+      warnings.unshift('MACD histogram does not confirm the proposed direction.');
+    } else if (!vwapAligned) {
+      status = 'WAIT';
+      finalSide = 'WAIT';
+      warnings.unshift('Price is on the wrong side of the rolling 20-candle VWAP.');
+    } else if (!adxStrong) {
+      status = 'WAIT';
+      finalSide = 'WAIT';
+      warnings.unshift(`ADX 14 (${adx14.toFixed(1)}) is below the minimum trend-strength threshold of 20.`);
     } else if (!momentumAligned) {
       status = 'WAIT';
       finalSide = 'WAIT';
@@ -606,7 +828,11 @@ export class BinanceMarketScannerService implements MarketScannerProvider {
       );
     }
     const reasons = [
-      `${emaDirection.toLowerCase()} EMA 20/50/200 stack`,
+      `${emaDirection.toLowerCase()} EMA 9/20/50/100/200 stack`,
+      `RSI 14 ${rsi14.toFixed(1)}`,
+      `MACD histogram ${macd.histogram.toPrecision(5)}`,
+      `price ${vwapAligned ? 'above' : 'below'} rolling VWAP`,
+      `ADX 14 ${adx14.toFixed(1)}`,
       `Supertrend ${trendAligned ? 'agrees' : 'conflicts'} on a completed ${config.timeframe} candle`,
       `relative volume ${relativeVolume.toFixed(2)}× its 20-candle baseline`,
       momentumAligned ? '24-hour momentum aligned' : '24-hour momentum conflicts',
@@ -630,7 +856,16 @@ export class BinanceMarketScannerService implements MarketScannerProvider {
         period: config.atrPeriod,
         multiplier: config.multiplier,
       },
-      ema: { ema20, ema50, ema200, direction: emaDirection },
+      ema: { ema9, ema20, ema50, ema100, ema200, direction: emaDirection },
+      indicators: {
+        rsi14,
+        macdLine: macd.line,
+        macdSignal: macd.signal,
+        macdHistogram: macd.histogram,
+        rollingVwap20,
+        bollingerBands20,
+        adx14,
+      },
       supportResistance: { ...supportResistance, source: 'COMPLETED_CANDLE_SWINGS' },
       relativeVolume,
       newsSentiment: { status: 'UNAVAILABLE', source: null, updatedAt: null },

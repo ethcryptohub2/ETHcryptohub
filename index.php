@@ -102,6 +102,10 @@ $serverTime = time();
                     </summary>
                     <div class="glass absolute right-0 mt-3 w-48 rounded-xl border hairline p-2 shadow-2xl">
                         <a href="dashboard.php" class="block rounded-lg px-3 py-2.5 text-sm text-slate-300 transition hover:bg-white/[0.05] hover:text-white">Trading terminal</a>
+                        <a href="smartexit.php" class="block rounded-lg px-3 py-2.5 text-sm text-slate-300 transition hover:bg-white/[0.05] hover:text-white">SmartExit dashboard</a>
+                        <a href="smartexit.php?screen=scanner" class="block rounded-lg px-3 py-2.5 text-sm text-slate-300 transition hover:bg-white/[0.05] hover:text-white">Market scanner</a>
+                        <a href="smartexit.php?screen=create" class="block rounded-lg px-3 py-2.5 text-sm text-slate-300 transition hover:bg-white/[0.05] hover:text-white">Trade setup</a>
+                        <a href="binance-settings.php" class="block rounded-lg px-3 py-2.5 text-sm text-slate-300 transition hover:bg-white/[0.05] hover:text-white">Binance API settings</a>
                         <a href="settings.php" class="block rounded-lg px-3 py-2.5 text-sm text-slate-300 transition hover:bg-white/[0.05] hover:text-white">Profile &amp; identity</a>
                         <div class="my-1 border-t hairline"></div>
                         <form method="post" action="logout.php">

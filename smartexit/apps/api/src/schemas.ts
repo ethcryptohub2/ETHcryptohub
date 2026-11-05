@@ -63,13 +63,10 @@ export const futuresMarketQuerySchema = z.object({
 });
 
 export const marketScannerQuerySchema = z.object({
-  quoteAsset: z
-    .string()
-    .regex(/^[A-Za-z0-9]{2,12}$/)
-    .default('USDT'),
+  quoteAsset: z.literal('USDT').default('USDT'),
   timeframe: z.enum(['5m', '15m', '1h', '4h']).default('15m'),
   minimumVolume: z.coerce.number().finite().min(0).max(1_000_000_000_000).default(10_000_000),
-  limit: z.coerce.number().int().min(1).max(30).default(15),
+  limit: z.coerce.number().int().min(1).max(1000).default(1000),
   atrPeriod: z.coerce.number().int().min(2).max(50).default(10),
   multiplier: z.coerce.number().finite().min(0.5).max(10).default(3),
   maxAgeSeconds: z.coerce.number().int().min(30).max(86_400).default(1800),

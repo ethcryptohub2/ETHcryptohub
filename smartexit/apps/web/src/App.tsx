@@ -43,8 +43,13 @@ function formatAssetAmount(value: number, asset: string): string {
     : `${new Intl.NumberFormat('en-US', { maximumFractionDigits: 8 }).format(value)} ${asset}`;
 }
 
+function initialScreen(): Screen {
+  const requestedScreen = new URLSearchParams(window.location.search).get('screen');
+  return requestedScreen === 'scanner' || requestedScreen === 'create' ? requestedScreen : 'dashboard';
+}
+
 function App() {
-  const [screen, setScreen] = useState<Screen>('dashboard');
+  const [screen, setScreen] = useState<Screen>(initialScreen);
   const [tradePrefill, setTradePrefill] = useState<ScannerPrefill | null>(null);
   const [selectedTrade, setSelectedTrade] = useState<string | null>(null);
   const [trades, setTrades] = useState<Trade[]>([]);
@@ -373,6 +378,15 @@ function App() {
             <span>{icon.live}</span> Live trades <span className="nav-soon">NOT SET</span>
           </button>
         </nav>
+        <div className="workspace-label">ACCOUNT</div>
+        <nav aria-label="Account navigation">
+          <a className="nav-item" href="/settings.php">
+            <span>⚙</span> Profile settings
+          </a>
+          <a className="nav-item" href="/binance-settings.php">
+            <span>⌘</span> Binance API
+          </a>
+        </nav>
         <div className="sidebar-bottom">
           <div className="sidebar-status">
             <span className="status-dot" /> Local database{' '}
@@ -398,7 +412,7 @@ function App() {
               ETHcryptohub
             </a>
             <span className="mode-pill">
-              <span /> {marketFeedStatus === 'live' ? 'LIVE PRICES' : 'PAPER MODE'}
+              <span /> {marketFeedStatus === 'live' ? 'LIVE PRICES · PAPER' : 'PAPER MODE'}
             </span>
             <button className="icon-button" aria-label="Refresh dashboard" onClick={() => void refresh()}>
               {icon.refresh}
@@ -453,6 +467,7 @@ function App() {
                   health={health}
                   onSelect={setSelectedTrade}
                   onCreate={() => navTo('create')}
+                  onScan={() => navTo('scanner')}
                 />
               )
             )}
@@ -503,6 +518,7 @@ function Dashboard(props: {
   health: Health | null;
   onSelect: (id: string) => void;
   onCreate: () => void;
+  onScan: () => void;
 }) {
   const {
     trades,
@@ -517,6 +533,7 @@ function Dashboard(props: {
     health,
     onSelect,
     onCreate,
+    onScan,
   } = props;
   const dailyUse =
     risk && risk.daily.lossLimit > 0
@@ -541,9 +558,14 @@ function Dashboard(props: {
           </h1>
           <p>Practice your exit rules. Your capital stays untouched.</p>
         </div>
-        <button className="button button-primary" onClick={onCreate}>
-          <span>+</span> Create paper trade
-        </button>
+        <div className="scanner-actions">
+          <button className="button button-outline" onClick={onScan}>
+            View READY setups
+          </button>
+          <button className="button button-primary" onClick={onCreate}>
+            <span>+</span> Create paper trade
+          </button>
+        </div>
       </div>
       <div className="summary-grid">
         <SummaryCard
@@ -706,16 +728,16 @@ function Dashboard(props: {
       </div>
       <div className="section-heading">
         <div>
-          <h2>Live trades</h2>
-          <p>Live execution is not configured. This desk currently creates paper trades only.</p>
+          <h2>Live trades · disabled</h2>
+          <p>Binance market data is live; order execution remains paper-only.</p>
         </div>
-        <span className="nav-soon">NOT CONFIGURED</span>
+        <span className="nav-soon">NO ORDERS</span>
       </div>
       <div className="table-card">
         <div className="empty-state">
           <div className="empty-icon">◉</div>
-          <h3>No live trades connected</h3>
-          <p>Live positions will appear here after exchange integration is configured and reviewed.</p>
+          <h3>Real-money execution is disabled</h3>
+          <p>Signals can be reviewed and copied into paper trades. No live Binance orders are triggered.</p>
         </div>
       </div>
       <div className="section-heading closed-positions-heading">
@@ -853,17 +875,28 @@ function LiveTradesScreen() {
     <section className="page">
       <div className="page-heading">
         <div>
-          <div className="eyebrow">EXECUTION STATUS · NOT CONFIGURED</div>
+          <div className="eyebrow">EXECUTION STATUS · DISABLED</div>
           <h1>Live trades</h1>
-          <p>Real-money execution is disabled. This page will show live positions after a separate exchange integration is configured and reviewed.</p>
+          <p>Real-money execution is disabled. No valid READY signal means no trade; no order is sent from this page.</p>
         </div>
-        <span className="mode-pill">PAPER MODE ONLY</span>
+        <span className="mode-pill">LIVE ORDERS OFF</span>
+      </div>
+      <div className="scanner-safety-note">
+        Mainnet execution requires a fresh signal, an explicit final order confirmation, verified Binance
+        Futures permissions, available-margin and 1% equity-risk checks, duplicate-order protection, and
+        confirmed protective orders. Do not grant withdrawal permission to an API key.
       </div>
       <div className="table-card">
         <div className="empty-state">
           <div className="empty-icon">◉</div>
-          <h3>No live positions</h3>
-          <p>No exchange orders are submitted by SmartExit. Your trade intents and positions remain simulated in the paper portfolio.</p>
+          <h3>Live execution is not enabled</h3>
+          <p>
+            Configure and test your account connection in Binance API settings. This does not enable trading:
+            live order submission remains disabled until its safeguards are implemented and explicitly enabled.
+          </p>
+          <a className="button button-outline" href="/binance-settings.php">
+            Open Binance API settings
+          </a>
         </div>
       </div>
     </section>
@@ -872,10 +905,9 @@ function LiveTradesScreen() {
 
 function MarketScannerScreen({ onFillSetup }: { onFillSetup: (candidate: ScannerCandidate) => void }) {
   const [controls, setControls] = useState({
-    quoteAsset: 'USDT',
     timeframe: '15m' as ScannerCandidate['timeframe'],
     minimumVolume: 10_000_000,
-    limit: 15,
+    limit: 1000,
     atrPeriod: 10,
     multiplier: 3,
     maxAgeSeconds: 1800,
@@ -904,6 +936,7 @@ function MarketScannerScreen({ onFillSetup }: { onFillSetup: (candidate: Scanner
     try {
       const params = new URLSearchParams();
       Object.entries(controls).forEach(([key, value]) => params.set(key, String(value)));
+      params.set('quoteAsset', 'USDT');
       const result = await api<MarketScannerResponse>(`/market-scanner/candidates?${params}`);
       if (currentRequestId !== requestId.current) return;
       setData(result.data);
@@ -956,7 +989,7 @@ function MarketScannerScreen({ onFillSetup }: { onFillSetup: (candidate: Scanner
             PAPER TRADING <span className="eyebrow-separator">/</span> BINANCE USDⓈ-M FUTURES
           </div>
           <h1>Market scanner.</h1>
-          <p>Rule-based candidate ranking from completed candles. A score is not a probability of profit.</p>
+          <p>Scans every eligible Binance USDT-M perpetual using completed candles. A score is not a probability of profit.</p>
         </div>
         <div className="scanner-actions">
           <button className="button button-outline" onClick={() => setPaused((current) => !current)}>
@@ -975,12 +1008,8 @@ function MarketScannerScreen({ onFillSetup }: { onFillSetup: (candidate: Scanner
       <section className="panel scanner-controls" aria-label="Scanner controls">
         <label className="field">
           <span>Quote asset</span>
-          <select
-            value={controls.quoteAsset}
-            onChange={(event) => setControl('quoteAsset', event.target.value)}
-          >
+          <select value="USDT" disabled aria-label="Quote asset">
             <option value="USDT">USDT</option>
-            <option value="USDC">USDC</option>
           </select>
         </label>
         <label className="field">
@@ -1016,19 +1045,6 @@ function MarketScannerScreen({ onFillSetup }: { onFillSetup: (candidate: Scanner
             value={controls.minimumVolume}
             onChange={(event) => setControl('minimumVolume', Number(event.target.value))}
           />
-        </label>
-        <label className="field">
-          <span>Candidate limit</span>
-          <select
-            value={controls.limit}
-            onChange={(event) => setControl('limit', Number(event.target.value))}
-          >
-            {[5, 10, 15, 20, 30].map((limit) => (
-              <option key={limit} value={limit}>
-                {limit}
-              </option>
-            ))}
-          </select>
         </label>
         <label className="field">
           <span>ATR period</span>
@@ -1201,13 +1217,15 @@ function MarketScannerScreen({ onFillSetup }: { onFillSetup: (candidate: Scanner
                   <strong>{selected.supertrend.direction}</strong>
                 </div>
                 <div>
-                  <span>EMA 20 / 50 / 200</span>
+                  <span>EMA 9 / 20 / 50 / 100 / 200</span>
                   <strong>
-                    {selected.ema.ema20 === null ||
+                    {selected.ema.ema9 === null ||
+                    selected.ema.ema20 === null ||
                     selected.ema.ema50 === null ||
+                    selected.ema.ema100 === null ||
                     selected.ema.ema200 === null
                       ? 'Unavailable'
-                      : `${price(selected.ema.ema20)} / ${price(selected.ema.ema50)} / ${price(selected.ema.ema200)}`}
+                      : `${price(selected.ema.ema9)} / ${price(selected.ema.ema20)} / ${price(selected.ema.ema50)} / ${price(selected.ema.ema100)} / ${price(selected.ema.ema200)}`}
                   </strong>
                 </div>
                 <div>
@@ -1253,6 +1271,39 @@ function MarketScannerScreen({ onFillSetup }: { onFillSetup: (candidate: Scanner
                       ? new Date(selected.lastCandleCloseAt).toLocaleString()
                       : 'Unavailable'}
                   </strong>
+                </div>
+              </div>
+              <h3>Technical confirmation</h3>
+              <div className="scanner-detail-grid">
+                <div>
+                  <span>RSI (14)</span>
+                  <strong>{selected.indicators.rsi14 === null ? '—' : selected.indicators.rsi14.toFixed(1)}</strong>
+                </div>
+                <div>
+                  <span>MACD (12 / 26 / 9)</span>
+                  <strong>
+                    {selected.indicators.macdHistogram === null
+                      ? '—'
+                      : `Histogram ${selected.indicators.macdHistogram.toPrecision(5)}`}
+                  </strong>
+                </div>
+                <div>
+                  <span>Rolling VWAP (20 candles)</span>
+                  <strong>
+                    {selected.indicators.rollingVwap20 === null ? '—' : price(selected.indicators.rollingVwap20)}
+                  </strong>
+                </div>
+                <div>
+                  <span>Bollinger Bands (20, 2σ)</span>
+                  <strong>
+                    {selected.indicators.bollingerBands20 === null
+                      ? '—'
+                      : `${price(selected.indicators.bollingerBands20.lower)} / ${price(selected.indicators.bollingerBands20.middle)} / ${price(selected.indicators.bollingerBands20.upper)}`}
+                  </strong>
+                </div>
+                <div>
+                  <span>ADX (14)</span>
+                  <strong>{selected.indicators.adx14 === null ? '—' : selected.indicators.adx14.toFixed(1)}</strong>
                 </div>
               </div>
               <h3>Score breakdown</h3>

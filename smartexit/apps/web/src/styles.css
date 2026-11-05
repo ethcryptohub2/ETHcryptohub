@@ -89,6 +89,7 @@ button:disabled {
   background: transparent;
   color: #a9b5ae;
   text-align: left;
+  text-decoration: none;
   border-radius: 7px;
   min-height: 44px;
   padding: 0 12px;

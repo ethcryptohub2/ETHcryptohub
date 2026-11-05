@@ -3,12 +3,6 @@ declare(strict_types=1);
 
 require_once __DIR__ . '/auth-check.php';
 $user = requireUser();
-$signals = [
-    ['time' => date('H:i:s'), 'pair' => 'ETH/USDT', 'action' => 'LONG', 'leverage' => '3×', 'confidence' => 82],
-    ['time' => date('H:i:s', time() - 42), 'pair' => 'BTC/USDT', 'action' => 'SHORT', 'leverage' => '2×', 'confidence' => 74],
-    ['time' => date('H:i:s', time() - 118), 'pair' => 'SOL/USDT', 'action' => 'LONG', 'leverage' => '2×', 'confidence' => 91],
-    ['time' => date('H:i:s', time() - 205), 'pair' => 'ETH/USDT', 'action' => 'LONG', 'leverage' => '3×', 'confidence' => 68],
-];
 ?>
 <!doctype html>
 <html lang="en" class="dark">
@@ -42,6 +36,8 @@ $signals = [
         </div>
         <div class="flex shrink-0 items-center gap-2 sm:gap-4">
             <a href="smartexit.php" class="rounded-lg border border-emerald-400/20 bg-emerald-400/[0.05] px-2 py-2 text-[10px] font-medium text-emerald-300 transition hover:bg-emerald-400/[0.1] sm:px-3 sm:text-xs">SmartExit</a>
+            <a href="smartexit.php?screen=scanner" class="rounded-lg border border-cyan-400/20 px-2 py-2 text-[10px] font-medium text-cyan-300 transition hover:bg-cyan-400/[0.06] sm:px-3 sm:text-xs">Market scanner</a>
+            <a href="smartexit.php?screen=create" class="hidden rounded-lg px-2 py-2 text-xs text-slate-300 transition hover:bg-white/[0.04] hover:text-white sm:inline-flex sm:px-3">Trade setup</a>
             <?php if ($user['role'] === 'admin'): ?>
                 <a href="admin/dashboard.php" class="rounded-lg border border-cyan-400/20 px-2 py-2 text-[10px] font-medium text-cyan-300 transition hover:bg-cyan-400/[0.06] sm:px-3 sm:text-xs"><span class="sm:hidden">Admin</span><span class="hidden sm:inline">Admin panel</span></a>
             <?php endif; ?>
@@ -58,7 +54,7 @@ $signals = [
 <main class="mx-auto max-w-[1600px] px-4 py-7 sm:px-6 lg:px-8">
     <div class="mb-6 flex flex-wrap items-end justify-between gap-4">
         <div>
-            <p class="mono text-[10px] uppercase tracking-[.2em] text-cyan-300/70">Market operations · mainnet</p>
+            <p class="mono text-[10px] uppercase tracking-[.2em] text-cyan-300/70">Authenticated market workspace</p>
             <h1 class="mt-2 text-2xl font-semibold tracking-tight sm:text-3xl">Trading terminal</h1>
         </div>
         <div class="mono flex items-center gap-2 rounded-full border border-emerald-400/15 bg-emerald-400/[0.045] px-3 py-2 text-[10px] text-emerald-300">
@@ -93,31 +89,22 @@ $signals = [
         <div class="space-y-5">
             <article class="overflow-hidden rounded-2xl border border-slate-800 bg-[#0f1420]">
                 <div class="flex flex-wrap items-center justify-between gap-3 border-b border-slate-800 px-5 py-4">
-                    <div><h2 class="text-sm font-semibold">Agent signal stream</h2><p class="mt-1 text-xs text-slate-500">Illustrative signal log · not live execution advice</p></div>
-                    <span class="mono rounded-md border border-slate-700 px-2.5 py-1.5 text-[9px] text-slate-500">SIMULATED FEED</span>
+                    <div><h2 class="text-sm font-semibold">Binance futures setups</h2><p class="mt-1 text-xs text-slate-500">Open the authenticated scanner to load fresh, validated USDⓈ-M signals.</p></div>
+                    <span class="mono rounded-md border border-cyan-400/20 px-2.5 py-1.5 text-[9px] text-cyan-300">LIVE MARKET DATA · PAPER ONLY</span>
                 </div>
-                <div class="overflow-x-auto">
-                    <table class="w-full min-w-[650px] text-left text-xs">
-                        <thead class="mono border-b border-slate-800/80 text-[9px] uppercase tracking-[.13em] text-slate-500">
-                        <tr><th class="px-5 py-3 font-normal">Timestamp</th><th class="px-4 py-3 font-normal">Pair</th><th class="px-4 py-3 font-normal">Action</th><th class="px-4 py-3 font-normal">Leverage</th><th class="px-4 py-3 font-normal">Confidence</th><th class="px-5 py-3 font-normal">Signal</th></tr>
-                        </thead>
-                        <tbody class="divide-y divide-slate-800/70">
-                        <?php foreach ($signals as $signal): ?>
-                            <tr class="transition hover:bg-white/[0.02]">
-                                <td class="mono px-5 py-4 text-[10px] text-slate-500"><?= e($signal['time']) ?></td>
-                                <td class="mono px-4 py-4 text-slate-300"><?= e($signal['pair']) ?></td>
-                                <td class="px-4 py-4"><span class="rounded-md border px-2 py-1 text-[9px] font-medium <?= $signal['action'] === 'LONG' ? 'border-emerald-400/15 bg-emerald-400/[0.055] text-emerald-300' : 'border-rose-400/15 bg-rose-400/[0.055] text-rose-300' ?>"><?= e($signal['action']) ?></span></td>
-                                <td class="mono px-4 py-4 text-slate-400"><?= e($signal['leverage']) ?></td>
-                                <td class="mono px-4 py-4 text-slate-300"><?= e($signal['confidence']) ?>%</td>
-                                <td class="px-5 py-4"><span class="flex items-center gap-2 text-[10px] text-slate-400"><span class="size-1.5 rounded-full <?= $signal['action'] === 'LONG' ? 'bg-emerald-400' : 'bg-rose-400' ?>"></span>Model signal</span></td>
-                            </tr>
-                        <?php endforeach; ?>
-                        </tbody>
-                    </table>
+                <div class="p-5">
+                    <p class="max-w-2xl text-sm leading-6 text-slate-400">
+                        Signal candidates are calculated from Binance USDⓈ-M USDT perpetual market data and completed candles.
+                        A setup appears only when the scanner confirms its data and risk checks; otherwise it reports NO TRADE.
+                    </p>
+                    <div class="mt-5 flex flex-wrap gap-3">
+                        <a href="smartexit.php?screen=scanner" class="rounded-full bg-cyan-300 px-5 py-2.5 text-xs font-semibold text-slate-950 transition hover:bg-cyan-200">View validated setups <span class="ml-1">↗</span></a>
+                        <a href="smartexit.php?screen=create" class="rounded-full border border-slate-700 px-5 py-2.5 text-xs font-medium text-slate-200 transition hover:border-emerald-300/40 hover:text-emerald-200">Create paper trade</a>
+                    </div>
                 </div>
                 <div class="flex items-center justify-between border-t border-slate-800 px-5 py-3">
-                    <span class="mono text-[9px] text-slate-600">SAMPLE DATA · NO ORDERS ARE PLACED</span>
-                    <span class="mono text-[9px] text-slate-500">4 SIGNALS</span>
+                    <span class="mono text-[9px] text-slate-500">BINANCE USDⓈ-M FUTURES · USDT PERPETUALS</span>
+                    <span class="mono text-[9px] text-amber-300">NO LIVE ORDERS</span>
                 </div>
             </article>
 

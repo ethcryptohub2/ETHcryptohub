@@ -15,7 +15,7 @@ SmartExit is a local-first, safety-first **paper-trading** dashboard for testing
 - Use a kill switch and daily loss / per-trade risk controls enforced by the API.
 - View an honest `NOT_CONFIGURED` state for NEAR Intents. No token list, quote, swap, or transaction data is fabricated; swap submission is disabled.
 - Browse active Binance USDⓈ-M futures contracts by quote asset, symbol, and 24-hour volume. Live data drives paper simulations only; no orders are sent to Binance.
-- Scan a volume-ranked pool plus Binance top gainers/losers using completed futures candles, EMA 20/50/200, swing support/resistance, ATR/Supertrend, 24-hour momentum, and relative volume. Review risk-sized proposals and fill—not submit—the existing paper-trade form.
+- Scan every eligible Binance USDⓈ-M USDT perpetual using completed futures candles, EMA 9/20/50/100/200, RSI, MACD, rolling VWAP, Bollinger Bands, ADX, swing support/resistance, ATR/Supertrend, 24-hour momentum, and relative volume. Review risk-sized proposals and fill—not submit—the existing paper-trade form.
 
 ## ETHcryptohub integration
 
@@ -88,7 +88,7 @@ The API tests use an isolated in-memory SQLite adapter only; production persiste
 5. Restart the API and sign in again to confirm account positions and portfolio balances persist.
 6. Visit **NEAR Intents** to see why swaps are intentionally unavailable: the official service has no testnet, and this paper-only project does not request real-asset transactions.
 
-The **Live trades** page is intentionally empty and marked **NOT CONFIGURED**. SmartExit currently cannot place exchange orders or move wallet funds. Live-trade integration must be separately configured and reviewed before it is enabled.
+The **Live trades** page remains disabled. SmartExit currently cannot place exchange orders or move wallet funds. Mainnet order execution, per-account live opt-in, exchange permission verification, protective-order placement, fill reconciliation, and continuous live-position monitoring are not implemented; do not treat saved Binance credentials as enabling live trades.
 
 The prefilled form is a convenience/demo template only; its values are not market data. A paper position starts at the entry price you confirm. Manual simulated-price submission remains available for testing.
 

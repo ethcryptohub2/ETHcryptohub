@@ -134,10 +134,21 @@ export interface ScannerCandidate {
     multiplier: number;
   };
   ema: {
+    ema9: number | null;
     ema20: number | null;
     ema50: number | null;
+    ema100: number | null;
     ema200: number | null;
     direction: 'BULLISH' | 'BEARISH' | 'MIXED' | 'UNAVAILABLE';
+  };
+  indicators: {
+    rsi14: number | null;
+    macdLine: number | null;
+    macdSignal: number | null;
+    macdHistogram: number | null;
+    rollingVwap20: number | null;
+    bollingerBands20: { lower: number; middle: number; upper: number } | null;
+    adx14: number | null;
   };
   supportResistance: {
     support: number | null;
