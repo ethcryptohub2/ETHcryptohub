@@ -2,6 +2,14 @@ import { Pool, type PoolConfig, type QueryResultRow } from 'pg';
 
 const globalForPg = globalThis as typeof globalThis & { ethcryptohubPool?: Pool };
 
+function sslOptions(hostname: string) {
+  const mode = process.env.SUPABASE_DB_SSLMODE?.trim().toLowerCase();
+  return {
+    rejectUnauthorized: mode !== 'require',
+    servername: hostname,
+  };
+}
+
 export function isDatabaseConfigured() {
   const connectionString = process.env.SUPABASE_DB_URL ?? process.env.DATABASE_URL;
   return Boolean(
@@ -19,7 +27,7 @@ function config(): PoolConfig {
     if (!['postgres:', 'postgresql:'].includes(url.protocol)) throw new Error('Database URL must use PostgreSQL.');
     return {
       connectionString,
-      ssl: { rejectUnauthorized: true, servername: url.hostname },
+      ssl: sslOptions(url.hostname),
       max: 5,
       connectionTimeoutMillis: 10_000,
       application_name: 'ethcryptohub-next',
@@ -38,7 +46,7 @@ function config(): PoolConfig {
     database: process.env.SUPABASE_DB_NAME ?? 'postgres',
     user,
     password,
-    ssl: { rejectUnauthorized: true, servername: host },
+    ssl: sslOptions(host),
     max: 5,
     connectionTimeoutMillis: 10_000,
     application_name: 'ethcryptohub-next',

@@ -27,7 +27,7 @@ The application no longer uses a PHP origin, PHP proxy, MySQL database, or PHP r
 | Variable | Requirement |
 |---|---|
 | `SUPABASE_DB_URL` | PostgreSQL connection string; or use the `SUPABASE_DB_HOST`, `SUPABASE_DB_PORT`, `SUPABASE_DB_NAME`, `SUPABASE_DB_USER`, and `SUPABASE_DB_PASSWORD` variables |
-| `SUPABASE_DB_SSLMODE` | `require` |
+| `SUPABASE_DB_SSLMODE` | `require` enables TLS encryption without certificate verification; unset to verify the server certificate using Node's trusted CAs |
 | `AUTH_SECRET` | At least 32 random characters |
 | `RESEND_API_KEY` | Required for real verification-email delivery |
 | `MAIL_FROM` | Sender address on a domain verified with Resend |
