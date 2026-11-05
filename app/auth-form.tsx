@@ -31,6 +31,11 @@ export function AuthForm({
   const [busy, setBusy] = useState(false);
   const [signupComplete, setSignupComplete] = useState(false);
   const [canResend, setCanResend] = useState(false);
+  const [verificationRequired, setVerificationRequired] = useState(false);
+
+  function openVerificationPage() {
+    router.push(`/verify-email?email=${encodeURIComponent(email)}`);
+  }
 
   useEffect(() => {
     if (mode !== 'verify' || !initialEmail || !/^[0-9]{6}$/.test(initialCode) || autoSubmittedCode.current === initialCode) return;
@@ -63,8 +68,12 @@ export function AuthForm({
       };
       if (!response.ok) {
         if (result.code === 'EMAIL_DELIVERY_FAILED') setCanResend(true);
-        if (mode === 'login' && result.code === 'EMAIL_NOT_VERIFIED') {
-          router.push(`/verify-email?email=${encodeURIComponent(email)}`);
+        const needsVerification = mode === 'login'
+          && response.status === 403
+          && (result.code === 'EMAIL_NOT_VERIFIED' || result.error?.toLowerCase().includes('verify your email'));
+        if (needsVerification) {
+          setVerificationRequired(true);
+          openVerificationPage();
           return;
         }
         throw new Error(result.error ?? 'Request could not be completed.');
@@ -95,6 +104,11 @@ export function AuthForm({
       <p className="muted">{mode === 'verify' ? 'Enter the six-digit code sent to your email.' : 'Secure access to your trading intelligence terminal.'}</p>
       {emailVerified && <p className="success">Email verified. Sign in to continue.</p>}
       {error && <p role="alert" className="error">{error}</p>}
+      {verificationRequired && (
+        <p role="status" className="success">
+          Your email needs verification. <button type="button" onClick={openVerificationPage}>Enter verification code</button>
+        </p>
+      )}
       {canResend && <p><Link href={`/resend-verification?email=${encodeURIComponent(email)}`}>Request another verification email</Link></p>}
       {notice && <p role="status" className="success">{notice}</p>}
       <form ref={formRef} className="stack" onSubmit={submit}>
