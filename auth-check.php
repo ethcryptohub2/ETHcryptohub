@@ -131,6 +131,10 @@ function requireAdmin(): array
             <meta name="viewport" content="width=device-width, initial-scale=1">
             <title>Access denied | ETHcryptohub</title>
             <script src="https://cdn.tailwindcss.com"></script>
+            <script>
+                window.va = window.va || function () { (window.vaq = window.vaq || []).push(arguments); };
+            </script>
+            <script defer src="/_vercel/insights/script.js"></script>
         </head>
         <body class="grid min-h-screen place-items-center bg-[#07090e] px-4 text-slate-100">
             <main class="max-w-md rounded-2xl border border-slate-800 bg-[#0f1420] p-8 text-center">

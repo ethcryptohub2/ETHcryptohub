@@ -162,6 +162,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Space+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet">
     <style>body{font-family:'Space Grotesk',sans-serif;background:#07090e}.mono{font-family:'DM Mono',monospace}</style>
+    <script>
+        window.va = window.va || function () { (window.vaq = window.vaq || []).push(arguments); };
+    </script>
+    <script defer src="/_vercel/insights/script.js"></script>
 </head>
 <body class="grid min-h-screen place-items-center bg-[#07090e] px-4 py-10 text-slate-100">
 <main class="w-full max-w-md">

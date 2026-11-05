@@ -64,6 +64,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     <meta name="theme-color" content="#07090e">
     <title>Resend verification | ETHcryptohub</title>
     <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        window.va = window.va || function () { (window.vaq = window.vaq || []).push(arguments); };
+    </script>
+    <script defer src="/_vercel/insights/script.js"></script>
 </head>
 <body class="grid min-h-screen place-items-center bg-[#07090e] px-4 py-10 text-slate-100">
 <main class="w-full max-w-md rounded-2xl border border-slate-800 bg-[#0f1420] p-7 shadow-2xl shadow-black/30 sm:p-8">
