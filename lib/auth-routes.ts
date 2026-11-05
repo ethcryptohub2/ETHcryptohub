@@ -181,7 +181,13 @@ export async function authRoute(action: string, request: NextRequest) {
   } catch (error) {
     if (error instanceof ZodError) return jsonError('Please check the submitted information.', 422);
     if (error instanceof EmailDeliveryError) {
-      return jsonError('Account saved, but email could not be sent. Configure Resend and request another code.', 503);
+      const signupFailed = action === 'signup';
+      return NextResponse.json({
+        error: signupFailed
+          ? 'Your account was created, but the verification email could not be sent. Check the email provider configuration, then request another code.'
+          : 'The verification email could not be sent. Check the email provider configuration and try again.',
+        ...(signupFailed ? { code: 'EMAIL_DELIVERY_FAILED' } : {}),
+      }, { status: 503, headers: { 'Cache-Control': 'no-store' } });
     }
     if (error instanceof Error && error.message.includes('duplicate key')) return jsonError('An account with that email already exists.', 409);
     console.error('Authentication route failed:', error instanceof Error ? error.message : 'Unknown error');

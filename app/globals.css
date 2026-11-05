@@ -27,6 +27,11 @@ label { display: grid; gap: 7px; color: #94a3b8; font-size: 13px; }
 .muted { color:#94a3b8; }
 .error { border:1px solid #7f1d1d; background:#450a0a66; color:#fecaca; padding:12px; border-radius:10px; }
 .success { border:1px solid #14532d; background:#052e1666; color:#bbf7d0; padding:12px; border-radius:10px; }
+.auth-dialog-backdrop { position:fixed; inset:0; z-index:10; display:grid; place-items:center; padding:16px; background:#000b; }
+.auth-dialog { width:min(440px, 100%); padding:24px; border:1px solid #14532d; border-radius:18px; background:#0f1420; box-shadow:0 24px 80px #000b; }
+.auth-dialog h2 { margin-top:0; color:#bbf7d0; }
+.auth-dialog p { line-height:1.6; }
+.auth-dialog button { width:100%; margin-top:8px; }
 .hero { padding:72px 0 42px; }
 .hero h1 { max-width:760px; font-size:clamp(38px, 7vw, 72px); line-height:1.04; letter-spacing:-.05em; margin:14px 0; }
 .grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(230px,1fr)); gap:16px; }
