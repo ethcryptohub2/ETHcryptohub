@@ -6,7 +6,7 @@ RUN npm ci && npm run build --workspace @smartexit/web
 FROM php:8.4-apache
 RUN apt-get update \
     && apt-get install -y --no-install-recommends ca-certificates libcurl4-openssl-dev libpq-dev \
-    && docker-php-ext-install curl pdo_pgsql pdo_mysql pdo_sqlite \
+    && docker-php-ext-install curl pdo_pgsql pdo_mysql \
     && a2enmod headers rewrite \
     && rm -rf /var/lib/apt/lists/*
 
