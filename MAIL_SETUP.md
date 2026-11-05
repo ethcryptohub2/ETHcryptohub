@@ -14,4 +14,6 @@ Alternatively, for Resend:
 
 After configuration, restart the local Next.js server or redeploy the Vercel project. Register a new account or use `/resend-verification` to request another code. Check Resend's delivery events or Gmail's sent mail, and the recipient's spam folder, if a message does not arrive. A successful provider response confirms handoff, not inbox placement.
 
+After changing a Vercel environment variable, redeploy the project so the new deployment uses the updated mail credentials.
+
 Never add the API key to client-side code or a `NEXT_PUBLIC_*` variable. Do not send it through chat or commit it to source control.
