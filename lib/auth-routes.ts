@@ -150,7 +150,12 @@ export async function authRoute(action: string, request: NextRequest) {
       if (blocked) return blocked;
       const body = z.object({ email: emailSchema }).parse(await request.json());
       const peer = request.headers.get('x-vercel-forwarded-for') ?? 'unknown';
-      if (!(await consumeRateLimit(`resend:${peer}`, 10, 3600))) return jsonError('Too many resend requests. Try again later.', 429);
+      if (!(await consumeRateLimit(`resend:${peer}`, 10, 3600))) {
+        return NextResponse.json(
+          { error: 'Too many verification requests from this network. Please wait up to one hour before trying again.' },
+          { status: 429, headers: { 'Cache-Control': 'no-store', 'Retry-After': '3600' } },
+        );
+      }
       if (!(await consumeRateLimit(`resend-email:${body.email.toLowerCase()}`, 3, 3600))) {
         return NextResponse.json({ data: { notice: 'If this address needs verification, a new code will be sent.' } });
       }

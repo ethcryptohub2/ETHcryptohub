@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { AuthError, requireAdmin } from '../../../../lib/auth';
-import { query } from '../../../../lib/db';
+import { pool, query } from '../../../../lib/db';
 import { validCsrf } from '../../../../lib/http';
+import { z } from 'zod';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -31,21 +32,42 @@ export async function POST(request: NextRequest) {
   if (!validCsrf(request)) return NextResponse.json({ error: 'Refresh and retry.' }, { status: 403 });
   try {
     const admin = await requireAdmin();
-    const body = await request.json() as { action?: unknown; userId?: unknown };
-    if (!Number.isSafeInteger(body.userId) || Number(body.userId) < 1 || typeof body.action !== 'string') {
+    const parsed = z.object({
+      action: z.enum(['toggle_x_verification', 'toggle_active', 'delete_user', 'mark_email_verified']),
+      userId: z.number().int().positive().safe(),
+    }).safeParse(await request.json());
+    if (!parsed.success) {
       return NextResponse.json({ error: 'Invalid user action.' }, { status: 400 });
     }
-    const target = Number(body.userId);
-    if (target === admin.id && ['toggle_active', 'delete_user'].includes(body.action)) {
-      return NextResponse.json({ error: 'You cannot suspend or delete your own administrator account.' }, { status: 400 });
+    const { action, userId: target } = parsed.data;
+    if (target === admin.id && ['toggle_active', 'delete_user', 'mark_email_verified'].includes(action)) {
+      return NextResponse.json({ error: 'You cannot suspend, delete, or change verification for your own administrator account.' }, { status: 400 });
     }
     let result;
-    if (body.action === 'toggle_x_verification') {
+    if (action === 'toggle_x_verification') {
       result = await query('UPDATE public.users SET is_x_verified = 1 - is_x_verified WHERE id = $1', [target]);
-    } else if (body.action === 'toggle_active') {
+    } else if (action === 'toggle_active') {
       result = await query('UPDATE public.users SET is_active = 1 - is_active WHERE id = $1 AND id <> $2', [target, admin.id]);
-    } else if (body.action === 'delete_user') {
+    } else if (action === 'delete_user') {
       result = await query('DELETE FROM public.users WHERE id = $1 AND id <> $2', [target, admin.id]);
+    } else if (action === 'mark_email_verified') {
+      const client = await pool().connect();
+      try {
+        await client.query('BEGIN');
+        result = await client.query(
+          'UPDATE public.users SET is_email_verified = 1, email_verification_token = NULL WHERE id = $1 AND is_email_verified = 0',
+          [target],
+        );
+        if (result.rowCount === 1) {
+          await client.query('DELETE FROM public.email_verification_codes WHERE user_id = $1', [target]);
+        }
+        await client.query('COMMIT');
+      } catch (error) {
+        await client.query('ROLLBACK');
+        throw error;
+      } finally {
+        client.release();
+      }
     } else {
       return NextResponse.json({ error: 'Unsupported user action.' }, { status: 400 });
     }

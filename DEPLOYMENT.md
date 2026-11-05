@@ -37,7 +37,7 @@ The application no longer uses a PHP origin, PHP proxy, MySQL database, or PHP r
 | `ADMIN_SETUP_TOKEN` | Optional, temporary token for one-time administrator setup |
 
 3. Deploy and verify the landing page and account routes. Apply database migrations before testing signup or login.
-4. Create the first admin through `/admin/setup` using the temporary setup token. Remove `ADMIN_SETUP_TOKEN` after provisioning.
+4. Create the first admin through `/admin/setup`: add a private `ADMIN_SETUP_TOKEN` of at least 32 characters to the Vercel Production environment, redeploy, then create the administrator with a strong password. Remove `ADMIN_SETUP_TOKEN` and redeploy after provisioning. Admins can manually mark a pending user's email as verified from `/admin`; confirm the account belongs to the user before using this bypass.
 
 ## 3. Optional SmartExit API
 
