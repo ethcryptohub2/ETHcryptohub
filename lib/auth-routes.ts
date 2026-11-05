@@ -150,14 +150,17 @@ export async function authRoute(action: string, request: NextRequest) {
       if (blocked) return blocked;
       const body = z.object({ email: emailSchema }).parse(await request.json());
       const peer = request.headers.get('x-vercel-forwarded-for') ?? 'unknown';
-      if (!(await consumeRateLimit(`resend:${peer}`, 10, 3600))) {
+      if (!(await consumeRateLimit(`resend-v2:${peer}`, 10, 600))) {
         return NextResponse.json(
-          { error: 'Too many verification requests from this network. Please wait up to one hour before trying again.' },
-          { status: 429, headers: { 'Cache-Control': 'no-store', 'Retry-After': '3600' } },
+          { error: 'Too many verification requests from this network. Please wait up to 10 minutes before trying again.' },
+          { status: 429, headers: { 'Cache-Control': 'no-store', 'Retry-After': '600' } },
         );
       }
-      if (!(await consumeRateLimit(`resend-email:${body.email.toLowerCase()}`, 3, 3600))) {
-        return NextResponse.json({ data: { notice: 'If this address needs verification, a new code will be sent.' } });
+      if (!(await consumeRateLimit(`resend-email-v2:${body.email.toLowerCase()}`, 3, 600))) {
+        return NextResponse.json(
+          { error: 'Too many verification emails were requested for this address. Please wait up to 10 minutes before trying again.' },
+          { status: 429, headers: { 'Cache-Control': 'no-store', 'Retry-After': '600' } },
+        );
       }
       const lookup = await query<{ id: number; is_email_verified: number; is_active: number }>(
         'SELECT id, is_email_verified, is_active FROM public.users WHERE email = $1 LIMIT 1',
