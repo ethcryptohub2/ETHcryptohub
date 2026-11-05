@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
 import {
   api,
+  getCsrfToken,
   money,
   price,
   type FuturesMarkets,
@@ -298,9 +299,20 @@ function App() {
     navTo('create');
   };
 
-  const signOut = () => {
+  const signOut = async () => {
     const form = document.getElementById('ethcryptohub-logout-form');
     if (form instanceof HTMLFormElement) {
+      try {
+        const token = await getCsrfToken();
+        const tokenInput = form.elements.namedItem('csrf_token');
+        if (!(tokenInput instanceof HTMLInputElement)) {
+          throw new Error('The secure sign-out form is unavailable.');
+        }
+        tokenInput.value = token;
+      } catch (reason) {
+        setError(reason instanceof Error ? reason.message : 'Unable to prepare secure sign-out.');
+        return;
+      }
       form.requestSubmit();
       return;
     }

@@ -1,14 +1,17 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" class="dark">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta name="theme-color" content="#111717" />
+    <meta name="theme-color" content="#07090e" />
     <meta name="description" content="SmartExit is a transparent paper-trading risk dashboard." />
-    <title>SmartExit — Paper Trading</title>
+    <title>SmartExit paper terminal | ETHcryptohub</title>
   </head>
   <body>
     <div id="root"></div>
+    <form id="ethcryptohub-logout-form" method="post" action="/logout.php" hidden>
+      <input type="hidden" name="csrf_token" value="" />
+    </form>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

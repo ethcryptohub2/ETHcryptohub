@@ -219,15 +219,40 @@ async function readApiResponse<T>(response: Response): Promise<ApiResponse<T>> {
   }
 }
 
+let csrfTokenPromise: Promise<string> | null = null;
+
+export function getCsrfToken(): Promise<string> {
+  if (!csrfTokenPromise) {
+    csrfTokenPromise = (async () => {
+      let response: Response;
+      try {
+        response = await fetch('/smartexit-api.php?csrf=1', {
+          credentials: 'same-origin',
+          headers: { Accept: 'application/json' },
+        });
+      } catch {
+        throw new Error('Could not reach the secure session endpoint. Reload the page and try again.');
+      }
+
+      const body = await readApiResponse<{ csrfToken: string }>(response);
+      if (!response.ok || !body.data?.csrfToken) {
+        throw new Error(body.error?.message ?? `Unable to load a secure session token (${response.status}).`);
+      }
+      return body.data.csrfToken;
+    })().catch((reason: unknown) => {
+      csrfTokenPromise = null;
+      throw reason;
+    });
+  }
+  return csrfTokenPromise;
+}
+
 export async function api<T>(
   path: string,
   init?: RequestInit,
 ): Promise<{ data: T; meta?: ApiResponse<T>['meta'] }> {
   const method = (init?.method ?? 'GET').toUpperCase();
-  const csrfToken = document.querySelector<HTMLMetaElement>('meta[name="csrf-token"]')?.content;
-  if (!['GET', 'HEAD', 'OPTIONS'].includes(method) && !csrfToken) {
-    throw new Error('Your secure session token is missing. Reload the page and try again.');
-  }
+  const csrfToken = ['GET', 'HEAD', 'OPTIONS'].includes(method) ? null : await getCsrfToken();
   let response: Response;
   try {
     response = await fetch(`/smartexit-api.php?path=${encodeURIComponent(`/api${path}`)}`, {

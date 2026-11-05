@@ -16,6 +16,11 @@ if (!in_array($method, ['GET', 'POST', 'PUT'], true)) {
     exit;
 }
 
+if ($method === 'GET' && ($_GET['csrf'] ?? null) === '1') {
+    echo json_encode(['data' => ['csrfToken' => csrf_token()]]);
+    exit;
+}
+
 $targetValue = $_GET['path'] ?? null;
 if (!is_string($targetValue) || strlen($targetValue) > 2048) {
     http_response_code(400);

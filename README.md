@@ -5,6 +5,7 @@ ETHcryptohub is a PHP account, identity, and trading dashboard with an integrate
 - PHP 8.4 with PDO for account data and protected admin tools.
 - Supabase PostgreSQL for application accounts and SmartExit paper-trade data.
 - SmartExit Node.js API and Vite frontend; order placement is disabled.
+- SmartExit's React/TypeScript shell is served through an authenticated PHP route; CSRF tokens are obtained from the PHP session before state-changing requests.
 - Railway runs the PHP and Node services. Vercel provides the public same-origin proxy.
 
 ## Local development
