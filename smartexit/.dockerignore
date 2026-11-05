@@ -1,0 +1,15 @@
+.git
+.env
+.env.*
+!.env.example
+**/node_modules/
+**/dist/
+**/coverage/
+data/
+*.sqlite
+*.sqlite-*
+*.db
+*.db-*
+*.pem
+*.key
+*.log

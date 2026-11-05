@@ -1,0 +1,459 @@
+:root {
+  color-scheme: dark;
+  color: #e2e8f0;
+  background: #07090e;
+  --ink: #e2e8f0;
+  --muted: #94a3b8;
+  --green: #10b981;
+  --line: #1e293b;
+  --panel: #0f1420;
+}
+
+body,
+#root,
+.app-shell {
+  background: #07090e;
+  color: #e2e8f0;
+}
+
+.sidebar {
+  background: #090d14;
+  border-right: 1px solid #1e293b;
+}
+
+.brand-mark {
+  background: #10b981;
+  color: #07110e;
+}
+
+.main-content {
+  background: #07090e;
+}
+
+.topbar {
+  border-color: #1e293b;
+}
+
+.breadcrumb,
+.breadcrumb span,
+.eyebrow,
+.form-step {
+  color: #64748b;
+}
+
+.paper-notice {
+  background: #0d111c;
+  border-color: #1e293b;
+  color: #94a3b8;
+}
+
+.paper-notice strong {
+  color: #6ee7b7;
+}
+
+.page-heading h1,
+.section-heading h2,
+.metric-value,
+.market-symbol,
+.panel-heading h3,
+.form-section h3,
+.risk-preview h3,
+.kill-panel h3,
+.near-status-panel h2,
+.near-separation h3,
+.scanner-detail-heading h2,
+.scanner-detail > h3,
+.empty-state h3,
+.parameter strong,
+.preview-row strong,
+.daily-risk-box strong {
+  color: #e2e8f0;
+}
+
+.page-heading p,
+.section-heading p,
+.panel-heading p,
+.metric-detail,
+.empty-state p,
+.field > span,
+.side-select legend,
+.form-section > p,
+.section-title-row p,
+.risk-preview > p,
+.near-separation > p,
+.near-status-panel > p,
+.scanner-rationale,
+.parameter span,
+.market-source,
+.market-empty {
+  color: #94a3b8;
+}
+
+.summary-card,
+.table-card,
+.panel,
+.scanner-candidate,
+.scanner-detail,
+.near-status-panel,
+.near-separation,
+.detail-parameters,
+.update-panel,
+.timeline-panel,
+.risk-form,
+.risk-preview,
+.kill-panel {
+  background: #0f1420;
+  border-color: #1e293b;
+  color: #cbd5e1;
+}
+
+.topbar-actions .button-outline,
+.button-outline,
+.button-quiet,
+.icon-button {
+  background: #101725;
+  border-color: #263248;
+  color: #cbd5e1;
+}
+
+.button-outline:hover,
+.button-quiet:hover,
+.icon-button:hover {
+  background: #172033;
+  border-color: #334155;
+  color: #f8fafc;
+}
+
+.button-primary {
+  background: #10b981;
+  color: #06120e;
+  box-shadow: none;
+}
+
+.button-primary:hover {
+  background: #34d399;
+}
+
+.mode-pill {
+  background: #0b1916;
+  border-color: #145440;
+  color: #6ee7b7;
+}
+
+.topbar-actions .button-outline {
+  text-decoration: none;
+}
+
+.summary-card,
+.table-card,
+.panel,
+.scanner-candidate,
+.scanner-detail,
+.near-status-panel,
+.near-separation,
+.risk-form,
+.kill-panel {
+  border-radius: 10px;
+}
+
+.summary-card {
+  box-shadow: 0 10px 24px rgb(0 0 0 / 12%);
+}
+
+.card-topline,
+.subtle-count,
+.scanner-meta,
+.scanner-candidate-stats,
+.scanner-candidate-bottom,
+.market-reference,
+.preview-row,
+.quiet-text,
+.quiet-empty,
+.page-footer,
+.event-id-info,
+.disclosure,
+.event-list li small {
+  color: #64748b;
+}
+
+.table-card table th {
+  background: #0b1018;
+  border-color: #1e293b;
+  color: #64748b;
+}
+
+.table-card table td {
+  border-color: #1e293b;
+  color: #cbd5e1;
+}
+
+.table-card table td small,
+.current-price {
+  color: #64748b;
+}
+
+.clickable-row:hover {
+  background: #141b29;
+}
+
+.count-badge,
+.progress-pill {
+  background: #111827;
+  border-color: #263248;
+  color: #94a3b8;
+}
+
+.side-pill.long,
+.scanner-badge.long,
+.scanner-live {
+  background: #0b211a;
+  color: #6ee7b7;
+}
+
+.side-pill.short,
+.scanner-badge.short {
+  background: #261316;
+  color: #fda4af;
+}
+
+.scanner-badge.wait {
+  background: #1e293b;
+  color: #94a3b8;
+}
+
+.empty-icon,
+.metric-icon.blue,
+.metric-icon.green,
+.metric-icon.red,
+.metric-icon.amber,
+.event-mark,
+.preview-icon,
+.kill-icon,
+.near-network,
+.scanner-detail-grid,
+.daily-risk-box {
+  background: #111827;
+  border-color: #263248;
+}
+
+.metric-icon.green,
+.preview-icon,
+.event-mark {
+  color: #6ee7b7;
+}
+
+.daily-risk-box > p,
+.level-section,
+.form-actions,
+.preview-divider,
+.preview-warning,
+.safe-guard,
+.portfolio-reset,
+.near-divider,
+.near-roadmap,
+.page-footer,
+.timeline-panel,
+.event-list li {
+  border-color: #1e293b;
+}
+
+.form-section,
+.form-actions {
+  background: #0f1420;
+}
+
+.field input,
+.field select,
+.side-choice,
+.market-error button {
+  background: #090d14;
+  border-color: #263248;
+  color: #e2e8f0;
+}
+
+.field input:focus,
+.field select:focus {
+  border-color: #10b981;
+  box-shadow: 0 0 0 2px rgb(16 185 129 / 12%);
+}
+
+.field input::placeholder {
+  color: #64748b;
+}
+
+.side-choice.selected.long-choice {
+  background: #0b211a;
+  border-color: #16835d;
+  color: #6ee7b7;
+}
+
+.side-choice.selected.short-choice {
+  background: #261316;
+  border-color: #9f3b45;
+  color: #fda4af;
+}
+
+.side-choice b,
+.side-choice small,
+.field em,
+.input-wrap i {
+  color: #64748b;
+}
+
+.form-actions,
+.risk-preview,
+.kill-panel,
+.near-separation {
+  background: #0c111b;
+}
+
+.preview-note,
+.closed-note,
+.scanner-detail-grid,
+.near-network,
+.separation-callout,
+.daily-risk-box {
+  background: #111827;
+  border-color: #263248;
+  color: #94a3b8;
+}
+
+.preview-note p,
+.closed-note,
+.kill-panel > p,
+.portfolio-reset p,
+.safe-guard,
+.daily-risk-box > div > span:not(.eyebrow),
+.daily-risk-box > p,
+.near-separation p,
+.near-roadmap p,
+.scanner-detail-grid span,
+.scanner-stale-note,
+.scanner-breakdown > div {
+  color: #94a3b8;
+}
+
+.preview-row strong,
+.near-network strong,
+.near-facts strong,
+.scanner-candidate-stats b,
+.scanner-detail-grid strong,
+.scanner-levels b,
+.scanner-countdown {
+  color: #cbd5e1;
+}
+
+.scanner-rank-tags > span {
+  background: #111827;
+  border-color: #263248;
+  color: #94a3b8;
+}
+
+.scanner-candidate.selected {
+  border-color: #10b981;
+  box-shadow: 0 0 0 1px rgb(16 185 129 / 18%);
+}
+
+.scanner-warnings,
+.scanner-degraded,
+.status-not-configured {
+  background: #211b10;
+  border-color: #4a3b1a;
+  color: #fcd34d;
+}
+
+.scanner-empty,
+.scanner-source,
+.near-doc-link,
+.near-facts span,
+.near-roadmap > span {
+  color: #64748b;
+}
+
+.status-open,
+.near-status-panel .status-connected {
+  background: #0b211a;
+  border-color: #145440;
+  color: #6ee7b7;
+}
+
+.status-closed {
+  background: #151a22;
+  border-color: #263248;
+  color: #94a3b8;
+}
+
+.error-alert,
+.error-message {
+  background: #261316;
+  border-color: #71343d;
+  color: #fda4af;
+}
+
+.success-message {
+  background: #0b211a;
+  border: 1px solid #145440;
+  color: #6ee7b7;
+}
+
+.error-alert button,
+.cancel-trade,
+.portfolio-reset h4 {
+  color: #fda4af;
+}
+
+.page-footer {
+  border-color: #1e293b;
+}
+
+.login-shell {
+  background: radial-gradient(ellipse at 75% 15%, rgb(56 189 248 / 8%), transparent 36%), #07090e;
+}
+
+.login-card {
+  background: #0f1420;
+  border-color: #1e293b;
+  box-shadow: 0 18px 55px rgb(0 0 0 / 30%);
+}
+
+.login-card h1 {
+  color: #e2e8f0;
+}
+
+.login-card > p,
+.login-card > small {
+  color: #94a3b8;
+}
+
+.wallet-connected {
+  background: #0b211a;
+  border-color: #145440;
+  color: #6ee7b7;
+}
+
+@media (max-width: 600px) {
+  .topbar {
+    min-width: 0;
+    gap: 7px;
+  }
+
+  .topbar-actions {
+    min-width: 0;
+    gap: 6px;
+  }
+
+  .topbar-actions .button {
+    padding: 5px 7px;
+    font-size: 9px;
+  }
+
+  .app-home-link {
+    white-space: nowrap;
+  }
+}
+
+@media (max-width: 380px) {
+  .app-home-link {
+    display: none;
+  }
+}

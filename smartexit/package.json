@@ -1,0 +1,26 @@
+{
+  "name": "smartexit",
+  "version": "1.0.0",
+  "private": true,
+  "workspaces": [
+    "apps/api",
+    "apps/web"
+  ],
+  "scripts": {
+    "dev": "concurrently -k -n api,web \"npm:dev --workspace @smartexit/api\" \"npm:dev --workspace @smartexit/web\"",
+    "build": "npm run build --workspace @smartexit/api && npm run build --workspace @smartexit/web",
+    "test": "npm run test --workspace @smartexit/api",
+    "lint": "npm run lint --workspace @smartexit/api && npm run lint --workspace @smartexit/web",
+    "typecheck": "npm run typecheck --workspace @smartexit/api && npm run typecheck --workspace @smartexit/web",
+    "format": "prettier --write \"apps/**/*.{ts,tsx,css,json,html}\" \"*.json\" README.md \"docs/{ARCHITECTURE,API,TEST_PLAN,DEMO_SCRIPT,BUILD_STATUS}.md\" \".github/**/*.yml\"",
+    "format:check": "prettier --check \"apps/**/*.{ts,tsx,css,json,html}\" \"*.json\" README.md \"docs/{ARCHITECTURE,API,TEST_PLAN,DEMO_SCRIPT,BUILD_STATUS}.md\" \".github/**/*.yml\""
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.2",
+    "prettier": "^3.5.3",
+    "typescript": "^5.8.2"
+  },
+  "engines": {
+    "node": ">=22.5"
+  }
+}
