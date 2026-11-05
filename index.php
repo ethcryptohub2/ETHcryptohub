@@ -59,6 +59,10 @@ $serverTime = time();
             *, *::before, *::after { scroll-behavior: auto !important; transition-duration: .01ms !important; }
         }
     </style>
+    <script>
+        window.va = window.va || function () { (window.vaq = window.vaq || []).push(arguments); };
+    </script>
+    <script defer src="/_vercel/insights/script.js"></script>
 </head>
 <body class="min-h-screen overflow-x-hidden text-slate-100 antialiased selection:bg-sky-400/30 selection:text-white">
 <div class="pointer-events-none fixed inset-x-0 top-0 -z-10 h-[34rem] bg-[radial-gradient(ellipse_at_50%_0%,rgba(16,185,129,0.07),transparent_58%)]"></div>

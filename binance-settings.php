@@ -196,6 +196,10 @@ if (isset($_GET['saved'])) {
     <meta name="theme-color" content="#07090e">
     <title>Binance API settings | ETHcryptohub</title>
     <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        window.va = window.va || function () { (window.vaq = window.vaq || []).push(arguments); };
+    </script>
+    <script defer src="/_vercel/insights/script.js"></script>
 </head>
 <body class="min-h-screen bg-[#07090e] text-slate-100">
 <main class="mx-auto max-w-3xl px-5 py-10 sm:px-8">

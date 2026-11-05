@@ -42,6 +42,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Settings | ETHcryptohub</title>
     <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        window.va = window.va || function () { (window.vaq = window.vaq || []).push(arguments); };
+    </script>
+    <script defer src="/_vercel/insights/script.js"></script>
 </head>
 <body class="min-h-screen bg-slate-950 text-slate-100">
 <header class="border-b border-slate-800">

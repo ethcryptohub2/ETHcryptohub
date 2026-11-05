@@ -39,6 +39,10 @@ $assetBase = '/smartexit/apps/web/dist/';
             <link rel="stylesheet" href="<?= e($assetBase . ltrim($stylesheet, '/')) ?>">
         <?php endif; ?>
     <?php endforeach; ?>
+    <script>
+        window.va = window.va || function () { (window.vaq = window.vaq || []).push(arguments); };
+    </script>
+    <script defer src="/_vercel/insights/script.js"></script>
 </head>
 <body>
 <div id="root"></div>
