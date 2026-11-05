@@ -4,6 +4,12 @@ export class EmailDeliveryError extends Error {
   constructor(message: string) { super(message); this.name = 'EmailDeliveryError'; }
 }
 
+type MailTransportFailure = Error & {
+  code?: string;
+  command?: string;
+  responseCode?: number;
+};
+
 export async function sendVerificationCode(email: string, code: string) {
   const gmailUser = process.env.GMAIL_USER?.trim();
   const gmailAppPassword = process.env.GMAIL_APP_PASSWORD?.replace(/\s/g, '');
@@ -29,7 +35,14 @@ export async function sendVerificationCode(email: string, code: string) {
         text: `Your verification code is ${code}. It expires in 10 minutes.`,
       });
       return;
-    } catch {
+    } catch (error) {
+      const failure = error instanceof Error ? error as MailTransportFailure : null;
+      console.error('Gmail verification email delivery failed:', {
+        errorName: error instanceof Error ? error.name : 'UnknownError',
+        code: failure?.code,
+        command: failure?.command,
+        responseCode: failure?.responseCode,
+      });
       throw new EmailDeliveryError('Gmail SMTP could not send the verification email. Check the Gmail address and App Password.');
     }
   }

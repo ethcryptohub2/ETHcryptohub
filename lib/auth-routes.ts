@@ -184,8 +184,8 @@ export async function authRoute(action: string, request: NextRequest) {
       const signupFailed = action === 'signup';
       return NextResponse.json({
         error: signupFailed
-          ? 'Your account was created, but the verification email could not be sent. Check the email provider configuration, then request another code.'
-          : 'The verification email could not be sent. Check the email provider configuration and try again.',
+          ? `Your account was created, but the verification email could not be sent. ${error.message}`
+          : error.message,
         ...(signupFailed ? { code: 'EMAIL_DELIVERY_FAILED' } : {}),
       }, { status: 503, headers: { 'Cache-Control': 'no-store' } });
     }
