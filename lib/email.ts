@@ -18,11 +18,18 @@ export async function sendVerificationCode(email: string, code: string) {
       throw new EmailDeliveryError('Gmail delivery requires both GMAIL_USER and GMAIL_APP_PASSWORD.');
     }
 
+    const portValue = process.env.GMAIL_SMTP_PORT?.trim() || '465';
+    if (portValue !== '465' && portValue !== '587') {
+      throw new EmailDeliveryError('GMAIL_SMTP_PORT must be 465 (SSL) or 587 (STARTTLS).');
+    }
+    const port = Number(portValue);
+
     try {
       const transporter = nodemailer.createTransport({
         host: 'smtp.gmail.com',
-        port: 465,
-        secure: true,
+        port,
+        secure: port === 465,
+        requireTLS: port === 587,
         auth: { user: gmailUser, pass: gmailAppPassword },
         connectionTimeout: 10_000,
         greetingTimeout: 10_000,
@@ -43,7 +50,14 @@ export async function sendVerificationCode(email: string, code: string) {
         command: failure?.command,
         responseCode: failure?.responseCode,
       });
-      throw new EmailDeliveryError('Gmail SMTP could not send the verification email. Check the Gmail address and App Password.');
+      if (failure?.code === 'EAUTH') {
+        throw new EmailDeliveryError(
+          'Gmail rejected SMTP authentication. Confirm GMAIL_USER matches the account that created the Google App Password; changing port 465/587 will not fix invalid credentials.',
+        );
+      }
+      throw new EmailDeliveryError(
+        `Gmail SMTP could not send the verification email${failure?.code ? ` (${failure.code})` : ''}. Check the sender settings and selected SMTP port.`,
+      );
     }
   }
 

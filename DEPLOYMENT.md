@@ -31,6 +31,7 @@ The application no longer uses a PHP origin, PHP proxy, MySQL database, or PHP r
 | `AUTH_SECRET` | At least 32 random characters |
 | `GMAIL_USER` | Gmail address used as the verification-email sender (optional if using Resend) |
 | `GMAIL_APP_PASSWORD` | Google App Password for `GMAIL_USER`; requires Google 2-Step Verification. Never use your normal Google password. |
+| `GMAIL_SMTP_PORT` | Optional Gmail SMTP port: `465` (SSL, default) or `587` (STARTTLS) |
 | `RESEND_API_KEY` | Optional alternative to Gmail SMTP |
 | `MAIL_FROM` | Sender address on a domain verified with Resend; used only with `RESEND_API_KEY` |
 | `BINANCE_CREDENTIALS_KEY` | 32 random bytes encoded as 64 hex characters |

@@ -6,6 +6,7 @@ For Gmail SMTP:
 
 - `GMAIL_USER`: the Gmail address used as the sender.
 - `GMAIL_APP_PASSWORD`: a Google App Password for that account (Google 2-Step Verification must be enabled).
+- `GMAIL_SMTP_PORT`: optional; `465` uses SSL and `587` uses STARTTLS. Defaults to `465`. A Gmail authentication error means the account or App Password is wrong; changing ports will not repair credentials.
 
 Alternatively, for Resend:
 
