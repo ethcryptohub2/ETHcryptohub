@@ -29,8 +29,10 @@ The application no longer uses a PHP origin, PHP proxy, MySQL database, or PHP r
 | `SUPABASE_DB_URL` | PostgreSQL connection string; or use the `SUPABASE_DB_HOST`, `SUPABASE_DB_PORT`, `SUPABASE_DB_NAME`, `SUPABASE_DB_USER`, and `SUPABASE_DB_PASSWORD` variables |
 | `SUPABASE_DB_SSLMODE` | `require` enables TLS encryption without certificate verification; unset to verify the server certificate using Node's trusted CAs |
 | `AUTH_SECRET` | At least 32 random characters |
-| `RESEND_API_KEY` | Required for real verification-email delivery |
-| `MAIL_FROM` | Sender address on a domain verified with Resend |
+| `GMAIL_USER` | Gmail address used as the verification-email sender (optional if using Resend) |
+| `GMAIL_APP_PASSWORD` | Google App Password for `GMAIL_USER`; requires Google 2-Step Verification. Never use your normal Google password. |
+| `RESEND_API_KEY` | Optional alternative to Gmail SMTP |
+| `MAIL_FROM` | Sender address on a domain verified with Resend; used only with `RESEND_API_KEY` |
 | `BINANCE_CREDENTIALS_KEY` | 32 random bytes encoded as 64 hex characters |
 | `ADMIN_SETUP_TOKEN` | Optional, temporary token for one-time administrator setup |
 
@@ -52,7 +54,8 @@ If these values are not configured, SmartExit returns an explicit unavailable re
 
 ## 4. Email and exchange safeguards
 
-- Verify the sender domain with Resend before testing signup or resend-verification.
+- For Gmail SMTP, enable Google 2-Step Verification, create an App Password, then set `GMAIL_USER` and `GMAIL_APP_PASSWORD` as private Vercel environment variables. Do not use or share your regular Google password.
+- If using Resend instead, verify the sender domain before testing signup or resend-verification.
 - Binance credentials are encrypted at rest and account connectivity checks are read-only. Keep withdrawal permissions disabled.
 - Live trading is not implemented or enabled. SmartExit's trade intents are paper-only.
 - Do not create a shared default user or password. Provision accounts through signup and the protected admin setup.
@@ -60,7 +63,7 @@ If these values are not configured, SmartExit returns an explicit unavailable re
 ## 5. Production verification
 
 1. Check `/`, `/login`, and `/signup`.
-2. Register with a mailbox you control and verify delivery in Resend's event log and the recipient inbox.
+2. Register with a mailbox you control and verify delivery in Gmail Sent or Resend's event log, and the recipient inbox.
 3. Verify that unverified accounts cannot sign in and that resend verification works.
 4. Sign in and test `/dashboard`, `/settings`, `/binance`, `/scanner`, `/smartexit`, and `/admin`.
 5. Confirm the scanner reports errors when market data, account risk settings, or the database are unavailable; it must not substitute guessed risk values.
