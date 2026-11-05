@@ -54,7 +54,7 @@ The application no longer uses a PHP origin, PHP proxy, MySQL database, or PHP r
 2. Register with a mailbox you control and verify delivery in Gmail Sent or Resend's event log, and the recipient inbox.
 3. Verify that unverified accounts cannot sign in and that resend verification works.
 4. Sign in and test `/dashboard`, `/settings`, `/binance`, `/scanner`, and `/admin`.
-5. Confirm the scanner uses the public Bybit linear-futures feed with Binance as a fallback, labels the active source, and limits each scan to the top-volume markets plus major movers.
+5. Confirm the scanner uses the public Bybit linear-futures feed with Binance as a fallback, retries Bybit from the authenticated browser if Vercel cannot reach either feed, labels the active source, and limits each scan to the top-volume markets plus major movers.
 6. Confirm paper-trading and wallet routes return `410 Gone`.
 
 Do not treat a successful Vercel build or local server as proof of production deployment. Public deployment also requires the GitHub push, Vercel project configuration, applied database migrations, and private provider credentials.

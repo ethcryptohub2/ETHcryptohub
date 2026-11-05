@@ -5,7 +5,16 @@ import Link from 'next/link';
 import type {
   MarketScannerCandidate as ScannerCandidate,
   MarketScannerResponse,
+  ScannerConfiguration,
 } from '../../smartexit/apps/api/src/services/market-scanner';
+import { BybitLinearFuturesMarketsService } from '../../smartexit/apps/api/src/services/binance-futures-markets';
+import { BinanceMarketScannerService } from '../../smartexit/apps/api/src/services/market-scanner';
+
+const browserFetch: typeof fetch = (...args) => globalThis.fetch(...args);
+const browserScanner = new BinanceMarketScannerService(
+  new BybitLinearFuturesMarketsService(browserFetch),
+  browserFetch,
+);
 
 export function Scanner() {
   const [data, setData] = useState<MarketScannerResponse | null>(null);
@@ -17,7 +26,21 @@ export function Scanner() {
     setError('');
     try {
       const params = new URLSearchParams({ timeframe, minimumVolume: '10000000', limit: '30', atrPeriod: '10', multiplier: '3', maxAgeSeconds: '1800', minimumScore: '60', quoteAsset: 'USDT' });
+      const configuration: ScannerConfiguration = {
+        timeframe,
+        quoteAsset: 'USDT',
+        minimumVolume: 10_000_000,
+        limit: 30,
+        atrPeriod: 10,
+        multiplier: 3,
+        maxAgeSeconds: 1800,
+        minimumScore: 60,
+      };
       const response = await fetch(`/api/scanner?${params}`, { credentials: 'same-origin', cache: 'no-store' });
+      if (response.status === 502) {
+        setData(await browserScanner.scan(configuration));
+        return;
+      }
       const body = await response.json() as { data?: MarketScannerResponse; error?: string };
       if (!response.ok || !body.data) throw new Error(body.error ?? `Scanner request failed (${response.status}).`);
       setData(body.data);
