@@ -34,14 +34,18 @@ function diagnosticMessage(error: unknown, fallback: string): string {
   return error.message.replace(/[\r\n\t]/g, ' ').slice(0, 300) || fallback;
 }
 
-export async function GET() {
+export async function GET(request: NextRequest) {
   try {
     const admin = await requireAdmin();
     await consumeScannerAdminRateLimit(admin.id, 'read');
+    const parsed = z.object({
+      auditPage: z.coerce.number().int().min(1).max(100_000).default(1),
+    }).safeParse(Object.fromEntries(request.nextUrl.searchParams));
+    if (!parsed.success) return NextResponse.json({ error: 'Invalid scanner audit log page.' }, { status: 422 });
     const [coins, sync, audit] = await Promise.all([
       getScannerCoinUniverse(),
       getScannerSyncState(),
-      getScannerAuditLog(40),
+      getScannerAuditLog(parsed.data.auditPage),
     ]);
     const data = coins.reduce((counts, coin) => {
       counts.total += 1;
@@ -51,7 +55,7 @@ export async function GET() {
       else counts.inactive += 1;
       return counts;
     }, { total: 0, enabled: 0, disabled: 0, active: 0, inactive: 0 });
-    return NextResponse.json({ data: { coins, metrics: data, sync, audit } }, {
+    return NextResponse.json({ data: { coins, metrics: data, sync, audit: audit.entries, auditTotal: audit.total, auditPage: audit.page } }, {
       headers: { 'Cache-Control': 'no-store' },
     });
   } catch (error) {

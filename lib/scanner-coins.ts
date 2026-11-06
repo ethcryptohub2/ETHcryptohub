@@ -1,4 +1,5 @@
 import { pool, query } from './db';
+import { TABLE_PAGE_SIZE } from './pagination';
 import {
   fetchBinanceUsdtPerpetuals,
   type BinanceContractMetadata,
@@ -346,14 +347,20 @@ export async function getScannerSyncState() {
   return result.rows[0] ?? null;
 }
 
-export async function getScannerAuditLog(limit = 50) {
-  const result = await query(
+export async function getScannerAuditLog(page = 1) {
+  const count = await query<{ count: string }>(
+    'SELECT COUNT(*)::text AS count FROM public.scanner_coin_audit_log',
+  );
+  const total = Number(count.rows[0]?.count ?? 0);
+  const lastPage = Math.max(1, Math.ceil(total / TABLE_PAGE_SIZE));
+  const currentPage = Math.min(page, lastPage);
+  const entries = await query(
     `SELECT id, action, symbol, admin_user_id, previous_state, new_state, reason, created_at
        FROM public.scanner_coin_audit_log
-      ORDER BY created_at DESC LIMIT $1`,
-    [Math.min(100, Math.max(1, limit))],
+      ORDER BY created_at DESC, id DESC LIMIT $1 OFFSET $2`,
+    [TABLE_PAGE_SIZE, (currentPage - 1) * TABLE_PAGE_SIZE],
   );
-  return result.rows;
+  return { entries: entries.rows, total, page: currentPage };
 }
 
 export async function consumeScannerAdminRateLimit(

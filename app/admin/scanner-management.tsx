@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { TABLE_PAGE_SIZE } from '../../lib/pagination';
 import { TablePagination } from './table-pagination';
 
@@ -43,6 +43,8 @@ type State = {
     last_error: string | null;
   } | null;
   audit: AuditEntry[];
+  auditTotal: number;
+  auditPage: number;
 };
 
 type Filter = 'ALL' | 'ENABLED' | 'DISABLED' | 'ACTIVE' | 'INACTIVE';
@@ -52,17 +54,19 @@ export function AdminScannerManagement() {
   const [search, setSearch] = useState('');
   const [filter, setFilter] = useState<Filter>('ALL');
   const [page, setPage] = useState(1);
+  const [auditPage, setAuditPage] = useState(1);
   const [selected, setSelected] = useState<string[]>([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
 
-  async function load() {
-    const response = await fetch('/api/admin/scanner-management', { cache: 'no-store' });
+  const load = useCallback(async (requestedAuditPage = auditPage) => {
+    const response = await fetch(`/api/admin/scanner-management?auditPage=${requestedAuditPage}`, { cache: 'no-store' });
     const body = await response.json() as { data?: State; error?: string };
     if (!response.ok || !body.data) throw new Error(body.error ?? 'Could not load scanner management.');
     setState(body.data);
-  }
+    if (body.data.auditPage !== requestedAuditPage) setAuditPage(body.data.auditPage);
+  }, [auditPage]);
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
@@ -71,7 +75,7 @@ export function AdminScannerManagement() {
       );
     }, 0);
     return () => window.clearTimeout(timer);
-  }, []);
+  }, [load]);
 
   const visibleCoins = useMemo(() => (state?.coins ?? []).filter((coin) => {
     if (search && !coin.symbol.includes(search.trim().toUpperCase())) return false;
@@ -101,7 +105,8 @@ export function AdminScannerManagement() {
       });
       const body = await response.json() as { data?: { added?: number; changed?: number; updated?: number; inactive?: number; timeframe?: string; candidates?: number; scannerStatus?: string }; error?: string };
       if (!response.ok) throw new Error(body.error ?? 'Scanner management action failed.');
-      await load();
+      setAuditPage(1);
+      await load(1);
       setSelected([]);
       setNotice(payload.action === 'sync_now'
         ? `Sync complete: ${body.data?.added ?? 0} added, ${body.data?.updated ?? 0} updated, ${body.data?.inactive ?? 0} inactive.`
@@ -202,6 +207,7 @@ export function AdminScannerManagement() {
       <div className="stack scanner-audit-list">
         <h3>Recent scanner audit log</h3>
         {state.audit.map((entry) => <p key={entry.id}><span className="mono">{entry.action}</span> {entry.symbol ?? 'universe'} · {new Date(entry.created_at).toLocaleString()}{entry.reason ? ` · ${entry.reason}` : ''}</p>)}
+        <TablePagination page={state.auditPage} total={state.auditTotal} label="audit records" onPageChange={setAuditPage} />
       </div>
     </>}
   </section>;
