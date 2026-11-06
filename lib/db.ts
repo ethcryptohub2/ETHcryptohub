@@ -54,7 +54,8 @@ function config(): PoolConfig {
     return {
       connectionString,
       ssl: sslOptions(url.hostname),
-      max: 5,
+      max: 1,
+      idleTimeoutMillis: 5_000,
       connectionTimeoutMillis: 10_000,
       application_name: 'ethcryptohub-next',
     };
@@ -73,7 +74,8 @@ function config(): PoolConfig {
     user,
     password,
     ssl: sslOptions(host),
-    max: 5,
+    max: 1,
+    idleTimeoutMillis: 5_000,
     connectionTimeoutMillis: 10_000,
     application_name: 'ethcryptohub-next',
   };
