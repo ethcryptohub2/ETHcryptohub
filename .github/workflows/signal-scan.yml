@@ -1,0 +1,27 @@
+name: Scheduled signal scan
+
+on:
+  schedule:
+    - cron: '7,37 * * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: scheduled-signal-scan
+  cancel-in-progress: false
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 1
+    steps:
+      - name: Trigger the production signal scan
+        env:
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+        run: |
+          test -n "$CRON_SECRET" || { echo "Configure the CRON_SECRET repository Actions secret."; exit 1; }
+          curl --fail-with-body --silent --show-error --max-time 55 \
+            -H "Authorization: Bearer ${CRON_SECRET}" \
+            "https://cryptohub.vercel.app/api/cron/signal-scan"

@@ -74,7 +74,7 @@ describe('market research provider', () => {
     expect(result.news.data?.negativeVotes).toBe(1);
   });
 
-  it('falls back to Binance funding and open-interest history when Bybit data is unavailable', async () => {
+  it('does not mix Binance funding into a Bybit market snapshot when Bybit metrics are unavailable', async () => {
     const request: typeof fetch = async (input) => {
       const url = new URL(String(input));
       if (url.hostname === 'api.bybit.com') return new Response('unavailable', { status: 503 });
@@ -103,9 +103,8 @@ describe('market research provider', () => {
       price: 100,
     });
 
-    expect(result.derivatives.status).toBe('LIVE');
-    expect(result.derivatives.source).toContain('BINANCE');
-    expect(result.derivatives.data?.fundingRatePercent).toBeCloseTo(0.02);
-    expect(result.derivatives.data?.openInterestChangePercent).toBeCloseTo(20);
+    expect(result.derivatives.status).toBe('UNAVAILABLE');
+    expect(result.derivatives.source).toBeNull();
+    expect(result.derivatives.data).toBeNull();
   });
 });

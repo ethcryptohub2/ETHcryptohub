@@ -135,7 +135,7 @@ describe('market scanner indicators', () => {
 });
 
 describe('Binance market scanner service', () => {
-  it('falls back to Binance candles when the selected public exchange candle request fails', async () => {
+  it('does not mix Binance candles into a failed Bybit market snapshot', async () => {
     const now = 241 * 60_000;
     const closedCandles = Array.from({ length: 240 }, (_, index) => candle(100 + index * 0.2, index));
     const market = snapshot(now);
@@ -149,7 +149,7 @@ describe('Binance market scanner service', () => {
     const result = await service.scan(config);
 
     expect(result.exchange).toBe('BYBIT');
-    expect(result.candidates[0]?.status).toBe('READY');
+    expect(result.candidates[0]?.status).toBe('DATA_UNAVAILABLE');
   });
 
   it('limits top-volume results while including the leading gainers and losers', async () => {
@@ -180,6 +180,24 @@ describe('Binance market scanner service', () => {
     const result = await service.scan({ ...config, limit: 1 });
 
     expect(result.candidates.map((candidate) => candidate.symbol).sort()).toEqual(['BTCUSDT', 'ETHUSDT']);
+  });
+
+  it('scans every requested background-batch symbol beyond the ranked display limit', async () => {
+    const now = 241 * 60_000;
+    const candles = Array.from({ length: 240 }, (_, index) => candle(100 + index * 0.2, index));
+    const markets = snapshot(now);
+    const btc = markets.symbols[0]!;
+    const eth = { ...btc, symbol: 'ETHUSDT', baseAsset: 'ETH', quoteVolume24h: 12_000_000 };
+    const service = new BinanceMarketScannerService(
+      { list: async () => ({ ...markets, symbols: [btc, eth] }) },
+      async () => new Response(JSON.stringify(candles.map(binanceRow))),
+      () => now,
+    );
+
+    const result = await service.scan({ ...config, symbols: ['BTCUSDT', 'ETHUSDT'], limit: 1 });
+
+    expect(result.candidates.map((candidate) => candidate.symbol).sort()).toEqual(['BTCUSDT', 'ETHUSDT']);
+    expect(result.candidates.find((candidate) => candidate.symbol === 'ETHUSDT')?.marketRank).toContain('TOP_GAINER');
   });
 
   it('bounds candle requests to the configured market limit plus the top mover lists', async () => {

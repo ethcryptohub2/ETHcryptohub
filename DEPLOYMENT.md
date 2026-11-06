@@ -5,6 +5,7 @@
 - **Vercel:** Next.js web application and server routes.
 - **Supabase:** PostgreSQL database for users, sessions, rate limits, and encrypted Binance API credentials.
 - **Resend:** email verification delivery.
+- **Vercel Cron + Web Push:** scheduled signal evaluation, per-user notification delivery, and browser push subscriptions.
 
 The application no longer uses a PHP origin, PHP proxy, MySQL database, or PHP runtime.
 
@@ -14,6 +15,10 @@ The application no longer uses a PHP origin, PHP proxy, MySQL database, or PHP r
 2. Apply these migrations in order using the SQL editor or a trusted migration runner:
    - `supabase/migrations/202611050001_initial_schema.sql`
    - `supabase/migrations/202611050003_nextjs_auth.sql`
+   - `supabase/migrations/202611060001_market_research.sql`
+   - `supabase/migrations/202611060002_signal_notifications.sql`
+   - `supabase/migrations/202611060003_scanner_coin_management.sql`
+   - `supabase/migrations/202611060004_subscriptions.sql`
    - `202611050002_smartexit.sql` is legacy and is not required by the current app. Do not drop its tables from an existing database; they may contain historical user data.
 3. Keep the database reachable only through server-side credentials. The app does not expose database credentials to browser code.
 4. Copy the PostgreSQL connection string or host, port, database name, user, and password from Supabase project settings.
@@ -36,9 +41,15 @@ The application no longer uses a PHP origin, PHP proxy, MySQL database, or PHP r
 | `MAIL_FROM` | Sender address on a domain verified with Resend; used only with `RESEND_API_KEY` |
 | `BINANCE_CREDENTIALS_KEY` | 32 random bytes encoded as 64 hex characters; encrypts user and market-research provider credentials |
 | `ADMIN_SETUP_TOKEN` | Optional, temporary token for one-time administrator setup |
+| `CRON_SECRET` | At least 32 random characters; authorizes the scheduled signal scan route |
+| `VAPID_PUBLIC_KEY` | Public key from a VAPID key pair; used to create browser push subscriptions |
+| `VAPID_PRIVATE_KEY` | Private VAPID key; server-only, never expose to browser code |
+| `VAPID_SUBJECT` | Optional VAPID contact URI such as `mailto:ops@example.com` |
+| `SUBSCRIPTION_CONTACT_EMAIL` | Optional support address displayed for manual premium-payment instructions |
 
 3. Deploy and verify the landing page and account routes. Apply database migrations before testing signup or login.
 4. Create the first admin through `/admin/setup`: add a private `ADMIN_SETUP_TOKEN` of at least 32 characters to the Vercel Production environment, redeploy, then create the administrator with a strong password. Remove `ADMIN_SETUP_TOKEN` and redeploy after provisioning. Admins can manually mark a pending user's email as verified from `/admin`; confirm the account belongs to the user before using this bypass.
+5. On the free Vercel Hobby plan, configure the GitHub repository Actions secret `CRON_SECRET` to the same value as the Vercel Production environment variable. The GitHub Actions workflow calls the protected production scan endpoint every 30 minutes. GitHub scheduled workflows can be delayed, and the standard free private-repository Actions allowance is shared across workflows. Vercel itself is configured with a once-daily backup invocation because Hobby does not support more frequent Vercel Cron schedules.
 
 ## 3. Email and exchange safeguards
 
@@ -46,8 +57,16 @@ The application no longer uses a PHP origin, PHP proxy, MySQL database, or PHP r
 - If using Resend instead, verify the sender domain before testing signup or resend-verification.
 - Binance credentials are encrypted at rest and account connectivity checks are read-only. Keep withdrawal permissions disabled.
 - Apply `supabase/migrations/202611060001_market_research.sql` before using admin provider settings. Admins can enter Glassnode, CryptoPanic, and CoinGlass API keys at `/admin`; keys are encrypted at rest and never returned to the browser. Configure the private `BINANCE_CREDENTIALS_KEY` before saving keys.
-- Public Bybit/Binance funding and open-interest endpoints require no key. CryptoPanic, Glassnode, and CoinGlass feeds remain unavailable until their keys are set by an admin. CoinGlass heatmap access depends on its provider plan.
-- Glassnode exchange netflow is on-chain exchange-flow context, not verified smart-wallet attribution. CryptoPanic votes are community votes, not independently verified sentiment. The browser fallback deliberately does not receive provider keys.
+- Apply `supabase/migrations/202611060002_signal_notifications.sql` before using notifications. Generate a VAPID key pair (for example, `npx web-push generate-vapid-keys`) and set both keys as private Vercel variables. Never put the private key in a `NEXT_PUBLIC_*` variable.
+- Apply `supabase/migrations/202611060003_scanner_coin_management.sql` before using Scanner Management. The admin can use **Sync Now** to seed the Binance USDⓈ-M USDT perpetual universe; the protected cron also synchronizes it at least every 15 minutes. Automatic sync preserves manual admin disables and records audit history.
+- Apply `supabase/migrations/202611060004_subscriptions.sql` before deploying subscription-gated scanner and notification features. New accounts receive a seven-day trial; accounts that existed when this migration runs receive a one-time seven-day launch grace period beginning at migration time. License codes are stored as hashes keyed with `AUTH_SECRET`, and `SUBSCRIPTION_CONTACT_EMAIL` is optional.
+- The protected `/api/cron/signal-scan` endpoint scans a bounded batch of up to 10 enabled pairs on one supported timeframe (5m, 15m, 1h, 4h) and persists results for the user scanner to read. On the free setup, GitHub Actions triggers it every 30 minutes (with possible schedule delays) and Vercel Cron provides a once-daily backup. Set the GitHub Actions `CRON_SECRET` repository secret to the same value as Vercel's Production `CRON_SECRET`. Coverage depends on the enabled-pair count; lifecycle checks run on each successful invocation. A Vercel Pro upgrade is not required, but the scan cadence is slower and less exact than the original one-minute schedule.
+- The scanner currently supports 5m, 15m, 1h, and 4h timeframes. Default signal validity is 10, 25, 60, and 240 minutes respectively; administrators can change these values from `/admin`. The 1m and 3m timeframes are not supported by the current scanner and are not enabled by this feature.
+- Entry invalidation uses a configurable entry band of ±0.25 ATR around the generated reference entry by default. It is an informational invalidation rule, not an order trigger.
+- Foreground notification history synchronizes through the authenticated API; the dashboard refreshes it every 12 seconds. Web Push uses the service worker for background delivery where the browser and operating system support it. Browser/OS permission must be granted; no notification or sound is guaranteed when permission or system audio is disabled. Browser audio starts only after explicit user interaction.
+- Push subscriptions are stored server-side with user ownership. Invalid push endpoints are deleted. Quiet hours and Do Not Disturb suppress push and in-page sound; in-app history remains available.
+- Scanner prices, exchange eligibility, and candles use Binance USDⓈ-M Futures. Binance public market endpoints require no private API key; scanner requests do not fall back to another exchange. CryptoPanic, Glassnode, and CoinGlass feeds remain unavailable until their keys are set by an admin. CoinGlass heatmap access depends on its provider plan.
+- Glassnode exchange netflow is on-chain exchange-flow context, not verified smart-wallet attribution. CryptoPanic votes are community votes, not independently verified sentiment. Provider keys remain server-side.
 - Binance API credentials are used only for read-only connectivity checks; the app does not create simulated or live orders.
 - Do not create a shared default user or password. Provision accounts through signup and the protected admin setup.
 
@@ -57,7 +76,7 @@ The application no longer uses a PHP origin, PHP proxy, MySQL database, or PHP r
 2. Register with a mailbox you control and verify delivery in Gmail Sent or Resend's event log, and the recipient inbox.
 3. Verify that unverified accounts cannot sign in and that resend verification works.
 4. Sign in and test `/dashboard`, `/settings`, `/binance`, `/scanner`, and `/admin`.
-5. Confirm the scanner filters top-volume, top-gainer, and top-loser lists; explains READY/WAIT decisions; and uses timeframe-appropriate candle freshness. Confirm configured research feeds show LIVE only when provider data validates and otherwise explain missing keys or provider access.
+5. In `/admin`, synchronize the Binance Futures universe, verify the pair count exceeds the old fixed list, and test individual and bulk enable/disable. Confirm admin-disabled pairs stay disabled after sync. In `/scanner`, verify background batch results use Binance data, stale results are non-actionable, and configured research feeds show LIVE only when provider data validates.
 6. Confirm paper-trading and wallet routes return `410 Gone`.
 
 Do not treat a successful Vercel build or local server as proof of production deployment. Public deployment also requires the GitHub push, Vercel project configuration, applied database migrations, and private provider credentials.

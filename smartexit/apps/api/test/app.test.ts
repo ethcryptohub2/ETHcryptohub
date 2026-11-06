@@ -942,15 +942,15 @@ describe('Binance futures market-data adapter', () => {
     },
   ];
 
-  it('includes all tradable contract types and sorts volume descending within quote assets', async () => {
+  it('includes only tradable USDT perpetuals and sorts by quote volume', async () => {
     const requestMock = vi.fn<typeof fetch>(async (input) => {
       const body = String(input).includes('exchangeInfo') ? contracts : tickers;
       return new Response(JSON.stringify(body), { status: 200 });
     });
     const service = new BinanceFuturesMarketsService(requestMock);
     const result = await service.list();
-    expect(result.symbols.map((item) => item.symbol)).toEqual(['ETHUSDT', 'BTCUSDT', 'BTCUSDT_261225']);
-    expect(result.symbols[2]?.contractType).toBe('CURRENT_QUARTER');
+    expect(result.symbols.map((item) => item.symbol)).toEqual(['ETHUSDT', 'BTCUSDT']);
+    expect(result.symbols.every((item) => item.contractType === 'PERPETUAL' && item.quoteAsset === 'USDT')).toBe(true);
     expect(requestMock).toHaveBeenCalledTimes(2);
   });
 

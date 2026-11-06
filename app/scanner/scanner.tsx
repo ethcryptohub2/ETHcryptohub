@@ -5,27 +5,14 @@ import Link from 'next/link';
 import type {
   MarketScannerCandidate as ScannerCandidate,
   MarketScannerResponse,
-  ScannerConfiguration,
 } from '../../smartexit/apps/api/src/services/market-scanner';
-import { BybitLinearFuturesMarketsService } from '../../smartexit/apps/api/src/services/binance-futures-markets';
-import {
-  BinanceMarketScannerService,
-  recommendedMaxAgeSeconds,
-} from '../../smartexit/apps/api/src/services/market-scanner';
-import { ConfiguredMarketResearchProvider } from '../../smartexit/apps/api/src/services/market-research';
+import { recommendedMaxAgeSeconds } from '../../smartexit/apps/api/src/services/market-scanner';
+import { SignalCountdown } from '../countdown';
 
-const browserFetch: typeof fetch = (...args) => globalThis.fetch(...args);
-const browserResearch = new ConfiguredMarketResearchProvider({
-  glassnode: null,
-  cryptopanic: null,
-  coinglass: null,
-}, browserFetch);
-const browserScanner = new BinanceMarketScannerService(
-  new BybitLinearFuturesMarketsService(browserFetch),
-  browserFetch,
-  Date.now,
-  browserResearch,
-);
+type SignalMetadata = {
+  signals: Record<string, { id: string; generatedAt: string; expiresAt: string; status: string } | null>;
+  serverNow: string;
+};
 
 function formatPrice(value: number): string {
   return value.toLocaleString(undefined, { maximumSignificantDigits: 8 });
@@ -33,11 +20,12 @@ function formatPrice(value: number): string {
 
 export function Scanner() {
   const [data, setData] = useState<MarketScannerResponse | null>(null);
+  const [signalMetadata, setSignalMetadata] = useState<SignalMetadata | null>(null);
+  const [notificationWarning, setNotificationWarning] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
   const [timeframe, setTimeframe] = useState<ScannerCandidate['timeframe']>('15m');
   const [rankFilter, setRankFilter] = useState<'ALL' | ScannerCandidate['marketRank'][number]>('ALL');
-  const [browserFallback, setBrowserFallback] = useState(false);
   const load = useCallback(async () => {
     setLoading(true);
     setError('');
@@ -53,26 +41,17 @@ export function Scanner() {
         minimumScore: '60',
         quoteAsset: 'USDT',
       });
-      const configuration: ScannerConfiguration = {
-        timeframe,
-        quoteAsset: 'USDT',
-        minimumVolume: 10_000_000,
-        limit: 30,
-        atrPeriod: 10,
-        multiplier: 3,
-        maxAgeSeconds,
-        minimumScore: 60,
-      };
       const response = await fetch(`/api/scanner?${params}`, { credentials: 'same-origin', cache: 'no-store' });
-      if (response.status === 502) {
-        setData(await browserScanner.scan(configuration));
-        setBrowserFallback(true);
-        return;
-      }
-      const body = await response.json() as { data?: MarketScannerResponse; error?: string };
+      const body = await response.json() as {
+        data?: MarketScannerResponse;
+        error?: string;
+        signalMetadata?: SignalMetadata;
+        notificationWarning?: string;
+      };
       if (!response.ok || !body.data) throw new Error(body.error ?? `Scanner request failed (${response.status}).`);
       setData(body.data);
-      setBrowserFallback(false);
+      setSignalMetadata(body.signalMetadata ?? null);
+      setNotificationWarning(body.notificationWarning ?? '');
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : 'Live scanner data is unavailable.');
     } finally {
@@ -81,7 +60,7 @@ export function Scanner() {
   }, [timeframe]);
   useEffect(() => {
     const initial = window.setTimeout(() => void load(), 0);
-    const timer = window.setInterval(() => void load(), 30_000);
+    const timer = window.setInterval(() => void load(), 60_000);
     return () => { window.clearTimeout(initial); window.clearInterval(timer); };
   }, [load]);
   const candidates = (data?.candidates ?? []).filter(
@@ -102,8 +81,8 @@ export function Scanner() {
       <div className="scanner-heading-row"><div><h1>Market scanner</h1><p className="muted">High-conviction technical setups with transparent market context.</p></div><div className={`scanner-status ${data?.status === 'DEGRADED' ? 'is-warning' : ''}`}>{statusLabel}</div></div>
     </section>
     <section className="scanner-overview" aria-label="Scanner summary">
-      <article className="scanner-stat-card scanner-stat-primary"><span className="scanner-stat-label">Actionable setups</span><strong>{data ? ready.length : '—'}</strong><span className="scanner-stat-foot">{loading ? 'Refreshing market data…' : 'Fresh, rule-qualified candidates'}</span></article>
-      <article className="scanner-stat-card"><span className="scanner-stat-label">Pairs scanned</span><strong>{data ? candidates.length : '—'}</strong><span className="scanner-stat-foot">{rankFilter === 'ALL' ? 'Across selected market lists' : rankFilter.replace('TOP_', 'Top ').toLowerCase()}</span></article>
+      <article className="scanner-stat-card scanner-stat-primary"><span className="scanner-stat-label">Actionable setups</span><strong>{data ? ready.length : '—'}</strong><span className="scanner-stat-foot">{loading ? 'Refreshing saved results…' : 'Fresh, rule-qualified candidates'}</span></article>
+      <article className="scanner-stat-card"><span className="scanner-stat-label">Pairs with results</span><strong>{data ? candidates.length : '—'}</strong><span className="scanner-stat-foot">{rankFilter === 'ALL' ? 'Enabled pairs with scheduled scan results' : rankFilter.replace('TOP_', 'Top ').toLowerCase()}</span></article>
       <article className="scanner-stat-card"><span className="scanner-stat-label">Long / Short</span><strong><span className="scanner-stat-long">{longSignals}</span><span className="scanner-stat-slash"> / </span><span className="scanner-stat-short">{shortSignals}</span></strong><span className="scanner-stat-foot">Directional setups</span></article>
       <article className="scanner-stat-card"><span className="scanner-stat-label">Market health</span><strong className={`scanner-health-value ${data?.status === 'DEGRADED' ? 'is-warning' : ''}`}>{data ? data.status : '—'}</strong><span className="scanner-stat-foot">{data ? `Updated ${new Date(data.updatedAt).toLocaleTimeString()}` : 'Waiting for first scan'}</span></article>
     </section>
@@ -111,14 +90,14 @@ export function Scanner() {
       <div className="scanner-panel-header"><div><p className="mono">MARKET OPPORTUNITIES</p><h2>Signal watchlist</h2><p className="muted">Signals are research references only; no orders are placed.</p></div>
         <div className="scanner-controls">
           <label>Timeframe<select value={timeframe} onChange={(event) => setTimeframe(event.target.value as ScannerCandidate['timeframe'])}><option value="5m">5 minutes</option><option value="15m">15 minutes</option><option value="1h">1 hour</option><option value="4h">4 hours</option></select></label>
-          <label>Market universe<select value={rankFilter} onChange={(event) => setRankFilter(event.target.value as typeof rankFilter)}><option value="ALL">All ranked pairs</option><option value="TOP_VOLUME">Top volume</option><option value="TOP_GAINER">Top gainers</option><option value="TOP_LOSER">Top losers</option></select></label>
+          <label>Market universe<select value={rankFilter} onChange={(event) => setRankFilter(event.target.value as typeof rankFilter)}><option value="ALL">All enabled pairs</option><option value="TOP_VOLUME">Top volume</option><option value="TOP_GAINER">Top gainers</option><option value="TOP_LOSER">Top losers</option></select></label>
         </div>
       </div>
       {error && <div role="alert" className="error"><strong>Live scanner data unavailable</strong><br />{error}</div>}
-      {browserFallback && <p role="status" className="muted">Using browser-direct public market data because the server could not reach the exchanges. Admin-configured research feeds are intentionally omitted in this fallback.</p>}
+      {notificationWarning && <p role="status" className="scanner-warning">{notificationWarning}</p>}
       {data?.status === 'DEGRADED' && <p role="status" className="scanner-warning"><strong>Partial market data</strong><span>{stale} stale and {unavailable} unavailable pairs. Treat this scan as incomplete and refresh before relying on its indicators.</span></p>}
-      {!error && loading && !data && <p className="muted">Loading public futures market data…</p>}
-      {data && candidates.length === 0 && <p className="muted">No candidates are in this market list. Choose another list or refresh.</p>}
+      {!error && loading && !data && <p className="muted">Loading the latest scheduled Binance scan results…</p>}
+      {data && candidates.length === 0 && <p className="muted">No scheduled scan results are available yet. Check Scanner Management synchronization and wait for the background scan batches.</p>}
       {data && ready.length === 0 && candidates.length > 0 && <p className="scanner-empty"><strong>No actionable setups right now</strong><span>Review each pair&apos;s checks below, or try another timeframe or market list.</span></p>}
       {data && ready.length === 0 && candidates.length > 0 && <details open={data.status === 'DEGRADED'}>
         <summary>Why no signals?</summary>
@@ -133,9 +112,13 @@ export function Scanner() {
           </div>
           <div className="scanner-card-meta">
             <span className={`scanner-signal-badge ${item.status === 'READY' ? item.side === 'LONG' ? 'is-long' : 'is-short' : 'is-wait'}`}><span aria-hidden="true">{item.status === 'READY' ? item.side === 'LONG' ? '↗' : '↘' : '•'}</span>{item.status === 'READY' ? item.side : item.status === 'STALE' || item.status === 'DATA_UNAVAILABLE' ? 'NO DATA' : 'WAIT'}</span>
-            <div className="scanner-card-score"><span>SETUP SCORE</span><strong>{item.score.value === null ? '—' : `${item.score.value}`}<small>/100</small></strong></div>
+            <div className="scanner-card-score"><span>SETUP SCORE</span><strong>{item.score.value === null ? '—' : `${item.score.value}`}<small>/100</small></strong><small>{item.scannedAt ? `Scanned ${new Date(item.scannedAt).toLocaleTimeString()}` : 'Scan pending'}</small></div>
           </div>
         </div>
+        {signalMetadata?.signals[item.symbol] && <div className="scanner-expiry-row">
+          <span>Signal validity · generated {new Date(signalMetadata.signals[item.symbol]!.generatedAt).toLocaleTimeString()}</span>
+          <SignalCountdown expiresAt={signalMetadata.signals[item.symbol]!.expiresAt} serverNow={signalMetadata.serverNow} status={signalMetadata.signals[item.symbol]!.status} />
+        </div>}
         <div className="scanner-price-grid">
           <div className="scanner-price-cell"><span>Current price</span><strong>{item.price === null ? '—' : formatPrice(item.price)}</strong><small className={`scanner-change ${item.priceChangePercent24h !== null && item.priceChangePercent24h < 0 ? 'is-negative' : ''}`}>{item.priceChangePercent24h === null ? '24h change unavailable' : `${item.priceChangePercent24h >= 0 ? '+' : ''}${item.priceChangePercent24h.toFixed(2)}% today`}</small></div>
           <div className="scanner-price-cell is-entry"><span>Planned entry</span><strong>{item.setup ? formatPrice(item.setup.entryPrice) : '—'}</strong><small>{item.setup ? 'Reference entry price' : 'No confirmed setup'}</small></div>
