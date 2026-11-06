@@ -27,6 +27,11 @@ const actionSchema = z.discriminatedUnion('action', [
   z.object({ action: z.literal('disable_all'), confirm: z.literal(true), reason: z.string().trim().max(200).optional() }).strict(),
 ]);
 
+function diagnosticMessage(error: unknown, fallback: string): string {
+  if (!(error instanceof Error)) return fallback;
+  return error.message.replace(/[\r\n\t]/g, ' ').slice(0, 300) || fallback;
+}
+
 export async function GET() {
   try {
     const admin = await requireAdmin();
@@ -57,7 +62,7 @@ export async function GET() {
     return NextResponse.json({
       error: error instanceof AuthError || rateLimited
         ? message
-        : 'Scanner management is unavailable. Apply the scanner coin management migration.',
+        : diagnosticMessage(error, 'Scanner management is unavailable.'),
     }, { status, headers: { 'Cache-Control': 'no-store' } });
   }
 }
@@ -108,7 +113,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({
       error: error instanceof AuthError || rateLimited || syncFailure
         ? message
-        : 'Scanner management action could not be completed.',
+        : diagnosticMessage(error, 'Scanner management action could not be completed.'),
     }, { status, headers: { 'Cache-Control': 'no-store' } });
   }
 }

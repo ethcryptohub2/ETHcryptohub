@@ -56,7 +56,11 @@ function failure(error: unknown, fallback: string) {
   }
   const status = isAuth ? error.status : isSubscription ? error.status : 503;
   return NextResponse.json({
-    error: isAuth || isSubscription ? error.message : fallback,
+    error: isAuth || isSubscription
+      ? error.message
+      : error instanceof Error
+        ? error.message.replace(/[\r\n\t]/g, ' ').slice(0, 300) || fallback
+        : fallback,
     ...(isSubscription ? { code: error.code } : {}),
   }, { status, headers: { 'Cache-Control': 'no-store' } });
 }
