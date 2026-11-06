@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { AuthError, requireAdmin } from '../../../../lib/auth';
 import { validCsrf } from '../../../../lib/http';
+import { runSignalScan, SignalScanError } from '../../../../lib/signal-scan';
 import {
   changeScannerCoins,
   consumeScannerAdminRateLimit,
@@ -18,6 +19,7 @@ export const maxDuration = 60;
 
 const symbol = z.string().regex(/^[\p{L}\p{N}]{2,30}$/u);
 const actionSchema = z.discriminatedUnion('action', [
+  z.object({ action: z.literal('scan_now') }).strict(),
   z.object({ action: z.literal('sync_now') }).strict(),
   z.object({ action: z.literal('enable_coin'), symbol }).strict(),
   z.object({ action: z.literal('disable_coin'), symbol, reason: z.string().trim().max(200).optional() }).strict(),
@@ -82,8 +84,11 @@ export async function POST(request: NextRequest) {
     const action = parsed.data;
     await consumeScannerAdminRateLimit(
       admin.id,
-      action.action === 'sync_now' ? 'sync' : 'write',
+      action.action === 'sync_now' || action.action === 'scan_now' ? 'sync' : 'write',
     );
+    if (action.action === 'scan_now') {
+      return NextResponse.json({ data: await runSignalScan('15m') }, { headers: { 'Cache-Control': 'no-store' } });
+    }
     if (action.action === 'sync_now') {
       const result = await syncBinanceScannerUniverse(admin.id);
       return NextResponse.json({ data: result }, { headers: { 'Cache-Control': 'no-store' } });
@@ -106,12 +111,13 @@ export async function POST(request: NextRequest) {
     const message = error instanceof Error ? error.message : '';
     const rateLimited = message.startsWith('Too many');
     const syncFailure = error instanceof ScannerSyncError;
-    if (!(error instanceof AuthError) && !rateLimited && !syncFailure) {
+    const scanFailure = error instanceof SignalScanError;
+    if (!(error instanceof AuthError) && !rateLimited && !syncFailure && !scanFailure) {
       console.error('Scanner management action failed:', message || 'Unknown error');
     }
     const status = error instanceof AuthError ? error.status : rateLimited ? 429 : syncFailure ? 502 : 503;
     return NextResponse.json({
-      error: error instanceof AuthError || rateLimited || syncFailure
+      error: error instanceof AuthError || rateLimited || syncFailure || scanFailure
         ? message
         : diagnosticMessage(error, 'Scanner management action could not be completed.'),
     }, { status, headers: { 'Cache-Control': 'no-store' } });

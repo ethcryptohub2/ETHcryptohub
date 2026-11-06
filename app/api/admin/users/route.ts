@@ -2,14 +2,20 @@ import { NextRequest, NextResponse } from 'next/server';
 import { AuthError, requireAdmin } from '../../../../lib/auth';
 import { pool, query } from '../../../../lib/db';
 import { validCsrf } from '../../../../lib/http';
+import { TABLE_PAGE_SIZE } from '../../../../lib/pagination';
 import { z } from 'zod';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
-export async function GET() {
+export async function GET(request: NextRequest) {
   try {
     await requireAdmin();
+    const parsed = z.object({
+      page: z.coerce.number().int().min(1).max(100_000).default(1),
+    }).safeParse(Object.fromEntries(request.nextUrl.searchParams));
+    if (!parsed.success) return NextResponse.json({ error: 'Invalid user list page.' }, { status: 422 });
+    const offset = (parsed.data.page - 1) * TABLE_PAGE_SIZE;
     const [metrics, users] = await Promise.all([
       query<{ total: string; verified: string; x_verified: string; inactive: string }>(
         `SELECT COUNT(*) AS total,
@@ -19,7 +25,9 @@ export async function GET() {
       ),
       query(
         `SELECT id, email, full_name, country_code, phone_number, x_handle, is_x_verified,
-          is_email_verified, is_active, role, created_at FROM public.users ORDER BY created_at DESC LIMIT 1000`,
+          is_email_verified, is_active, role, created_at FROM public.users
+          ORDER BY created_at DESC, id DESC LIMIT $1 OFFSET $2`,
+        [TABLE_PAGE_SIZE, offset],
       ),
     ]);
     return NextResponse.json({ data: { metrics: metrics.rows[0], users: users.rows } }, { headers: { 'Cache-Control': 'no-store' } });

@@ -1,6 +1,8 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
+import { TABLE_PAGE_SIZE } from '../../lib/pagination';
+import { TablePagination } from './table-pagination';
 
 type ScannerCoin = {
   id: string;
@@ -49,6 +51,7 @@ export function AdminScannerManagement() {
   const [state, setState] = useState<State | null>(null);
   const [search, setSearch] = useState('');
   const [filter, setFilter] = useState<Filter>('ALL');
+  const [page, setPage] = useState(1);
   const [selected, setSelected] = useState<string[]>([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
@@ -78,6 +81,9 @@ export function AdminScannerManagement() {
     if (filter === 'INACTIVE' && coin.trading_status === 'TRADING') return false;
     return true;
   }), [filter, search, state]);
+  const pageCount = Math.max(1, Math.ceil(visibleCoins.length / TABLE_PAGE_SIZE));
+  const currentPage = Math.min(page, pageCount);
+  const pageCoins = visibleCoins.slice((currentPage - 1) * TABLE_PAGE_SIZE, currentPage * TABLE_PAGE_SIZE);
 
   async function mutate(payload: Record<string, unknown>, successMessage: string) {
     setBusy(true);
@@ -93,12 +99,14 @@ export function AdminScannerManagement() {
         headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrf },
         body: JSON.stringify(payload),
       });
-      const body = await response.json() as { data?: { added?: number; changed?: number; updated?: number; inactive?: number }; error?: string };
+      const body = await response.json() as { data?: { added?: number; changed?: number; updated?: number; inactive?: number; timeframe?: string; candidates?: number; scannerStatus?: string }; error?: string };
       if (!response.ok) throw new Error(body.error ?? 'Scanner management action failed.');
       await load();
       setSelected([]);
       setNotice(payload.action === 'sync_now'
         ? `Sync complete: ${body.data?.added ?? 0} added, ${body.data?.updated ?? 0} updated, ${body.data?.inactive ?? 0} inactive.`
+        : payload.action === 'scan_now'
+          ? `Scan complete: ${body.data?.candidates ?? 0} pairs evaluated on ${body.data?.timeframe ?? '15m'} (${body.data?.scannerStatus ?? 'unknown'}).`
         : body.data?.changed === 0
           ? 'No matching coins needed a status change.'
           : successMessage);
@@ -126,7 +134,7 @@ export function AdminScannerManagement() {
       : [...current, symbol]);
   }
 
-  const allVisibleSelected = visibleCoins.length > 0 && visibleCoins.every((coin) => selected.includes(coin.symbol));
+  const allVisibleSelected = pageCoins.length > 0 && pageCoins.every((coin) => selected.includes(coin.symbol));
 
   return <section className="card stack scanner-management" id="scanner-management">
     <div className="scanner-management-header">
@@ -135,6 +143,9 @@ export function AdminScannerManagement() {
       </div>
       <button type="button" disabled={busy} onClick={() => void mutate({ action: 'sync_now' }, '')}>
         {busy ? 'Working…' : 'Sync Now'}
+      </button>
+      <button type="button" className="button-secondary" disabled={busy} onClick={() => void mutate({ action: 'scan_now' }, '')}>
+        {busy ? 'Working…' : 'Run 15m Scan'}
       </button>
     </div>
     {error && <p className="error" role="alert">{error}</p>}
@@ -154,8 +165,8 @@ export function AdminScannerManagement() {
         {state.sync?.last_error ? ` · ${state.sync.last_error}` : ''}
       </p>
       <div className="scanner-management-toolbar">
-        <label>Search symbol<input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="e.g. BTCUSDT" /></label>
-        <label>Filter<select value={filter} onChange={(event) => setFilter(event.target.value as Filter)}>
+        <label>Search symbol<input value={search} onChange={(event) => { setSearch(event.target.value); setPage(1); }} placeholder="e.g. BTCUSDT" /></label>
+        <label>Filter<select value={filter} onChange={(event) => { setFilter(event.target.value as Filter); setPage(1); }}>
           <option value="ALL">All pairs</option><option value="ENABLED">Enabled</option><option value="DISABLED">Disabled</option><option value="ACTIVE">Active contracts</option><option value="INACTIVE">Inactive contracts</option>
         </select></label>
         <button type="button" className="button-secondary" disabled={!selected.length || busy} onClick={() => bulk('enable_selected')}>Enable Selected ({selected.length})</button>
@@ -167,11 +178,11 @@ export function AdminScannerManagement() {
         <table className="scanner-management-table">
           <thead><tr>
             <th><input type="checkbox" aria-label="Select visible coins" checked={allVisibleSelected} onChange={() => setSelected((current) => allVisibleSelected
-              ? current.filter((symbol) => !visibleCoins.some((coin) => coin.symbol === symbol))
-              : [...new Set([...current, ...visibleCoins.map((coin) => coin.symbol)])])} /></th>
+              ? current.filter((symbol) => !pageCoins.some((coin) => coin.symbol === symbol))
+              : [...new Set([...current, ...pageCoins.map((coin) => coin.symbol)])])} /></th>
             <th>Coin Symbol</th><th>Base</th><th>Quote</th><th>Exchange</th><th>Contract</th><th>Trading</th><th>Scanner</th><th>Updated</th><th>Action</th>
           </tr></thead>
-          <tbody>{visibleCoins.map((coin) => {
+          <tbody>{pageCoins.map((coin) => {
             const enabled = coin.is_enabled && coin.trading_status === 'TRADING';
             return <tr key={coin.id}>
               <td><input type="checkbox" aria-label={`Select ${coin.symbol}`} checked={selected.includes(coin.symbol)} onChange={() => toggleSelected(coin.symbol)} /></td>
@@ -187,6 +198,7 @@ export function AdminScannerManagement() {
         </table>
         {visibleCoins.length === 0 && <p className="muted">No pairs match this filter.</p>}
       </div>
+      <TablePagination page={currentPage} total={visibleCoins.length} label="coins" onPageChange={setPage} />
       <div className="stack scanner-audit-list">
         <h3>Recent scanner audit log</h3>
         {state.audit.map((entry) => <p key={entry.id}><span className="mono">{entry.action}</span> {entry.symbol ?? 'universe'} · {new Date(entry.created_at).toLocaleString()}{entry.reason ? ` · ${entry.reason}` : ''}</p>)}

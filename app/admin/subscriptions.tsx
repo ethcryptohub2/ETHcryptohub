@@ -1,6 +1,8 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
+import { TABLE_PAGE_SIZE } from '../../lib/pagination';
+import { TablePagination } from './table-pagination';
 
 type Plan = {
   id: string; plan_key: string; plan_name: string; duration_days: number; price_usd: string; is_active: boolean;
@@ -54,6 +56,13 @@ export function AdminSubscriptions() {
     const response = await fetch(`/api/admin/subscriptions?${params}`, { cache: 'no-store' });
     const body = await response.json() as { data?: AdminData; error?: string };
     if (!response.ok || !body.data) throw new Error(body.error ?? 'Subscription management could not be loaded.');
+    const lastUserPage = Math.max(1, Math.ceil(body.data.usersTotal / TABLE_PAGE_SIZE));
+    const lastCodePage = Math.max(1, Math.ceil(body.data.codesTotal / TABLE_PAGE_SIZE));
+    if (userPage > lastUserPage || codePage > lastCodePage) {
+      if (userPage > lastUserPage) setUserPage(lastUserPage);
+      if (codePage > lastCodePage) setCodePage(lastCodePage);
+      return;
+    }
     setData(body.data);
     setSelectedPlan((current) => current || body.data!.plans.find((plan) => plan.plan_key !== 'FREE_TRIAL')?.id || '');
   }, [search, status, codeStatus, userPage, codePage]);
@@ -210,7 +219,7 @@ export function AdminSubscriptions() {
             }}>Extend</button></td>
           </tr>)}</tbody>
         </table></div>
-        <div className="subscription-pagination"><span>{data.usersTotal} users</span><button type="button" disabled={userPage <= 1} onClick={() => setUserPage((page) => page - 1)}>Previous</button><span>Page {userPage}</span><button type="button" disabled={userPage * 25 >= data.usersTotal} onClick={() => setUserPage((page) => page + 1)}>Next</button></div>
+        <TablePagination page={userPage} total={data.usersTotal} label="users" onPageChange={setUserPage} />
       </div>
 
       <div className="stack">
@@ -227,7 +236,7 @@ export function AdminSubscriptions() {
             }}>Revoke</button>}</td>
           </tr>)}</tbody>
         </table></div>
-        <div className="subscription-pagination"><span>{data.codesTotal} codes</span><button type="button" disabled={codePage <= 1} onClick={() => setCodePage((page) => page - 1)}>Previous</button><span>Page {codePage}</span><button type="button" disabled={codePage * 25 >= data.codesTotal} onClick={() => setCodePage((page) => page + 1)}>Next</button></div>
+        <TablePagination page={codePage} total={data.codesTotal} label="codes" onPageChange={setCodePage} />
       </div>
     </>}
   </section>;

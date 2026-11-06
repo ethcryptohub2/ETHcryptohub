@@ -40,6 +40,37 @@ const icon = {
   refresh: '↻',
 };
 
+const TABLE_PAGE_SIZE = 10;
+
+function TablePagination({
+  page,
+  total,
+  label,
+  onPageChange,
+}: {
+  page: number;
+  total: number;
+  label: string;
+  onPageChange: (page: number) => void;
+}) {
+  const pageCount = Math.max(1, Math.ceil(total / TABLE_PAGE_SIZE));
+  const start = total === 0 ? 0 : (page - 1) * TABLE_PAGE_SIZE + 1;
+  const end = Math.min(page * TABLE_PAGE_SIZE, total);
+
+  return (
+    <nav className="table-pagination" aria-label={`${label} pagination`}>
+      <span>Showing {start}–{end} of {total} {label}</span>
+      <button type="button" disabled={page <= 1} onClick={() => onPageChange(page - 1)}>
+        Previous
+      </button>
+      <span>Page {page} of {pageCount}</span>
+      <button type="button" disabled={page >= pageCount} onClick={() => onPageChange(page + 1)}>
+        Next
+      </button>
+    </nav>
+  );
+}
+
 function formatAssetAmount(value: number, asset: string): string {
   return asset === 'USDT'
     ? money(value)
@@ -545,6 +576,8 @@ function Dashboard(props: {
     onCreate,
     onScan,
   } = props;
+  const [openPage, setOpenPage] = useState(1);
+  const [closedPage, setClosedPage] = useState(1);
   const dailyUse =
     risk && risk.daily.lossLimit > 0
       ? Math.min(
@@ -554,6 +587,18 @@ function Dashboard(props: {
       : 0;
   const closedTrades = trades.filter(
     (trade) => !['OPEN', 'TP1_HIT_TRAILING', 'TP2_HIT_TRAILING'].includes(trade.status),
+  );
+  const openPageCount = Math.max(1, Math.ceil(openTrades.length / TABLE_PAGE_SIZE));
+  const closedPageCount = Math.max(1, Math.ceil(closedTrades.length / TABLE_PAGE_SIZE));
+  const currentOpenPage = Math.min(openPage, openPageCount);
+  const currentClosedPage = Math.min(closedPage, closedPageCount);
+  const visibleOpenTrades = openTrades.slice(
+    (currentOpenPage - 1) * TABLE_PAGE_SIZE,
+    currentOpenPage * TABLE_PAGE_SIZE,
+  );
+  const visibleClosedTrades = closedTrades.slice(
+    (currentClosedPage - 1) * TABLE_PAGE_SIZE,
+    currentClosedPage * TABLE_PAGE_SIZE,
   );
   return (
     <section className="page">
@@ -686,7 +731,7 @@ function Dashboard(props: {
                 </tr>
               </thead>
               <tbody>
-                {openTrades.map((trade) => (
+                {visibleOpenTrades.map((trade) => (
                   <tr key={trade.id} onClick={() => onSelect(trade.id)} className="clickable-row">
                     <td>
                       <strong className="market-symbol">{trade.symbol}</strong>
@@ -736,6 +781,12 @@ function Dashboard(props: {
           </div>
         )}
       </div>
+      <TablePagination
+        page={currentOpenPage}
+        total={openTrades.length}
+        label="open positions"
+        onPageChange={setOpenPage}
+      />
       <div className="section-heading">
         <div>
           <h2>Live trades · disabled</h2>
@@ -778,7 +829,7 @@ function Dashboard(props: {
                 </tr>
               </thead>
               <tbody>
-                {closedTrades.map((trade) => (
+                {visibleClosedTrades.map((trade) => (
                   <tr key={trade.id} onClick={() => onSelect(trade.id)} className="clickable-row">
                     <td>
                       <strong className="market-symbol">{trade.symbol}</strong>
@@ -818,6 +869,12 @@ function Dashboard(props: {
           </div>
         )}
       </div>
+      <TablePagination
+        page={currentClosedPage}
+        total={closedTrades.length}
+        label="closed positions"
+        onPageChange={setClosedPage}
+      />
       <div className="lower-grid">
         <section className="panel">
           <div className="panel-heading">

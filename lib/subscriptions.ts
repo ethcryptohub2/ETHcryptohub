@@ -1,4 +1,5 @@
 import { pool, query } from './db';
+import { TABLE_PAGE_SIZE } from './pagination';
 import { AuthError, currentUser, type User } from './auth';
 import {
   calculatePremiumExpiry,
@@ -438,8 +439,8 @@ export async function listAdminSubscriptionData(input: {
   userPage: number;
   codePage: number;
 }) {
-  const offsetUsers = (input.userPage - 1) * 25;
-  const offsetCodes = (input.codePage - 1) * 25;
+  const offsetUsers = (input.userPage - 1) * TABLE_PAGE_SIZE;
+  const offsetCodes = (input.codePage - 1) * TABLE_PAGE_SIZE;
   const [metrics, plans, users, userCount, codes, codeCount] = await Promise.all([
     query(
       `SELECT COUNT(DISTINCT u.id)::text AS total_users,
@@ -478,8 +479,8 @@ export async function listAdminSubscriptionData(input: {
              ($2 = 'TRIAL_EXPIRED' AND s.premium_started_at IS NULL AND s.trial_expires_at <= NOW()) OR
              ($2 = 'PREMIUM_ACTIVE' AND s.premium_expires_at > NOW()) OR
              ($2 = 'PREMIUM_EXPIRED' AND s.premium_started_at IS NOT NULL AND s.premium_expires_at <= NOW()))
-        ORDER BY s.updated_at DESC, u.id DESC LIMIT 25 OFFSET $3`,
-      [input.search, input.status, offsetUsers],
+        ORDER BY s.updated_at DESC, u.id DESC LIMIT $4 OFFSET $3`,
+      [input.search, input.status, offsetUsers, TABLE_PAGE_SIZE],
     ),
     query<{ count: string }>(
       `SELECT COUNT(*)::text AS count FROM public.users AS u
@@ -503,8 +504,8 @@ export async function listAdminSubscriptionData(input: {
          LEFT JOIN public.users AS creator ON creator.id = c.created_by_admin_id
         WHERE ($1 = 'ALL' OR c.code_status = $1 OR ($1 = 'EXPIRED' AND c.code_status = 'UNUSED' AND c.expires_at <= NOW()))
           AND ($2 = '' OR c.assigned_user_email::text ILIKE '%' || $2 || '%' OR u.email::text ILIKE '%' || $2 || '%')
-        ORDER BY c.created_at DESC LIMIT 25 OFFSET $3`,
-      [input.codeStatus, input.search, offsetCodes],
+        ORDER BY c.created_at DESC, c.id DESC LIMIT $4 OFFSET $3`,
+      [input.codeStatus, input.search, offsetCodes, TABLE_PAGE_SIZE],
     ),
     query<{ count: string }>(
       `SELECT COUNT(*)::text AS count

@@ -100,7 +100,7 @@ export function Scanner({ isAdmin }: { isAdmin: boolean }) {
       {notificationWarning && <p role="status" className="scanner-warning">{notificationWarning}</p>}
       {degraded && <p role="status" className="scanner-warning"><strong>Partial market data</strong><span>{stale} stale and {unavailable} unavailable pairs. Treat this scan as incomplete and refresh before relying on its indicators.</span></p>}
       {!error && loading && !data && <p className="muted">Loading the latest scheduled Binance scan results…</p>}
-      {data && candidates.length === 0 && <p className="scanner-empty"><strong>No scan results yet</strong><span>Background scans run about every 30 minutes on the free plan. If results remain empty, the administrator should sync the coin universe from the Admin page.</span>{isAdmin && <Link href="/admin#scanner-management">Open coin management</Link>}</p>}
+      {data && candidates.length === 0 && <p className="scanner-empty"><strong>No scan results yet</strong><span>Background scans refresh a bounded batch of Binance pairs on a rotating timeframe. After syncing the coin universe, an administrator can run an immediate 15-minute scan from Scanner Management.</span>{isAdmin && <Link href="/admin#scanner-management">Open coin management</Link>}</p>}
       {data && ready.length === 0 && candidates.length > 0 && <p className="scanner-empty"><strong>No actionable setups right now</strong><span>Review each pair&apos;s checks below, or try another timeframe or market list.</span></p>}
       {data && ready.length === 0 && candidates.length > 0 && <details open={data.status === 'DEGRADED'}>
         <summary>Why no signals?</summary>

@@ -235,6 +235,7 @@ label { display: grid; gap: 7px; color: #94a3b8; font-size: 13px; }
 .subscription-admin-toolbar { display:flex; flex-wrap:wrap; gap:10px; align-items:end; }
 .subscription-admin-toolbar label { min-width:190px; flex:1; }
 .subscription-pagination { display:flex; align-items:center; justify-content:flex-end; gap:9px; color:#94a3b8; font-size:11px; }
+.subscription-pagination button { padding:8px 11px; }
 .subscription-generated-codes { display:grid; gap:8px; padding:14px; border:1px solid #047857; border-radius:10px; background:#064e3b22; }
 .subscription-generated-codes h3 { margin:0; color:#a7f3d0; font-size:14px; }
 .subscription-generated-codes > div { display:flex; align-items:center; flex-wrap:wrap; gap:12px; padding:8px; border:1px solid #14532d; border-radius:8px; }
