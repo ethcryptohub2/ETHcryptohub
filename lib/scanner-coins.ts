@@ -244,7 +244,7 @@ export async function syncBinanceScannerUniverse(
       await client.query(
         `INSERT INTO public.scanner_coin_audit_log
           (action, symbol, admin_user_id, previous_state, new_state, reason)
-         SELECT action, symbol, $2, previous_state, new_state, reason
+         SELECT action, symbol, $2::BIGINT, previous_state, new_state, reason
            FROM jsonb_to_recordset($1::jsonb) AS event(
              action TEXT, symbol TEXT, previous_state JSONB, new_state JSONB, reason TEXT
            )`,
