@@ -18,7 +18,7 @@ function formatPrice(value: number): string {
   return value.toLocaleString(undefined, { maximumSignificantDigits: 8 });
 }
 
-export function Scanner() {
+export function Scanner({ isAdmin }: { isAdmin: boolean }) {
   const [data, setData] = useState<MarketScannerResponse | null>(null);
   const [signalMetadata, setSignalMetadata] = useState<SignalMetadata | null>(null);
   const [notificationWarning, setNotificationWarning] = useState('');
@@ -73,18 +73,21 @@ export function Scanner() {
   const rejected = candidates.filter((item) => item.status !== 'READY');
   const longSignals = ready.filter((item) => item.side === 'LONG').length;
   const shortSignals = ready.filter((item) => item.side === 'SHORT').length;
-  const statusLabel = !data ? 'Connecting' : data.status === 'LIVE' ? 'Live data' : 'Partial data';
+  const hasCandidates = (data?.candidates.length ?? 0) > 0;
+  const degraded = data?.status === 'DEGRADED' && hasCandidates;
+  const statusLabel = !data ? 'Connecting' : data.status === 'LIVE' ? 'Live data' : hasCandidates ? 'Partial data' : 'Awaiting scan';
+  const healthLabel = data ? hasCandidates ? data.status : 'WAITING' : '—';
   return <main className="shell">
-    <header className="topbar"><Link className="brand" href="/">ETHCRYPTOHUB</Link><nav className="links"><Link href="/dashboard">Dashboard</Link><Link href="/settings">Settings</Link><button className="scanner-refresh" onClick={() => void load()} disabled={loading}><span aria-hidden="true">{loading ? '↻' : '⟳'}</span> {loading ? 'Scanning…' : 'Refresh scan'}</button></nav></header>
+    <header className="topbar"><Link className="brand" href="/">ETHCRYPTOHUB</Link><nav className="links"><Link href="/dashboard">Dashboard</Link><Link href="/settings">Settings</Link>{isAdmin && <Link href="/admin">Admin</Link>}<button className="scanner-refresh" onClick={() => void load()} disabled={loading}><span aria-hidden="true">{loading ? '↻' : '⟳'}</span> {loading ? 'Loading…' : 'Refresh results'}</button></nav></header>
     <section className="hero scanner-hero">
-      <div className="scanner-eyebrow"><span className={`scanner-live-dot ${data?.status === 'DEGRADED' ? 'is-warning' : ''}`} />PUBLIC PERPETUAL FUTURES <span className="scanner-eyebrow-divider">/</span> {data ? `${data.exchange} · ${data.market}` : 'LIVE MARKET DATA'}</div>
-      <div className="scanner-heading-row"><div><h1>Market scanner</h1><p className="muted">High-conviction technical setups with transparent market context.</p></div><div className={`scanner-status ${data?.status === 'DEGRADED' ? 'is-warning' : ''}`}>{statusLabel}</div></div>
+      <div className="scanner-eyebrow"><span className={`scanner-live-dot ${degraded ? 'is-warning' : ''}`} />PUBLIC PERPETUAL FUTURES <span className="scanner-eyebrow-divider">/</span> {data ? `${data.exchange} · ${data.market}` : 'LIVE MARKET DATA'}</div>
+      <div className="scanner-heading-row"><div><h1>Market scanner</h1><p className="muted">High-conviction technical setups with transparent market context.</p></div><div className={`scanner-status ${degraded ? 'is-warning' : ''}`}>{statusLabel}</div></div>
     </section>
     <section className="scanner-overview" aria-label="Scanner summary">
       <article className="scanner-stat-card scanner-stat-primary"><span className="scanner-stat-label">Actionable setups</span><strong>{data ? ready.length : '—'}</strong><span className="scanner-stat-foot">{loading ? 'Refreshing saved results…' : 'Fresh, rule-qualified candidates'}</span></article>
       <article className="scanner-stat-card"><span className="scanner-stat-label">Pairs with results</span><strong>{data ? candidates.length : '—'}</strong><span className="scanner-stat-foot">{rankFilter === 'ALL' ? 'Enabled pairs with scheduled scan results' : rankFilter.replace('TOP_', 'Top ').toLowerCase()}</span></article>
       <article className="scanner-stat-card"><span className="scanner-stat-label">Long / Short</span><strong><span className="scanner-stat-long">{longSignals}</span><span className="scanner-stat-slash"> / </span><span className="scanner-stat-short">{shortSignals}</span></strong><span className="scanner-stat-foot">Directional setups</span></article>
-      <article className="scanner-stat-card"><span className="scanner-stat-label">Market health</span><strong className={`scanner-health-value ${data?.status === 'DEGRADED' ? 'is-warning' : ''}`}>{data ? data.status : '—'}</strong><span className="scanner-stat-foot">{data ? `Updated ${new Date(data.updatedAt).toLocaleTimeString()}` : 'Waiting for first scan'}</span></article>
+      <article className="scanner-stat-card"><span className="scanner-stat-label">Market health</span><strong className={`scanner-health-value ${degraded ? 'is-warning' : ''}`}>{healthLabel}</strong><span className="scanner-stat-foot">{data ? `Updated ${new Date(data.updatedAt).toLocaleTimeString()}` : 'Waiting for first scan'}</span></article>
     </section>
     <section className="card stack scanner-panel">
       <div className="scanner-panel-header"><div><p className="mono">MARKET OPPORTUNITIES</p><h2>Signal watchlist</h2><p className="muted">Signals are research references only; no orders are placed.</p></div>
@@ -95,9 +98,9 @@ export function Scanner() {
       </div>
       {error && <div role="alert" className="error"><strong>Live scanner data unavailable</strong><br />{error}</div>}
       {notificationWarning && <p role="status" className="scanner-warning">{notificationWarning}</p>}
-      {data?.status === 'DEGRADED' && <p role="status" className="scanner-warning"><strong>Partial market data</strong><span>{stale} stale and {unavailable} unavailable pairs. Treat this scan as incomplete and refresh before relying on its indicators.</span></p>}
+      {degraded && <p role="status" className="scanner-warning"><strong>Partial market data</strong><span>{stale} stale and {unavailable} unavailable pairs. Treat this scan as incomplete and refresh before relying on its indicators.</span></p>}
       {!error && loading && !data && <p className="muted">Loading the latest scheduled Binance scan results…</p>}
-      {data && candidates.length === 0 && <p className="muted">No scheduled scan results are available yet. Check Scanner Management synchronization and wait for the background scan batches.</p>}
+      {data && candidates.length === 0 && <p className="scanner-empty"><strong>No scan results yet</strong><span>Background scans run about every 30 minutes on the free plan. If results remain empty, the administrator should sync the coin universe from the Admin page.</span>{isAdmin && <Link href="/admin#scanner-management">Open coin management</Link>}</p>}
       {data && ready.length === 0 && candidates.length > 0 && <p className="scanner-empty"><strong>No actionable setups right now</strong><span>Review each pair&apos;s checks below, or try another timeframe or market list.</span></p>}
       {data && ready.length === 0 && candidates.length > 0 && <details open={data.status === 'DEGRADED'}>
         <summary>Why no signals?</summary>

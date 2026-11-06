@@ -17,5 +17,5 @@ export default async function ScannerPage() {
       <SubscriptionPanel paywall />
     </main>;
   }
-  return <Scanner />;
+  return <Scanner isAdmin={user.role === 'admin'} />;
 }
