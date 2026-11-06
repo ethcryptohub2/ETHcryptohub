@@ -1,5 +1,9 @@
 import { z } from 'zod';
 import type { FuturesMarketSnapshot, FuturesMarketsProvider } from './binance-futures-markets.js';
+import {
+  type MarketResearchProvider,
+  type MarketResearchSummary,
+} from './market-research.js';
 
 const BINANCE_FUTURES_BASE_URL = 'https://fapi.binance.com';
 const BYBIT_BASE_URL = 'https://api.bybit.com';
@@ -16,6 +20,10 @@ const candleRowSchema = z.array(z.union([z.string(), z.number()])).min(7);
 function intervalMilliseconds(timeframe: ScannerConfiguration['timeframe']): number {
   const minutes = timeframe === '5m' ? 5 : timeframe === '15m' ? 15 : timeframe === '1h' ? 60 : 240;
   return minutes * 60_000;
+}
+
+export function recommendedMaxAgeSeconds(timeframe: ScannerConfiguration['timeframe']): number {
+  return Math.max(1800, intervalMilliseconds(timeframe) / 1000 + 60);
 }
 
 export interface MarketCandle {
@@ -82,6 +90,7 @@ export interface MarketScannerCandidate {
     direction: 'BULLISH' | 'BEARISH' | 'MIXED' | 'UNAVAILABLE';
   };
   indicators: TechnicalIndicators;
+  research: MarketResearchSummary;
   supportResistance: {
     support: number | null;
     resistance: number | null;
@@ -121,6 +130,39 @@ export interface MarketScannerResponse {
 
 export interface MarketScannerProvider {
   scan(config: ScannerConfiguration): Promise<MarketScannerResponse>;
+}
+
+function emptyResearch(): MarketResearchSummary {
+  return {
+    derivatives: {
+      status: 'UNAVAILABLE',
+      source: null,
+      updatedAt: null,
+      reason: 'Exchange metrics have not been loaded.',
+      data: null,
+    },
+    liquidationHeatmap: {
+      status: 'NOT_CONFIGURED',
+      source: null,
+      updatedAt: null,
+      reason: 'CoinGlass API key is not configured.',
+      data: null,
+    },
+    onChainFlow: {
+      status: 'NOT_CONFIGURED',
+      source: null,
+      updatedAt: null,
+      reason: 'Glassnode API key is not configured.',
+      data: null,
+    },
+    news: {
+      status: 'NOT_CONFIGURED',
+      source: null,
+      updatedAt: null,
+      reason: 'CryptoPanic API key is not configured.',
+      data: null,
+    },
+  };
 }
 
 export function calculateAtr(candles: MarketCandle[], period: number): number | null {
@@ -451,6 +493,7 @@ function unavailableCandidate(
       bollingerBands20: null,
       adx14: null,
     },
+    research: emptyResearch(),
     supportResistance: { support: null, resistance: null, source: 'COMPLETED_CANDLE_SWINGS' },
     relativeVolume: null,
     newsSentiment: { status: 'UNAVAILABLE', source: null, updatedAt: null },
@@ -523,6 +566,48 @@ function createSetup(
   };
 }
 
+function researchRationale(research: MarketResearchSummary): string[] {
+  const reasons: string[] = [];
+  const derivatives = research.derivatives;
+  if (derivatives.status === 'LIVE' && derivatives.data) {
+    reasons.push(
+      `funding ${derivatives.data.fundingRatePercent.toFixed(4)}%` +
+      (derivatives.data.openInterestChangePercent === null
+        ? ', open-interest change unavailable'
+        : `, open interest ${derivatives.data.openInterestChangePercent >= 0 ? '+' : ''}${derivatives.data.openInterestChangePercent.toFixed(2)}%`),
+    );
+  } else {
+    reasons.push(`funding/open-interest context ${derivatives.reason ?? derivatives.status.toLowerCase()}`);
+  }
+  const heatmap = research.liquidationHeatmap;
+  if (heatmap.status === 'LIVE' && heatmap.data) {
+    const above = heatmap.data.nearestAbove;
+    const below = heatmap.data.nearestBelow;
+    reasons.push(
+      `nearest liquidation heatmap level above ${above ? above.price.toPrecision(6) : 'not found'}, below ${below ? below.price.toPrecision(6) : 'not found'}`,
+    );
+  } else {
+    reasons.push(`liquidation heatmap ${heatmap.reason ?? heatmap.status.toLowerCase()}`);
+  }
+  const flow = research.onChainFlow;
+  if (flow.status === 'LIVE' && flow.data) {
+    reasons.push(
+      `Glassnode ${flow.data.asset} exchange netflow ${flow.data.exchangeNetflow >= 0 ? '+' : ''}${flow.data.exchangeNetflow.toPrecision(5)} ${flow.data.asset}; exchange flow is not verified smart-wallet attribution`,
+    );
+  } else {
+    reasons.push(`on-chain exchange-flow context ${flow.reason ?? flow.status.toLowerCase()}`);
+  }
+  const news = research.news;
+  if (news.status === 'LIVE' && news.data) {
+    reasons.push(
+      `CryptoPanic ${news.data.itemCount} news items with ${news.data.positiveVotes} positive and ${news.data.negativeVotes} negative community votes; votes are not independently verified sentiment`,
+    );
+  } else {
+    reasons.push(`news context ${news.reason ?? news.status.toLowerCase()}`);
+  }
+  return reasons;
+}
+
 export class BinanceMarketScannerService implements MarketScannerProvider {
   private readonly candleCache = new Map<string, { expiresAt: number; candles: MarketCandle[] }>();
 
@@ -530,6 +615,7 @@ export class BinanceMarketScannerService implements MarketScannerProvider {
     private readonly markets: FuturesMarketsProvider,
     private readonly request: typeof fetch = globalThis.fetch,
     private readonly now: () => number = Date.now,
+    private readonly research: MarketResearchProvider | null = null,
   ) {}
 
   async scan(config: ScannerConfiguration): Promise<MarketScannerResponse> {
@@ -729,6 +815,15 @@ export class BinanceMarketScannerService implements MarketScannerProvider {
       ];
       return candidate;
     }
+    const research = this.research
+      ? await this.research.getResearch({
+          symbol: market.symbol,
+          baseAsset: market.baseAsset,
+          exchange,
+          timeframe: config.timeframe,
+          price: market.lastPrice!,
+        })
+      : emptyResearch();
     const emaDirection =
       lastCandle.close > ema9 && ema9 > ema20 && ema20 > ema50 && ema50 > ema100 && ema100 > ema200
         ? 'BULLISH'
@@ -857,6 +952,7 @@ export class BinanceMarketScannerService implements MarketScannerProvider {
       opposingLevel === null
         ? 'no opposing swing pivot identified'
         : `nearest opposing pivot ${structuralRoom!.toFixed(2)}R away`,
+      ...researchRationale(research),
     ];
     return {
       symbol: market.symbol,
@@ -884,6 +980,7 @@ export class BinanceMarketScannerService implements MarketScannerProvider {
         bollingerBands20,
         adx14,
       },
+      research,
       supportResistance: { ...supportResistance, source: 'COMPLETED_CANDLE_SWINGS' },
       relativeVolume,
       newsSentiment: { status: 'UNAVAILABLE', source: null, updatedAt: null },

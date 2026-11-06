@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { FuturesMarketSnapshot } from '../src/services/binance-futures-markets.js';
+import { emptyMarketResearch } from '../src/services/market-research.js';
 import {
   BinanceMarketScannerService,
   calculateAtr,
@@ -11,6 +12,7 @@ import {
   calculateRollingVwap,
   calculateSupportResistance,
   calculateSupertrend,
+  recommendedMaxAgeSeconds,
   type MarketCandle,
   type ScannerConfiguration,
 } from '../src/services/market-scanner.js';
@@ -71,6 +73,13 @@ function binanceRow(item: MarketCandle): string[] {
 }
 
 describe('market scanner indicators', () => {
+  it('recommends freshness limits that allow a completed candle on each timeframe', () => {
+    expect(recommendedMaxAgeSeconds('5m')).toBe(1800);
+    expect(recommendedMaxAgeSeconds('15m')).toBe(1800);
+    expect(recommendedMaxAgeSeconds('1h')).toBe(3660);
+    expect(recommendedMaxAgeSeconds('4h')).toBe(14_460);
+  });
+
   it('calculates ATR from true ranges and smooths subsequent candles', () => {
     const candles = [
       { ...candle(10, 0), high: 12, low: 8 },
@@ -300,6 +309,32 @@ describe('Binance market scanner service', () => {
     expect(result.candidates[0]?.side).toBe('LONG');
     expect(result.candidates[0]?.setup).not.toBeNull();
     expect(result.candidates[0]?.setup).not.toHaveProperty('quantity');
+  });
+
+  it('includes research values and missing-provider reasons in the signal rationale', async () => {
+    const now = 241 * 60_000;
+    const candles = Array.from({ length: 240 }, (_, index) => candle(100 + index * 0.2, index));
+    const research = emptyMarketResearch();
+    research.derivatives = {
+      status: 'LIVE',
+      source: 'Bybit public funding/open-interest endpoints',
+      updatedAt: new Date(now).toISOString(),
+      reason: null,
+      data: { fundingRatePercent: 0.01, openInterestChangePercent: 2.5 },
+    };
+    const service = new BinanceMarketScannerService(
+      { list: async () => snapshot(now) },
+      async () => new Response(JSON.stringify(candles.map(binanceRow))),
+      () => now,
+      { getResearch: async () => research },
+    );
+
+    const result = await service.scan(config);
+    const candidate = result.candidates[0]!;
+
+    expect(candidate.status).toBe('READY');
+    expect(candidate.rationale).toContain('funding 0.0100%, open interest +2.50%');
+    expect(candidate.rationale).toContain('Glassnode API key is not configured');
   });
 
   it('includes top gainers and losers alongside the volume-ranked pool', async () => {

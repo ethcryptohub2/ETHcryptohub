@@ -34,7 +34,7 @@ The application no longer uses a PHP origin, PHP proxy, MySQL database, or PHP r
 | `GMAIL_SMTP_PORT` | Optional Gmail SMTP port: `465` (SSL, default) or `587` (STARTTLS) |
 | `RESEND_API_KEY` | Optional alternative to Gmail SMTP |
 | `MAIL_FROM` | Sender address on a domain verified with Resend; used only with `RESEND_API_KEY` |
-| `BINANCE_CREDENTIALS_KEY` | 32 random bytes encoded as 64 hex characters |
+| `BINANCE_CREDENTIALS_KEY` | 32 random bytes encoded as 64 hex characters; encrypts user and market-research provider credentials |
 | `ADMIN_SETUP_TOKEN` | Optional, temporary token for one-time administrator setup |
 
 3. Deploy and verify the landing page and account routes. Apply database migrations before testing signup or login.
@@ -45,6 +45,9 @@ The application no longer uses a PHP origin, PHP proxy, MySQL database, or PHP r
 - For Gmail SMTP, enable Google 2-Step Verification, create an App Password, then set `GMAIL_USER` and `GMAIL_APP_PASSWORD` as private Vercel environment variables. Do not use or share your regular Google password.
 - If using Resend instead, verify the sender domain before testing signup or resend-verification.
 - Binance credentials are encrypted at rest and account connectivity checks are read-only. Keep withdrawal permissions disabled.
+- Apply `supabase/migrations/202611060001_market_research.sql` before using admin provider settings. Admins can enter Glassnode, CryptoPanic, and CoinGlass API keys at `/admin`; keys are encrypted at rest and never returned to the browser. Configure the private `BINANCE_CREDENTIALS_KEY` before saving keys.
+- Public Bybit/Binance funding and open-interest endpoints require no key. CryptoPanic, Glassnode, and CoinGlass feeds remain unavailable until their keys are set by an admin. CoinGlass heatmap access depends on its provider plan.
+- Glassnode exchange netflow is on-chain exchange-flow context, not verified smart-wallet attribution. CryptoPanic votes are community votes, not independently verified sentiment. The browser fallback deliberately does not receive provider keys.
 - Binance API credentials are used only for read-only connectivity checks; the app does not create simulated or live orders.
 - Do not create a shared default user or password. Provision accounts through signup and the protected admin setup.
 
@@ -54,7 +57,7 @@ The application no longer uses a PHP origin, PHP proxy, MySQL database, or PHP r
 2. Register with a mailbox you control and verify delivery in Gmail Sent or Resend's event log, and the recipient inbox.
 3. Verify that unverified accounts cannot sign in and that resend verification works.
 4. Sign in and test `/dashboard`, `/settings`, `/binance`, `/scanner`, and `/admin`.
-5. Confirm the scanner uses the public Bybit linear-futures feed with Binance as a fallback, retries Bybit from the authenticated browser if Vercel cannot reach either feed, labels the active source, and limits each scan to the top-volume markets plus major movers.
+5. Confirm the scanner filters top-volume, top-gainer, and top-loser lists; explains READY/WAIT decisions; and uses timeframe-appropriate candle freshness. Confirm configured research feeds show LIVE only when provider data validates and otherwise explain missing keys or provider access.
 6. Confirm paper-trading and wallet routes return `410 Gone`.
 
 Do not treat a successful Vercel build or local server as proof of production deployment. Public deployment also requires the GitHub push, Vercel project configuration, applied database migrations, and private provider credentials.
