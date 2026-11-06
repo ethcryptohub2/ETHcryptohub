@@ -4,7 +4,7 @@
   "crons": [
     {
       "path": "/api/cron/signal-scan",
-      "schedule": "* * * * *"
+      "schedule": "0 0 * * *"
     }
   ]
 }
