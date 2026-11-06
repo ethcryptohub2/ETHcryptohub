@@ -1,6 +1,32 @@
+import { promises as fs } from 'node:fs';
+import path from 'node:path';
 import { Pool, type PoolConfig, type QueryResultRow } from 'pg';
 
 const globalForPg = globalThis as typeof globalThis & { ethcryptohubPool?: Pool };
+
+const migrationFilesByTable = new Map<string, string>([
+  ['public.market_research_credentials', 'supabase/migrations/202611060001_market_research.sql'],
+  ['public.market_signals', 'supabase/migrations/202611060002_signal_notifications.sql'],
+  ['public.signal_events', 'supabase/migrations/202611060002_signal_notifications.sql'],
+  ['public.user_notification_preferences', 'supabase/migrations/202611060002_signal_notifications.sql'],
+  ['public.push_subscriptions', 'supabase/migrations/202611060002_signal_notifications.sql'],
+  ['public.user_signal_notifications', 'supabase/migrations/202611060002_signal_notifications.sql'],
+  ['public.push_delivery_attempts', 'supabase/migrations/202611060002_signal_notifications.sql'],
+  ['public.notification_system_settings', 'supabase/migrations/202611060002_signal_notifications.sql'],
+  ['public.scanner_coin_configs', 'supabase/migrations/202611060003_scanner_coin_management.sql'],
+  ['public.scanner_sync_state', 'supabase/migrations/202611060003_scanner_coin_management.sql'],
+  ['public.scanner_coin_audit_log', 'supabase/migrations/202611060003_scanner_coin_management.sql'],
+  ['public.scanner_admin_rate_limits', 'supabase/migrations/202611060003_scanner_coin_management.sql'],
+  ['public.scanner_candidate_snapshots', 'supabase/migrations/202611060003_scanner_coin_management.sql'],
+  ['public.subscription_plans', 'supabase/migrations/202611060004_subscriptions.sql'],
+  ['public.subscriptions', 'supabase/migrations/202611060004_subscriptions.sql'],
+  ['public.license_codes', 'supabase/migrations/202611060004_subscriptions.sql'],
+  ['public.subscription_transactions', 'supabase/migrations/202611060004_subscriptions.sql'],
+  ['public.subscription_audit_log', 'supabase/migrations/202611060004_subscriptions.sql'],
+  ['public.subscription_activation_attempts', 'supabase/migrations/202611060004_subscriptions.sql'],
+  ['public.subscription_admin_rate_limits', 'supabase/migrations/202611060004_subscriptions.sql'],
+]);
+const migrationRuns = new Map<string, Promise<void>>();
 
 function sslOptions(hostname: string) {
   const mode = process.env.SUPABASE_DB_SSLMODE?.trim().toLowerCase();
@@ -58,6 +84,78 @@ export function pool(): Pool {
   return globalForPg.ethcryptohubPool;
 }
 
+function missingTableFromError(error: unknown): string | null {
+  if (!error || typeof error !== 'object') return null;
+  const message = 'message' in error && typeof error.message === 'string' ? error.message : '';
+  const match = /(?:relation|table)\s+"?(?:public\.)?([A-Za-z0-9_]+)"?\s+does not exist/i.exec(message);
+  if (!match) return null;
+  return `public.${match[1]}`;
+}
+
+async function executeMigration(relativePath: string, tableName: string): Promise<void> {
+  const sqlFile = path.join(process.cwd(), 'supabase', 'migrations', path.basename(relativePath));
+  const sql = await fs.readFile(sqlFile, 'utf8');
+  const client = await pool().connect();
+  let lockAcquired = false;
+  try {
+    await client.query('SELECT pg_advisory_lock(hashtext($1))', [relativePath]);
+    lockAcquired = true;
+    const existing = await client.query<{ table_exists: boolean }>(
+      'SELECT to_regclass($1) IS NOT NULL AS table_exists',
+      [tableName],
+    );
+    if (existing.rows[0]?.table_exists) return;
+
+    await client.query('BEGIN');
+    try {
+      await client.query(sql);
+      await client.query('COMMIT');
+    } catch (error) {
+      try {
+        await client.query('ROLLBACK');
+      } catch (rollbackError) {
+        console.error('Database migration rollback failed:', rollbackError instanceof Error ? rollbackError.message : 'Unknown rollback error');
+      }
+      throw error;
+    }
+  } catch (error) {
+    console.error(`Automatic database migration failed for ${tableName}:`, error instanceof Error ? error.message : 'Unknown migration error');
+    throw error;
+  } finally {
+    if (lockAcquired) {
+      try {
+        await client.query('SELECT pg_advisory_unlock(hashtext($1))', [relativePath]);
+      } catch (error) {
+        console.error('Database migration lock release failed:', error instanceof Error ? error.message : 'Unknown lock error');
+      }
+    }
+    client.release();
+  }
+}
+
+async function applyMigrationForTable(tableName: string): Promise<boolean> {
+  const relativePath = migrationFilesByTable.get(tableName);
+  if (!relativePath) return false;
+  let migration = migrationRuns.get(relativePath);
+  if (!migration) {
+    migration = executeMigration(relativePath, tableName);
+    migrationRuns.set(relativePath, migration);
+  }
+  try {
+    await migration;
+    return true;
+  } finally {
+    if (migrationRuns.get(relativePath) === migration) migrationRuns.delete(relativePath);
+  }
+}
+
 export async function query<Row extends QueryResultRow>(sql: string, values: readonly unknown[] = []) {
-  return pool().query<Row>(sql, [...values]);
+  try {
+    return await pool().query<Row>(sql, [...values]);
+  } catch (error) {
+    const missingTable = missingTableFromError(error);
+    if (!missingTable) throw error;
+    if (!(await applyMigrationForTable(missingTable))) throw error;
+    return pool().query<Row>(sql, [...values]);
+  }
 }

@@ -39,8 +39,8 @@ export function isEligibleScannerCoin(coin: Pick<ScannerCoin,
     coin.contract_type === CONTRACT &&
     coin.trading_status === 'TRADING' &&
     coin.is_enabled &&
-    /^[A-Z0-9]{2,30}$/.test(coin.symbol) &&
-    /^[A-Z0-9]{1,20}$/.test(coin.base_asset) &&
+    /^[\p{L}\p{N}]{2,30}$/u.test(coin.symbol) &&
+    /^[\p{L}\p{N}]{1,20}$/u.test(coin.base_asset) &&
     coin.symbol === `${coin.base_asset}USDT`;
 }
 
@@ -110,8 +110,7 @@ export async function syncBinanceScannerUniverse(
         FOR UPDATE`,
     );
     const currentBySymbol = new Map(currentResult.rows.map((coin) => [coin.symbol, coin]));
-    const eligible = contracts.filter((contract) => contract.status === 'TRADING');
-    const activePayload = eligible.map((contract) => ({
+    const contractPayload = contracts.map((contract) => ({
       symbol: contract.symbol,
       base_asset: contract.baseAsset,
       quote_asset: contract.quoteAsset,
@@ -120,52 +119,40 @@ export async function syncBinanceScannerUniverse(
     }));
     const upsertResult = await client.query<{ symbol: string }>(
       `INSERT INTO public.scanner_coin_configs
-         (symbol, base_asset, quote_asset, exchange, contract_type, trading_status,
-          is_enabled, is_admin_disabled, disable_reason, first_listed_at, last_synced_at, updated_at)
-       SELECT symbol, base_asset, quote_asset, 'BINANCE', 'PERPETUAL', status,
-              TRUE, FALSE, NULL,
-              CASE WHEN onboard_date IS NULL THEN NULL ELSE to_timestamp(onboard_date / 1000.0) END,
-              NOW(), NOW()
-         FROM jsonb_to_recordset($1::jsonb) AS contract(
-           symbol TEXT, base_asset TEXT, quote_asset TEXT, status TEXT, onboard_date BIGINT
-         )
-        WHERE status = 'TRADING'
-       ON CONFLICT (exchange, symbol) DO UPDATE SET
-         base_asset = EXCLUDED.base_asset,
-         quote_asset = EXCLUDED.quote_asset,
-         contract_type = EXCLUDED.contract_type,
-         trading_status = EXCLUDED.trading_status,
-         is_enabled = NOT public.scanner_coin_configs.is_admin_disabled,
-         disable_reason = CASE
-           WHEN public.scanner_coin_configs.is_admin_disabled
-             THEN COALESCE(public.scanner_coin_configs.disable_reason, 'ADMIN_DISABLED')
-           ELSE NULL
-         END,
-         first_listed_at = COALESCE(public.scanner_coin_configs.first_listed_at, EXCLUDED.first_listed_at),
-         last_synced_at = NOW(),
-         updated_at = NOW()
-       RETURNING symbol`,
-      [JSON.stringify(activePayload)],
+        (symbol, base_asset, quote_asset, exchange, contract_type, trading_status,
+         is_enabled, is_admin_disabled, disable_reason, first_listed_at, last_synced_at, updated_at)
+      SELECT symbol, base_asset, quote_asset, 'BINANCE', 'PERPETUAL', status,
+             status = 'TRADING', FALSE, CASE WHEN status = 'TRADING' THEN NULL ELSE status END,
+             CASE WHEN onboard_date IS NULL THEN NULL ELSE to_timestamp(onboard_date / 1000.0) END,
+             NOW(), NOW()
+        FROM jsonb_to_recordset($1::jsonb) AS contract(
+          symbol TEXT, base_asset TEXT, quote_asset TEXT, status TEXT, onboard_date BIGINT
+        )
+      ON CONFLICT (exchange, symbol) DO UPDATE SET
+        base_asset = EXCLUDED.base_asset,
+        quote_asset = EXCLUDED.quote_asset,
+        contract_type = EXCLUDED.contract_type,
+        trading_status = EXCLUDED.trading_status,
+        is_enabled = CASE
+          WHEN EXCLUDED.trading_status = 'TRADING'
+            THEN NOT public.scanner_coin_configs.is_admin_disabled
+          ELSE FALSE
+        END,
+        disable_reason = CASE
+          WHEN public.scanner_coin_configs.is_admin_disabled
+            THEN COALESCE(public.scanner_coin_configs.disable_reason, 'ADMIN_DISABLED')
+          WHEN EXCLUDED.trading_status <> 'TRADING'
+            THEN EXCLUDED.trading_status
+          ELSE NULL
+        END,
+        first_listed_at = COALESCE(public.scanner_coin_configs.first_listed_at, EXCLUDED.first_listed_at),
+        last_synced_at = NOW(),
+        updated_at = NOW()
+      RETURNING symbol`,
+      [JSON.stringify(contractPayload)],
     );
-    const activeSymbols = eligible.map((contract) => contract.symbol);
     const allSymbols = contracts.map((contract) => contract.symbol);
     const inactiveStatuses = contracts.filter((contract) => contract.status !== 'TRADING');
-    if (inactiveStatuses.length > 0) {
-      await client.query(
-        `UPDATE public.scanner_coin_configs AS coin
-            SET trading_status = source.status,
-                is_enabled = FALSE,
-                disable_reason = CASE WHEN coin.is_admin_disabled
-                  THEN COALESCE(coin.disable_reason, 'ADMIN_DISABLED') ELSE source.status END,
-                last_synced_at = NOW(),
-                updated_at = NOW()
-           FROM jsonb_to_recordset($1::jsonb) AS source(symbol TEXT, status TEXT)
-          WHERE coin.exchange = 'BINANCE' AND coin.symbol = source.symbol
-            AND coin.quote_asset = 'USDT' AND coin.contract_type = 'PERPETUAL'
-            AND source.status <> 'TRADING'`,
-        [JSON.stringify(inactiveStatuses)],
-      );
-    }
     await client.query(
       `UPDATE public.scanner_coin_configs
           SET trading_status = 'NOT_LISTED',
@@ -192,13 +179,13 @@ export async function syncBinanceScannerUniverse(
       );
     }
 
-    const newSymbols = eligible.filter((contract) => !currentBySymbol.has(contract.symbol));
+    const newSymbols = contracts.filter((contract) => !currentBySymbol.has(contract.symbol));
     const statusChanges = contracts.filter((contract) => {
       const current = currentBySymbol.get(contract.symbol);
       return current && current.trading_status !== contract.status;
     });
     const missingSymbols = currentResult.rows.filter((coin) => !allSymbols.includes(coin.symbol));
-    const changedMetadata = eligible.filter((contract) => {
+    const changedMetadata = contracts.filter((contract) => {
       const current = currentBySymbol.get(contract.symbol);
       return current && (
         current.base_asset !== contract.baseAsset ||
@@ -257,10 +244,10 @@ export async function syncBinanceScannerUniverse(
         }))), adminUserId],
       );
     }
-    const inactiveCount = currentResult.rows.filter((coin) =>
-      coin.trading_status === 'TRADING' &&
-      (!activeSymbols.includes(coin.symbol) || contracts.find((contract) => contract.symbol === coin.symbol)?.status !== 'TRADING'),
-    ).length;
+    const inactiveCount = new Set([
+      ...inactiveStatuses.map((contract) => contract.symbol),
+      ...currentResult.rows.filter((coin) => !allSymbols.includes(coin.symbol)).map((coin) => coin.symbol),
+    ]).size;
     const updatedCount = changedMetadata.length + statusChanges.length + missingSymbols.length;
     await client.query(
       `INSERT INTO public.scanner_sync_state
@@ -274,17 +261,22 @@ export async function syncBinanceScannerUniverse(
          updated_count = EXCLUDED.updated_count,
          inactive_count = EXCLUDED.inactive_count,
          exchange_status = 'OK', last_error = NULL, updated_at = NOW()`,
-      [eligible.length, newSymbols.length, updatedCount, inactiveCount],
+      [contracts.length, newSymbols.length, updatedCount, inactiveCount],
     );
     await client.query(
       `INSERT INTO public.scanner_coin_audit_log (action, admin_user_id, reason, new_state)
        VALUES ('SYNC_COMPLETED', $1, 'Binance Futures contract universe synchronized.',
-         jsonb_build_object('discovered', $2, 'added', $3, 'updated', $4, 'inactive', $5))`,
-      [adminUserId, eligible.length, newSymbols.length, updatedCount, inactiveCount],
+         jsonb_build_object(
+           'discovered', $2::integer,
+           'added', $3::integer,
+           'updated', $4::integer,
+           'inactive', $5::integer
+         ))`,
+      [adminUserId, contracts.length, newSymbols.length, updatedCount, inactiveCount],
     );
     await client.query('COMMIT');
     return {
-      discovered: eligible.length,
+      discovered: contracts.length,
       added: newSymbols.length,
       updated: updatedCount,
       inactive: inactiveCount,
@@ -431,7 +423,7 @@ export async function changeScannerCoins(input: {
           (action, symbol, admin_user_id, previous_state, new_state, reason)
          SELECT $1, symbol, $2,
                 jsonb_build_object('enabled', previous_enabled, 'adminDisabled', previous_admin_disabled),
-                jsonb_build_object('enabled', $3, 'adminDisabled', $4), $5
+                jsonb_build_object('enabled', $3::boolean, 'adminDisabled', $4::boolean), $5
            FROM jsonb_to_recordset($6::jsonb) AS coin(
              symbol TEXT, previous_enabled BOOLEAN, previous_admin_disabled BOOLEAN
            )`,

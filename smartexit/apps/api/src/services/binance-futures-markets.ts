@@ -111,8 +111,8 @@ export function parseBinanceUsdtPerpetuals(body: unknown): BinanceContractMetada
     .filter((contract) =>
       contract.contractType === 'PERPETUAL' &&
       contract.quoteAsset === 'USDT' &&
-      /^[A-Z0-9]{2,30}$/.test(contract.symbol) &&
-      /^[A-Z0-9]{1,20}$/.test(contract.baseAsset) &&
+      /^[\p{L}\p{N}]{2,30}$/u.test(contract.symbol) &&
+      /^[\p{L}\p{N}]{1,20}$/u.test(contract.baseAsset) &&
       contract.symbol === `${contract.baseAsset}${contract.quoteAsset}`,
     )
     .map((contract) => ({

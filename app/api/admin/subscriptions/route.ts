@@ -51,6 +51,9 @@ const postSchema = z.discriminatedUnion('action', [
 function failure(error: unknown, fallback: string) {
   const isAuth = error instanceof AuthError;
   const isSubscription = error instanceof SubscriptionError;
+  if (!isAuth && !isSubscription) {
+    console.error('Subscription administration failed:', error instanceof Error ? error.message : 'Unknown error');
+  }
   const status = isAuth ? error.status : isSubscription ? error.status : 503;
   return NextResponse.json({
     error: isAuth || isSubscription ? error.message : fallback,

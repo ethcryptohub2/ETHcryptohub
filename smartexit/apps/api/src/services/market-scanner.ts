@@ -645,8 +645,8 @@ export class BinanceMarketScannerService implements MarketScannerProvider {
         (market) =>
           market.quoteAsset === config.quoteAsset &&
           market.contractType === 'PERPETUAL' &&
-          /^[A-Z0-9]{2,30}$/.test(market.symbol) &&
-          /^[A-Z0-9]{1,20}$/.test(market.baseAsset) &&
+          /^[\p{L}\p{N}]{2,30}$/u.test(market.symbol) &&
+          /^[\p{L}\p{N}]{1,20}$/u.test(market.baseAsset) &&
           market.symbol === `${market.baseAsset}${market.quoteAsset}` &&
           market.lastPrice !== null &&
           market.lastPrice > 0,

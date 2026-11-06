@@ -135,6 +135,32 @@ describe('market scanner indicators', () => {
 });
 
 describe('Binance market scanner service', () => {
+  it('scans Binance perpetuals with Unicode symbols safely encoded in candle requests', async () => {
+    const now = 241 * 60_000;
+    const symbol = '币安人生USDT';
+    const baseMarket = snapshot(now).symbols[0]!;
+    let requestedSymbol = '';
+    const service = new BinanceMarketScannerService(
+      {
+        list: async () => ({
+          ...snapshot(now),
+          symbols: [{ ...baseMarket, symbol, baseAsset: '币安人生' }],
+        }),
+      },
+      async (input) => {
+        requestedSymbol = new URL(String(input)).searchParams.get('symbol') ?? '';
+        const candles = Array.from({ length: 240 }, (_, index) => candle(100 + index * 0.2, index));
+        return new Response(JSON.stringify(candles.map(binanceRow)));
+      },
+      () => now,
+    );
+
+    const result = await service.scan({ ...config, symbols: [symbol] });
+
+    expect(requestedSymbol).toBe(symbol);
+    expect(result.candidates.map((candidate) => candidate.symbol)).toContain(symbol);
+  });
+
   it('does not mix Binance candles into a failed Bybit market snapshot', async () => {
     const now = 241 * 60_000;
     const closedCandles = Array.from({ length: 240 }, (_, index) => candle(100 + index * 0.2, index));

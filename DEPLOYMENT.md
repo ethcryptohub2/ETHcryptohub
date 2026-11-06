@@ -21,7 +21,8 @@ The application no longer uses a PHP origin, PHP proxy, MySQL database, or PHP r
    - `supabase/migrations/202611060004_subscriptions.sql`
    - `202611050002_smartexit.sql` is legacy and is not required by the current app. Do not drop its tables from an existing database; they may contain historical user data.
 3. Keep the database reachable only through server-side credentials. The app does not expose database credentials to browser code.
-4. Copy the PostgreSQL connection string or host, port, database name, user, and password from Supabase project settings.
+4. On first access, the server can apply the matching scanner, subscriptions, notification, or market-research migration when a required feature table is missing. Manually applying migrations in order remains the recommended production setup.
+5. Copy the PostgreSQL connection string or host, port, database name, user, and password from Supabase project settings.
 
 ## 2. Vercel
 

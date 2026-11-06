@@ -16,6 +16,7 @@ describe('public futures market providers', () => {
       { symbol: 'BTCUSDC', status: 'TRADING', contractType: 'PERPETUAL', baseAsset: 'BTC', quoteAsset: 'USDC', onboardDate: 1 },
       { symbol: 'BTCUSDT_2606', status: 'TRADING', contractType: 'CURRENT_QUARTER', baseAsset: 'BTC', quoteAsset: 'USDT', onboardDate: 1 },
       { symbol: 'ETHUSDT', status: 'SETTLING', contractType: 'PERPETUAL', baseAsset: 'ETH', quoteAsset: 'USDT', onboardDate: 2 },
+      { symbol: '币安人生USDT', status: 'PENDING_TRADING', contractType: 'PERPETUAL', baseAsset: '币安人生', quoteAsset: 'USDT', onboardDate: 4 },
       ...Array.from({ length: 40 }, (_, index) => ({
         symbol: `COIN${index}USDT`,
         status: 'TRADING',
@@ -26,7 +27,9 @@ describe('public futures market providers', () => {
       })),
     ];
     const catalog = parseBinanceUsdtPerpetuals({ symbols: contracts });
-    expect(catalog).toHaveLength(42);
+    expect(catalog).toHaveLength(43);
+    expect(catalog.map(({ symbol }) => symbol)).toContain('币安人生USDT');
+    expect(catalog.find(({ symbol }) => symbol === '币安人生USDT')?.status).toBe('PENDING_TRADING');
     expect(catalog.map(({ symbol }) => symbol)).not.toContain('BTCUSDC');
     expect(catalog.map(({ symbol }) => symbol)).not.toContain('BTCUSDT_2606');
 

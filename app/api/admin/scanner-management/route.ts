@@ -16,7 +16,7 @@ export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
 
-const symbol = z.string().regex(/^[A-Z0-9]{2,30}$/);
+const symbol = z.string().regex(/^[\p{L}\p{N}]{2,30}$/u);
 const actionSchema = z.discriminatedUnion('action', [
   z.object({ action: z.literal('sync_now') }).strict(),
   z.object({ action: z.literal('enable_coin'), symbol }).strict(),
@@ -50,6 +50,9 @@ export async function GET() {
   } catch (error) {
     const message = error instanceof Error ? error.message : '';
     const rateLimited = message.startsWith('Too many');
+    if (!(error instanceof AuthError) && !rateLimited) {
+      console.error('Scanner management read failed:', message || 'Unknown error');
+    }
     const status = error instanceof AuthError ? error.status : rateLimited ? 429 : 503;
     return NextResponse.json({
       error: error instanceof AuthError || rateLimited
@@ -98,6 +101,9 @@ export async function POST(request: NextRequest) {
     const message = error instanceof Error ? error.message : '';
     const rateLimited = message.startsWith('Too many');
     const syncFailure = error instanceof ScannerSyncError;
+    if (!(error instanceof AuthError) && !rateLimited && !syncFailure) {
+      console.error('Scanner management action failed:', message || 'Unknown error');
+    }
     const status = error instanceof AuthError ? error.status : rateLimited ? 429 : syncFailure ? 502 : 503;
     return NextResponse.json({
       error: error instanceof AuthError || rateLimited || syncFailure
