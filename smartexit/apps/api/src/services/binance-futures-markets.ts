@@ -5,6 +5,36 @@ const BYBIT_BASE_URL = 'https://api.bybit.com';
 const CACHE_DURATION_MS = 30_000;
 const REQUEST_TIMEOUT_MS = 10_000;
 
+export async function fetchWithBackoff(
+  request: typeof fetch,
+  input: string | URL | Request,
+  timeoutMs = REQUEST_TIMEOUT_MS,
+): Promise<Response> {
+  let lastError: unknown;
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    let response: Response;
+    try {
+      response = await request(input, { signal: AbortSignal.timeout(timeoutMs) });
+    } catch (error) {
+      lastError = error;
+      if (attempt === 2) break;
+      await new Promise((resolve) => setTimeout(resolve, 200 * 2 ** attempt));
+      continue;
+    }
+    if (response.ok) return response;
+    lastError = new Error(`HTTP ${response.status}`);
+    if (![408, 429].includes(response.status) && response.status < 500) break;
+    if (attempt < 2) {
+      const retryAfter = Number(response.headers.get('retry-after')) * 1000;
+      const delay = Number.isFinite(retryAfter) && retryAfter > 0
+        ? Math.min(2_000, retryAfter)
+        : 200 * 2 ** attempt;
+      await new Promise((resolve) => setTimeout(resolve, delay));
+    }
+  }
+  throw lastError instanceof Error ? lastError : new Error('Public exchange request failed.');
+}
+
 const exchangeInfoSchema = z.object({
   symbols: z.array(
     z.object({
@@ -13,6 +43,7 @@ const exchangeInfoSchema = z.object({
       contractType: z.string(),
       baseAsset: z.string().min(1),
       quoteAsset: z.string().min(1),
+      onboardDate: z.number().int().nonnegative().optional(),
     }),
   ),
 });
@@ -64,6 +95,48 @@ export interface BinanceFuturesSymbol {
   tradeCount24h: number;
 }
 
+export interface BinanceContractMetadata {
+  symbol: string;
+  status: string;
+  contractType: 'PERPETUAL';
+  baseAsset: string;
+  quoteAsset: 'USDT';
+  onboardDate: number | null;
+}
+
+export function parseBinanceUsdtPerpetuals(body: unknown): BinanceContractMetadata[] {
+  const parsed = exchangeInfoSchema.safeParse(body);
+  if (!parsed.success) throw new BinanceMarketDataError('Binance returned invalid exchange information.');
+  return parsed.data.symbols
+    .filter((contract) =>
+      contract.contractType === 'PERPETUAL' &&
+      contract.quoteAsset === 'USDT' &&
+      /^[A-Z0-9]{2,30}$/.test(contract.symbol) &&
+      /^[A-Z0-9]{1,20}$/.test(contract.baseAsset) &&
+      contract.symbol === `${contract.baseAsset}${contract.quoteAsset}`,
+    )
+    .map((contract) => ({
+      symbol: contract.symbol,
+      status: contract.status,
+      contractType: 'PERPETUAL',
+      baseAsset: contract.baseAsset,
+      quoteAsset: 'USDT',
+      onboardDate: contract.onboardDate ?? null,
+    }));
+}
+
+export async function fetchBinanceUsdtPerpetuals(
+  request: typeof fetch = globalThis.fetch,
+): Promise<BinanceContractMetadata[]> {
+  try {
+    const response = await fetchWithBackoff(request, `${BINANCE_FUTURES_BASE_URL}/fapi/v1/exchangeInfo`);
+    return parseBinanceUsdtPerpetuals(await response.json());
+  } catch (error) {
+    if (error instanceof BinanceMarketDataError) throw error;
+    throw new BinanceMarketDataError('Binance exchange information is temporarily unavailable.');
+  }
+}
+
 export interface FuturesMarketSnapshot {
   exchange: 'BINANCE' | 'BYBIT';
   market: 'USDⓈ-M FUTURES' | 'USDT LINEAR PERPETUALS';
@@ -95,25 +168,25 @@ export class BinanceFuturesMarketsService implements FuturesMarketsProvider {
     if (this.cached && this.cached.expiresAt > this.now()) return this.cached.snapshot;
 
     try {
-      const options: RequestInit = { signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS) };
       const [exchangeResponse, tickerResponse] = await Promise.all([
-        this.request(`${BINANCE_FUTURES_BASE_URL}/fapi/v1/exchangeInfo`, options),
-        this.request(`${BINANCE_FUTURES_BASE_URL}/fapi/v1/ticker/24hr`, options),
+        fetchWithBackoff(this.request, `${BINANCE_FUTURES_BASE_URL}/fapi/v1/exchangeInfo`),
+        fetchWithBackoff(this.request, `${BINANCE_FUTURES_BASE_URL}/fapi/v1/ticker/24hr`),
       ]);
 
-      if (!exchangeResponse.ok || !tickerResponse.ok) {
-        throw new BinanceMarketDataError('Binance public futures market data is temporarily unavailable.');
-      }
       const [exchangeBody, tickerBody] = await Promise.all([exchangeResponse.json(), tickerResponse.json()]);
-      const exchangeInfo = exchangeInfoSchema.safeParse(exchangeBody);
+      let eligibleContracts: BinanceContractMetadata[];
+      try {
+        eligibleContracts = parseBinanceUsdtPerpetuals(exchangeBody).filter((contract) => contract.status === 'TRADING');
+      } catch {
+        throw new BinanceMarketDataError('Binance returned invalid public futures market data.');
+      }
       const tickerData = tickerSchema.safeParse(tickerBody);
-      if (!exchangeInfo.success || !tickerData.success) {
+      if (!tickerData.success) {
         throw new BinanceMarketDataError('Binance returned invalid public futures market data.');
       }
 
       const tickers = new Map(tickerData.data.map((ticker) => [ticker.symbol, ticker]));
-      const symbols = exchangeInfo.data.symbols
-        .filter((contract) => contract.status === 'TRADING')
+      const symbols = eligibleContracts
         .map((contract) => {
           const ticker = tickers.get(contract.symbol);
           if (!ticker) {
@@ -175,14 +248,10 @@ export class BybitLinearFuturesMarketsService implements FuturesMarketsProvider 
   async list(): Promise<FuturesMarketSnapshot> {
     if (this.cached && this.cached.expiresAt > this.now()) return this.cached.snapshot;
     try {
-      const options: RequestInit = { signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS) };
       const [instrumentsResponse, tickersResponse] = await Promise.all([
-        this.request(`${BYBIT_BASE_URL}/v5/market/instruments-info?category=linear&limit=1000`, options),
-        this.request(`${BYBIT_BASE_URL}/v5/market/tickers?category=linear`, options),
+        fetchWithBackoff(this.request, `${BYBIT_BASE_URL}/v5/market/instruments-info?category=linear&limit=1000`),
+        fetchWithBackoff(this.request, `${BYBIT_BASE_URL}/v5/market/tickers?category=linear`),
       ]);
-      if (!instrumentsResponse.ok || !tickersResponse.ok) {
-        throw new BinanceMarketDataError('Bybit public futures market data is temporarily unavailable.');
-      }
       const [instrumentsBody, tickersBody] = await Promise.all([
         instrumentsResponse.json(),
         tickersResponse.json(),
@@ -239,8 +308,8 @@ export class BybitLinearFuturesMarketsService implements FuturesMarketsProvider 
 
 export class PublicFuturesMarketsService implements FuturesMarketsProvider {
   constructor(
-    private readonly primary: FuturesMarketsProvider = new BybitLinearFuturesMarketsService(),
-    private readonly fallback: FuturesMarketsProvider = new BinanceFuturesMarketsService(),
+    private readonly primary: FuturesMarketsProvider = new BinanceFuturesMarketsService(),
+    private readonly fallback: FuturesMarketsProvider = new BybitLinearFuturesMarketsService(),
   ) {}
 
   async list(): Promise<FuturesMarketSnapshot> {
@@ -253,7 +322,7 @@ export class PublicFuturesMarketsService implements FuturesMarketsProvider {
         const primaryMessage = primaryError instanceof Error ? primaryError.message : 'unknown provider error';
         const fallbackMessage = fallbackError instanceof Error ? fallbackError.message : 'unknown provider error';
         throw new BinanceMarketDataError(
-          `Public futures data is unavailable. Bybit: ${primaryMessage} Binance: ${fallbackMessage}`,
+          `Public futures data is unavailable. Binance: ${primaryMessage} Bybit: ${fallbackMessage}`,
         );
       }
     }

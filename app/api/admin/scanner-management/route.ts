@@ -1,0 +1,108 @@
+import { NextRequest, NextResponse } from 'next/server';
+import { z } from 'zod';
+import { AuthError, requireAdmin } from '../../../../lib/auth';
+import { validCsrf } from '../../../../lib/http';
+import {
+  changeScannerCoins,
+  consumeScannerAdminRateLimit,
+  getScannerAuditLog,
+  getScannerCoinUniverse,
+  getScannerSyncState,
+  ScannerSyncError,
+  syncBinanceScannerUniverse,
+} from '../../../../lib/scanner-coins';
+
+export const runtime = 'nodejs';
+export const dynamic = 'force-dynamic';
+export const maxDuration = 60;
+
+const symbol = z.string().regex(/^[A-Z0-9]{2,30}$/);
+const actionSchema = z.discriminatedUnion('action', [
+  z.object({ action: z.literal('sync_now') }).strict(),
+  z.object({ action: z.literal('enable_coin'), symbol }).strict(),
+  z.object({ action: z.literal('disable_coin'), symbol, reason: z.string().trim().max(200).optional() }).strict(),
+  z.object({ action: z.literal('enable_selected'), symbols: z.array(symbol).min(1).max(500).refine((items) => new Set(items).size === items.length), confirm: z.literal(true) }).strict(),
+  z.object({ action: z.literal('disable_selected'), symbols: z.array(symbol).min(1).max(500).refine((items) => new Set(items).size === items.length), confirm: z.literal(true), reason: z.string().trim().max(200).optional() }).strict(),
+  z.object({ action: z.literal('enable_all'), confirm: z.literal(true) }).strict(),
+  z.object({ action: z.literal('disable_all'), confirm: z.literal(true), reason: z.string().trim().max(200).optional() }).strict(),
+]);
+
+export async function GET() {
+  try {
+    const admin = await requireAdmin();
+    await consumeScannerAdminRateLimit(admin.id, 'read');
+    const [coins, sync, audit] = await Promise.all([
+      getScannerCoinUniverse(),
+      getScannerSyncState(),
+      getScannerAuditLog(40),
+    ]);
+    const data = coins.reduce((counts, coin) => {
+      counts.total += 1;
+      if (coin.is_enabled && coin.trading_status === 'TRADING') counts.enabled += 1;
+      else counts.disabled += 1;
+      if (coin.trading_status === 'TRADING') counts.active += 1;
+      else counts.inactive += 1;
+      return counts;
+    }, { total: 0, enabled: 0, disabled: 0, active: 0, inactive: 0 });
+    return NextResponse.json({ data: { coins, metrics: data, sync, audit } }, {
+      headers: { 'Cache-Control': 'no-store' },
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : '';
+    const rateLimited = message.startsWith('Too many');
+    const status = error instanceof AuthError ? error.status : rateLimited ? 429 : 503;
+    return NextResponse.json({
+      error: error instanceof AuthError || rateLimited
+        ? message
+        : 'Scanner management is unavailable. Apply the scanner coin management migration.',
+    }, { status, headers: { 'Cache-Control': 'no-store' } });
+  }
+}
+
+export async function POST(request: NextRequest) {
+  if (!validCsrf(request)) return NextResponse.json({ error: 'Refresh and retry.' }, { status: 403 });
+  try {
+    const admin = await requireAdmin();
+    let body: unknown;
+    try {
+      body = await request.json();
+    } catch {
+      return NextResponse.json({ error: 'Invalid scanner management action.' }, { status: 400 });
+    }
+    const parsed = actionSchema.safeParse(body);
+    if (!parsed.success) return NextResponse.json({ error: 'Invalid scanner management action.' }, { status: 422 });
+    const action = parsed.data;
+    await consumeScannerAdminRateLimit(
+      admin.id,
+      action.action === 'sync_now' ? 'sync' : 'write',
+    );
+    if (action.action === 'sync_now') {
+      const result = await syncBinanceScannerUniverse(admin.id);
+      return NextResponse.json({ data: result }, { headers: { 'Cache-Control': 'no-store' } });
+    }
+
+    const isEnable = action.action.startsWith('enable');
+    const symbols = 'symbol' in action
+      ? [action.symbol]
+      : 'symbols' in action
+        ? action.symbols
+        : null;
+    const result = await changeScannerCoins({
+      adminUserId: admin.id,
+      action: isEnable ? 'enable' : 'disable',
+      symbols,
+      reason: 'reason' in action ? action.reason ?? null : null,
+    });
+    return NextResponse.json({ data: result }, { headers: { 'Cache-Control': 'no-store' } });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : '';
+    const rateLimited = message.startsWith('Too many');
+    const syncFailure = error instanceof ScannerSyncError;
+    const status = error instanceof AuthError ? error.status : rateLimited ? 429 : syncFailure ? 502 : 503;
+    return NextResponse.json({
+      error: error instanceof AuthError || rateLimited || syncFailure
+        ? message
+        : 'Scanner management action could not be completed.',
+    }, { status, headers: { 'Cache-Control': 'no-store' } });
+  }
+}

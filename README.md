@@ -7,7 +7,7 @@ ETHcryptohub is a Next.js 16 application for account verification, user settings
 - Email verification through Resend; password hashes use bcrypt.
 - User sessions are stored as hashes in PostgreSQL and protected by secure, HTTP-only cookies.
 - Binance API credentials are encrypted at rest. The Binance integration is read-only; live order submission is disabled.
-- The scanner uses Bybit linear-perpetual data first and Binance USDⓈ-M as a fallback, and includes funding, open-interest, gainer/loser filters, and per-candidate explanations. Admins can add encrypted Glassnode, CryptoPanic, and CoinGlass keys for optional research context. The browser-only fallback remains technical-only because provider secrets are never sent to the browser.
+- The scanner uses Binance USDⓈ-M USDT perpetuals as its authoritative market universe. Eligible pairs are synchronized into an admin-managed database table, and scheduled background batches run the existing technical and configured research pipeline. Admin-disabled pairs stay disabled across synchronization. Admins can add encrypted Glassnode, CryptoPanic, and CoinGlass keys for optional research context.
 - The application is informational only: paper-trading UI, routes, and wallet features are disabled.
 
 ## Local development
@@ -20,7 +20,7 @@ Copy-Item .env.example .env.local
 npm.cmd run dev
 ```
 
-Set the database and authentication values in `.env.local` before using database-backed pages. Apply Supabase migrations `202611050001_initial_schema.sql`, `202611050002_smartexit.sql`, `202611050003_nextjs_auth.sql`, and `202611060001_market_research.sql` in order. Do not commit `.env.local`.
+Set the database and authentication values in `.env.local` before using database-backed pages. Apply the required migrations listed in [DEPLOYMENT.md](./DEPLOYMENT.md) in order. Do not commit `.env.local`.
 
 Open `http://localhost:3000`. The dashboard provides market information, account settings, and optional Binance API credential entry for read-only connectivity checks.
 

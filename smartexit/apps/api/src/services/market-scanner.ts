@@ -8,14 +8,37 @@ import {
 const BINANCE_FUTURES_BASE_URL = 'https://fapi.binance.com';
 const BYBIT_BASE_URL = 'https://api.bybit.com';
 const CANDLE_CACHE_MS = 15_000;
-const REQUEST_TIMEOUT_MS = 10_000;
 const CANDLE_LIMIT = 400;
 const MAX_CONCURRENT_CANDLE_REQUESTS = 10;
 const TOP_MOVER_LIMIT = 5;
-const EXCLUDED_BASE_ASSETS = new Set(['USDC', 'BUSD', 'TUSD', 'FDUSD', 'USDP', 'DAI']);
-const LEVERAGED_SUFFIXES = ['UP', 'DOWN', 'BULL', 'BEAR', '2L', '2S', '3L', '3S'];
 
 const candleRowSchema = z.array(z.union([z.string(), z.number()])).min(7);
+
+async function fetchCandleData(request: typeof fetch, url: URL): Promise<Response> {
+  let lastError: unknown;
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    let response: Response;
+    try {
+      response = await request(url, { signal: AbortSignal.timeout(10_000) });
+    } catch (error) {
+      lastError = error;
+      if (attempt === 2) break;
+      await new Promise((resolve) => setTimeout(resolve, 200 * 2 ** attempt));
+      continue;
+    }
+    if (response.ok) return response;
+    lastError = new Error(`HTTP ${response.status}`);
+    if (![408, 429].includes(response.status) && response.status < 500) break;
+    if (attempt < 2) {
+      const retryAfter = Number(response.headers.get('retry-after')) * 1000;
+      const delay = Number.isFinite(retryAfter) && retryAfter > 0
+        ? Math.min(2_000, retryAfter)
+        : 200 * 2 ** attempt;
+      await new Promise((resolve) => setTimeout(resolve, delay));
+    }
+  }
+  throw lastError instanceof Error ? lastError : new Error('Public candle request failed.');
+}
 
 function intervalMilliseconds(timeframe: ScannerConfiguration['timeframe']): number {
   const minutes = timeframe === '5m' ? 5 : timeframe === '15m' ? 15 : timeframe === '1h' ? 60 : 240;
@@ -38,6 +61,7 @@ export interface MarketCandle {
 export interface ScannerConfiguration {
   quoteAsset: string;
   timeframe: '5m' | '15m' | '1h' | '4h';
+  symbols?: readonly string[];
   minimumVolume: number;
   limit: number;
   atrPeriod: number;
@@ -67,6 +91,7 @@ export type MarketRank = 'TOP_VOLUME' | 'TOP_GAINER' | 'TOP_LOSER';
 
 export interface MarketScannerCandidate {
   symbol: string;
+  scannedAt?: string;
   baseAsset: string;
   quoteAsset: string;
   marketRank: MarketRank[];
@@ -416,11 +441,6 @@ export function calculateSupertrend(
   return { direction, atr };
 }
 
-function isEligibleBaseAsset(baseAsset: string): boolean {
-  if (EXCLUDED_BASE_ASSETS.has(baseAsset)) return false;
-  return !LEVERAGED_SUFFIXES.some((suffix) => baseAsset.endsWith(suffix));
-}
-
 function parseCandles(body: unknown): MarketCandle[] | null {
   if (!Array.isArray(body)) return null;
   const candles: MarketCandle[] = [];
@@ -625,10 +645,11 @@ export class BinanceMarketScannerService implements MarketScannerProvider {
         (market) =>
           market.quoteAsset === config.quoteAsset &&
           market.contractType === 'PERPETUAL' &&
-          market.quoteVolume24h >= config.minimumVolume &&
+          /^[A-Z0-9]{2,30}$/.test(market.symbol) &&
+          /^[A-Z0-9]{1,20}$/.test(market.baseAsset) &&
+          market.symbol === `${market.baseAsset}${market.quoteAsset}` &&
           market.lastPrice !== null &&
-          market.lastPrice > 0 &&
-          isEligibleBaseAsset(market.baseAsset),
+          market.lastPrice > 0,
       )
       .sort(
         (left, right) =>
@@ -638,8 +659,10 @@ export class BinanceMarketScannerService implements MarketScannerProvider {
       string,
       { market: (typeof eligibleMarkets)[number]; ranks: Set<MarketRank> }
     >();
+    const targetSymbols = config.symbols ? new Set(config.symbols) : null;
     const addRankedMarkets = (markets: (typeof eligibleMarkets)[number][], rank: MarketRank): void => {
       for (const market of markets) {
+        if (targetSymbols && !targetSymbols.has(market.symbol)) continue;
         const existing = rankedMarkets.get(market.symbol);
         if (existing) existing.ranks.add(rank);
         else rankedMarkets.set(market.symbol, { market, ranks: new Set([rank]) });
@@ -672,6 +695,13 @@ export class BinanceMarketScannerService implements MarketScannerProvider {
         .slice(0, TOP_MOVER_LIMIT),
       'TOP_LOSER',
     );
+    if (targetSymbols) {
+      for (const market of eligibleMarkets) {
+        if (targetSymbols.has(market.symbol) && !rankedMarkets.has(market.symbol)) {
+          rankedMarkets.set(market.symbol, { market, ranks: new Set() });
+        }
+      }
+    }
     const selectedMarkets = [...rankedMarkets.values()];
     const candidates: MarketScannerCandidate[] = [];
     for (let offset = 0; offset < selectedMarkets.length; offset += MAX_CONCURRENT_CANDLE_REQUESTS) {
@@ -716,7 +746,7 @@ export class BinanceMarketScannerService implements MarketScannerProvider {
     const key = `${preferredExchange}:${symbol}:${timeframe}`;
     const cached = this.candleCache.get(key);
     if (cached && cached.expiresAt > this.now()) return cached.candles;
-    const providers = preferredExchange === 'BYBIT' ? ['BYBIT', 'BINANCE'] as const : ['BINANCE', 'BYBIT'] as const;
+    const providers = [preferredExchange] as const;
     const failures: string[] = [];
     for (const provider of providers) {
       try {
@@ -731,8 +761,7 @@ export class BinanceMarketScannerService implements MarketScannerProvider {
         }
         url.searchParams.set('symbol', symbol);
         url.searchParams.set('limit', String(CANDLE_LIMIT));
-        const response = await this.request(url, { signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS) });
-        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        const response = await fetchCandleData(this.request, url);
         const body = await response.json();
         let candles: MarketCandle[] | null;
         if (provider === 'BYBIT') {
@@ -884,6 +913,10 @@ export class BinanceMarketScannerService implements MarketScannerProvider {
       status = 'STALE';
       finalSide = 'WAIT';
       warnings.unshift('Market ticker or last completed candle exceeds the configured freshness limit.');
+    } else if (market.quoteVolume24h < config.minimumVolume) {
+      status = 'WAIT';
+      finalSide = 'WAIT';
+      warnings.unshift(`24-hour quote volume is below the configured ${config.minimumVolume.toLocaleString()} minimum.`);
     } else if (emaDirection === 'MIXED') {
       status = 'WAIT';
       finalSide = 'WAIT';

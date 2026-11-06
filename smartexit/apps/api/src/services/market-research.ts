@@ -177,19 +177,17 @@ export class ConfiguredMarketResearchProvider implements MarketResearchProvider 
   private async getDerivatives(
     request: MarketResearchRequest,
   ): Promise<MarketResearchSummary['derivatives']> {
-    const providers = request.exchange === 'BYBIT' ? ['BYBIT', 'BINANCE'] as const : ['BINANCE', 'BYBIT'] as const;
-    const failures: string[] = [];
-    for (const exchange of providers) {
-      try {
-        const data = exchange === 'BYBIT'
-          ? await this.getBybitDerivatives(request)
-          : await this.getBinanceDerivatives(request);
-        return feed('LIVE', null, `${exchange} public funding/open-interest endpoints`, data);
-      } catch (error) {
-        failures.push(`${exchange}: ${error instanceof Error ? error.message : 'unavailable'}`);
-      }
+    try {
+      const data = request.exchange === 'BYBIT'
+        ? await this.getBybitDerivatives(request)
+        : await this.getBinanceDerivatives(request);
+      return feed('LIVE', null, `${request.exchange} public funding/open-interest endpoints`, data);
+    } catch (error) {
+      return feed(
+        'UNAVAILABLE',
+        `${request.exchange} funding/open-interest data unavailable (${error instanceof Error ? error.message : 'unknown provider error'}).`,
+      );
     }
-    return feed('UNAVAILABLE', `Public funding/open-interest data unavailable (${failures.join('; ')}).`);
   }
 
   private async getBybitDerivatives(

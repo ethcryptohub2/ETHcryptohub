@@ -1,13 +1,51 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
+  BinanceFuturesMarketsService,
   BinanceMarketDataError,
   BybitLinearFuturesMarketsService,
   PublicFuturesMarketsService,
+  parseBinanceUsdtPerpetuals,
   type FuturesMarketSnapshot,
   type FuturesMarketsProvider,
 } from '../src/services/binance-futures-markets.js';
 
 describe('public futures market providers', () => {
+  it('uses the Binance Futures exchange catalog and imports only eligible USDT perpetuals', async () => {
+    const contracts = [
+      { symbol: 'BTCUSDT', status: 'TRADING', contractType: 'PERPETUAL', baseAsset: 'BTC', quoteAsset: 'USDT', onboardDate: 1 },
+      { symbol: 'BTCUSDC', status: 'TRADING', contractType: 'PERPETUAL', baseAsset: 'BTC', quoteAsset: 'USDC', onboardDate: 1 },
+      { symbol: 'BTCUSDT_2606', status: 'TRADING', contractType: 'CURRENT_QUARTER', baseAsset: 'BTC', quoteAsset: 'USDT', onboardDate: 1 },
+      { symbol: 'ETHUSDT', status: 'SETTLING', contractType: 'PERPETUAL', baseAsset: 'ETH', quoteAsset: 'USDT', onboardDate: 2 },
+      ...Array.from({ length: 40 }, (_, index) => ({
+        symbol: `COIN${index}USDT`,
+        status: 'TRADING',
+        contractType: 'PERPETUAL',
+        baseAsset: `COIN${index}`,
+        quoteAsset: 'USDT',
+        onboardDate: 3,
+      })),
+    ];
+    const catalog = parseBinanceUsdtPerpetuals({ symbols: contracts });
+    expect(catalog).toHaveLength(42);
+    expect(catalog.map(({ symbol }) => symbol)).not.toContain('BTCUSDC');
+    expect(catalog.map(({ symbol }) => symbol)).not.toContain('BTCUSDT_2606');
+
+    const request = vi.fn(async (input: string | URL | Request) => {
+      if (String(input).includes('exchangeInfo')) return Response.json({ symbols: contracts });
+      return Response.json(contracts.filter((contract) => contract.status === 'TRADING').map((contract) => ({
+        symbol: contract.symbol,
+        lastPrice: '1',
+        priceChangePercent: '0',
+        quoteVolume: '1000000',
+        count: 1,
+      })));
+    });
+    const result = await new BinanceFuturesMarketsService(request).list();
+    expect(result.exchange).toBe('BINANCE');
+    expect(result.symbols).toHaveLength(41);
+    expect(result.symbols.every((contract) => contract.quoteAsset === 'USDT' && contract.contractType === 'PERPETUAL')).toBe(true);
+  });
+
   it('loads only active USDT linear perpetuals and maps public tickers', async () => {
     const request = vi.fn(async (input: string | URL | Request) => {
       const url = String(input);
