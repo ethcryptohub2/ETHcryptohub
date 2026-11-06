@@ -24,12 +24,16 @@ const settingsSchema = z.object({
   entryZoneAtrFraction: z.number().min(0.01).max(2),
 }).strict();
 
-export async function GET() {
+export async function GET(request: NextRequest) {
   try {
     await requireAdmin();
+    const parsed = z.object({
+      page: z.coerce.number().int().min(1).max(100_000).default(1),
+    }).safeParse(Object.fromEntries(request.nextUrl.searchParams));
+    if (!parsed.success) return NextResponse.json({ error: 'Invalid error log page.' }, { status: 422 });
     const [settings, stats] = await Promise.all([
       getNotificationSystemSettings(),
-      getNotificationAdminStats(),
+      getNotificationAdminStats(parsed.data.page),
     ]);
     return NextResponse.json({ data: { settings, stats } }, { headers: { 'Cache-Control': 'no-store' } });
   } catch (error) {

@@ -1,6 +1,7 @@
 import { sendNotification, setVapidDetails } from 'web-push';
 import type { PoolClient } from 'pg';
 import { pool, query } from './db';
+import { TABLE_PAGE_SIZE } from './pagination';
 import type {
   MarketScannerCandidate,
   ScannerConfiguration,
@@ -917,8 +918,9 @@ export async function updateGlobalNotificationSettings(settings: NotificationSys
   );
 }
 
-export async function getNotificationAdminStats() {
-  const [signals, pending, deliveries, failedAttempts] = await Promise.all([
+export async function getNotificationAdminStats(page: number) {
+  const offset = (page - 1) * TABLE_PAGE_SIZE;
+  const [signals, pending, deliveries, failedAttempts, failedAttemptsTotal] = await Promise.all([
     query<{ count: string }>(
       `SELECT COUNT(*)::TEXT AS count FROM public.market_signals
         WHERE generated_at >= NOW() - INTERVAL '24 hours'`,
@@ -944,7 +946,13 @@ export async function getNotificationAdminStats() {
          JOIN public.signal_events e ON e.id = n.event_id
          JOIN public.market_signals s ON s.id = n.signal_id
         WHERE d.status = 'FAILED' AND d.updated_at >= NOW() - INTERVAL '24 hours'
-        ORDER BY d.updated_at DESC LIMIT 10`,
+        ORDER BY d.updated_at DESC, d.notification_id DESC, d.subscription_id DESC
+        LIMIT $1 OFFSET $2`,
+      [TABLE_PAGE_SIZE, offset],
+    ),
+    query<{ count: string }>(
+      `SELECT COUNT(*)::TEXT AS count FROM public.push_delivery_attempts
+        WHERE status = 'FAILED' AND updated_at >= NOW() - INTERVAL '24 hours'`,
     ),
   ]);
   const duplicates = await query<{ count: string }>(
@@ -957,6 +965,7 @@ export async function getNotificationAdminStats() {
     sentPushAttemptsLast24Hours: Number(deliveries.rows[0]?.sent ?? 0),
     repeatedSignalScans: Number(duplicates.rows[0]?.count ?? 0),
     recentFailedPushAttempts: failedAttempts.rows,
+    recentFailedPushAttemptsTotal: Number(failedAttemptsTotal.rows[0]?.count ?? 0),
   };
 }
 

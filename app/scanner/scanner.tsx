@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import type {
   MarketScannerCandidate as ScannerCandidate,
@@ -14,6 +14,8 @@ type SignalMetadata = {
   serverNow: string;
 };
 
+const AUTO_REFRESH_INTERVAL_MS = 30_000;
+
 function formatPrice(value: number): string {
   return value.toLocaleString(undefined, { maximumSignificantDigits: 8 });
 }
@@ -24,9 +26,13 @@ export function Scanner({ isAdmin }: { isAdmin: boolean }) {
   const [notificationWarning, setNotificationWarning] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
+  const [lastCheckedAt, setLastCheckedAt] = useState<number | null>(null);
+  const requestInFlight = useRef(false);
   const [timeframe, setTimeframe] = useState<ScannerCandidate['timeframe']>('15m');
   const [rankFilter, setRankFilter] = useState<'ALL' | ScannerCandidate['marketRank'][number]>('ALL');
   const load = useCallback(async () => {
+    if (requestInFlight.current) return;
+    requestInFlight.current = true;
     setLoading(true);
     setError('');
     try {
@@ -52,16 +58,28 @@ export function Scanner({ isAdmin }: { isAdmin: boolean }) {
       setData(body.data);
       setSignalMetadata(body.signalMetadata ?? null);
       setNotificationWarning(body.notificationWarning ?? '');
+      setLastCheckedAt(Date.now());
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : 'Live scanner data is unavailable.');
     } finally {
+      requestInFlight.current = false;
       setLoading(false);
     }
   }, [timeframe]);
   useEffect(() => {
-    const initial = window.setTimeout(() => void load(), 0);
-    const timer = window.setInterval(() => void load(), 60_000);
-    return () => { window.clearTimeout(initial); window.clearInterval(timer); };
+    const refreshWhenVisible = () => {
+      if (document.visibilityState === 'visible') void load();
+    };
+    const initial = window.setTimeout(refreshWhenVisible, 0);
+    const timer = window.setInterval(refreshWhenVisible, AUTO_REFRESH_INTERVAL_MS);
+    document.addEventListener('visibilitychange', refreshWhenVisible);
+    window.addEventListener('focus', refreshWhenVisible);
+    return () => {
+      window.clearTimeout(initial);
+      window.clearInterval(timer);
+      document.removeEventListener('visibilitychange', refreshWhenVisible);
+      window.removeEventListener('focus', refreshWhenVisible);
+    };
   }, [load]);
   const candidates = (data?.candidates ?? []).filter(
     (item) => rankFilter === 'ALL' || item.marketRank.includes(rankFilter),
@@ -90,7 +108,7 @@ export function Scanner({ isAdmin }: { isAdmin: boolean }) {
       <article className="scanner-stat-card"><span className="scanner-stat-label">Market health</span><strong className={`scanner-health-value ${degraded ? 'is-warning' : ''}`}>{healthLabel}</strong><span className="scanner-stat-foot">{data ? `Updated ${new Date(data.updatedAt).toLocaleTimeString()}` : 'Waiting for first scan'}</span></article>
     </section>
     <section className="card stack scanner-panel">
-      <div className="scanner-panel-header"><div><p className="mono">MARKET OPPORTUNITIES</p><h2>Signal watchlist</h2><p className="muted">Signals are research references only; no orders are placed.</p></div>
+      <div className="scanner-panel-header"><div><p className="mono">MARKET OPPORTUNITIES</p><h2>Signal watchlist</h2><p className="muted">Signals are research references only; no orders are placed.</p><p className="muted" role="status">Auto-refresh every 30 seconds · {lastCheckedAt ? `Last checked ${new Date(lastCheckedAt).toLocaleTimeString()}` : 'Checking for updates…'}</p></div>
         <div className="scanner-controls">
           <label>Timeframe<select value={timeframe} onChange={(event) => setTimeframe(event.target.value as ScannerCandidate['timeframe'])}><option value="5m">5 minutes</option><option value="15m">15 minutes</option><option value="1h">1 hour</option><option value="4h">4 hours</option></select></label>
           <label>Market universe<select value={rankFilter} onChange={(event) => setRankFilter(event.target.value as typeof rankFilter)}><option value="ALL">All enabled pairs</option><option value="TOP_VOLUME">Top volume</option><option value="TOP_GAINER">Top gainers</option><option value="TOP_LOSER">Top losers</option></select></label>

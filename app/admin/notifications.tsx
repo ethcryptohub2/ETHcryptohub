@@ -1,6 +1,8 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
+import { TABLE_PAGE_SIZE } from '../../lib/pagination';
+import { TablePagination } from './table-pagination';
 
 type Settings = {
   enabled: boolean;
@@ -16,6 +18,7 @@ type Stats = {
   failedPushAttemptsLast24Hours: number;
   sentPushAttemptsLast24Hours: number;
   repeatedSignalScans: number;
+  recentFailedPushAttemptsTotal: number;
   recentFailedPushAttempts: Array<{
     symbol: string;
     event_type: string;
@@ -33,28 +36,39 @@ async function csrfToken() {
 }
 
 export function AdminNotifications() {
+  const [page, setPage] = useState(1);
   const [settings, setSettings] = useState<Settings | null>(null);
   const [stats, setStats] = useState<Stats | null>(null);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
 
+  const load = useCallback(async () => {
+    const response = await fetch(`/api/admin/notifications?page=${page}`, { cache: 'no-store' });
+    const body = await response.json() as { data?: { settings: Settings; stats: Stats }; error?: string };
+    if (!response.ok || !body.data) throw new Error(body.error ?? 'Notification administration unavailable.');
+    const lastPage = Math.max(1, Math.ceil(body.data.stats.recentFailedPushAttemptsTotal / TABLE_PAGE_SIZE));
+    if (page > lastPage) {
+      setPage(lastPage);
+      return;
+    }
+    setSettings(body.data.settings);
+    setStats(body.data.stats);
+    setError('');
+  }, [page]);
+
   useEffect(() => {
     let active = true;
-    void fetch('/api/admin/notifications', { cache: 'no-store' })
-      .then(async (response) => {
-        const body = await response.json() as { data?: { settings: Settings; stats: Stats }; error?: string };
-        if (!response.ok || !body.data) throw new Error(body.error ?? 'Notification administration unavailable.');
-        if (active) {
-          setSettings(body.data.settings);
-          setStats(body.data.stats);
-        }
-      })
-      .catch((reason: unknown) => {
+    const timer = window.setTimeout(() => {
+      void load().catch((reason: unknown) => {
         if (active) setError(reason instanceof Error ? reason.message : 'Notification administration unavailable.');
       });
-    return () => { active = false; };
-  }, []);
+    }, 0);
+    return () => {
+      active = false;
+      window.clearTimeout(timer);
+    };
+  }, [load]);
 
   async function save() {
     if (!settings) return;
@@ -88,14 +102,22 @@ export function AdminNotifications() {
       <p>Push failed · 24h <strong>{stats.failedPushAttemptsLast24Hours}</strong></p>
       <p>Repeated scans deduplicated <strong>{stats.repeatedSignalScans}</strong></p>
     </div>}
-    {stats?.recentFailedPushAttempts.length ? <div className="admin-push-failures">
+    {stats && <div className="admin-push-failures">
       <h3>Recent failed push attempts</h3>
-      {stats.recentFailedPushAttempts.map((attempt, index) => <p key={`${attempt.updated_at}-${index}`}>
-        <strong>{attempt.symbol} · {attempt.event_type.replaceAll('_', ' ')}</strong>
-        <span>{attempt.attempts} attempts · {new Date(attempt.updated_at).toLocaleString()}</span>
-        {attempt.last_error && <small>{attempt.last_error}</small>}
-      </p>)}
-    </div> : null}
+      {stats.recentFailedPushAttempts.length
+        ? stats.recentFailedPushAttempts.map((attempt, index) => <p key={`${attempt.updated_at}-${index}`}>
+          <strong>{attempt.symbol} · {attempt.event_type.replaceAll('_', ' ')}</strong>
+          <span>{attempt.attempts} attempts · {new Date(attempt.updated_at).toLocaleString()}</span>
+          {attempt.last_error && <small>{attempt.last_error}</small>}
+        </p>)
+        : <p className="muted">No failed push attempts in the last 24 hours.</p>}
+      <TablePagination
+        page={page}
+        total={stats.recentFailedPushAttemptsTotal}
+        label="failed attempts"
+        onPageChange={setPage}
+      />
+    </div>}
     {settings && <>
       <label className="notification-toggle"><input type="checkbox" checked={settings.enabled} onChange={(event) => setSettings({ ...settings, enabled: event.target.checked })} /> Enable notification delivery globally</label>
       <div className="notification-control-grid">
