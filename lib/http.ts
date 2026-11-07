@@ -7,7 +7,21 @@ export function jsonError(message: string, status = 400) {
 
 export function sameOrigin(request: NextRequest) {
   const origin = request.headers.get('origin');
-  return origin === new URL(request.url).origin;
+  const host = request.headers.get('host');
+  if (!origin || !host) return false;
+
+  try {
+    const originUrl = new URL(origin);
+    if (originUrl.origin !== origin) return false;
+
+    const forwardedProtocol = request.headers.get('x-forwarded-proto')?.split(',')[0]?.trim();
+    const protocol = forwardedProtocol || new URL(request.url).protocol.slice(0, -1);
+    if (protocol !== 'http' && protocol !== 'https') return false;
+
+    return new URL(`${protocol}://${host}`).origin === originUrl.origin;
+  } catch {
+    return false;
+  }
 }
 
 export function csrfToken() {

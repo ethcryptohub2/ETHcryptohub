@@ -27,6 +27,24 @@ label { display: grid; gap: 7px; color: #94a3b8; font-size: 13px; }
 .muted { color:#94a3b8; }
 .error { border:1px solid #7f1d1d; background:#450a0a66; color:#fecaca; padding:12px; border-radius:10px; }
 .success { border:1px solid #14532d; background:#052e1666; color:#bbf7d0; padding:12px; border-radius:10px; }
+.admin-diagnostics { margin-bottom:22px; }
+.admin-diagnostics-heading { display:flex; align-items:flex-start; justify-content:space-between; gap:20px; }
+.admin-diagnostics-heading h2 { margin:0; }
+.admin-diagnostics-heading .mono { margin:0 0 8px; }
+.admin-diagnostics-heading .muted { max-width:680px; line-height:1.55; }
+.admin-diagnostic-list { display:grid; grid-template-columns:repeat(auto-fit,minmax(230px,1fr)); gap:12px; }
+.admin-diagnostic-item { padding:14px; border:1px solid #334155; border-radius:12px; background:#0b111c; }
+.admin-diagnostic-item.is-ok { border-color:#166534; }
+.admin-diagnostic-item.is-warning { border-color:#854d0e; }
+.admin-diagnostic-item.is-error { border-color:#7f1d1d; }
+.admin-diagnostic-title { display:flex; justify-content:space-between; gap:12px; }
+.admin-diagnostic-title span { color:#94a3b8; font:10px 'DM Mono',monospace; }
+.admin-diagnostic-item.is-ok .admin-diagnostic-title span { color:#86efac; }
+.admin-diagnostic-item.is-warning .admin-diagnostic-title span { color:#fcd34d; }
+.admin-diagnostic-item.is-error .admin-diagnostic-title span { color:#fca5a5; }
+.admin-diagnostic-item p { margin:9px 0 0; color:#cbd5e1; font-size:13px; line-height:1.5; }
+.admin-diagnostic-item p.muted { color:#94a3b8; }
+.admin-diagnostics-note { margin:0; font-size:12px; }
 .auth-dialog-backdrop { position:fixed; inset:0; z-index:10; display:grid; place-items:center; padding:16px; background:#000b; }
 .auth-dialog { width:min(440px, 100%); padding:24px; border:1px solid #14532d; border-radius:18px; background:#0f1420; box-shadow:0 24px 80px #000b; }
 .auth-dialog h2 { margin-top:0; color:#bbf7d0; }
@@ -296,6 +314,7 @@ label { display: grid; gap: 7px; color: #94a3b8; font-size: 13px; }
 .notification-settings input[type="checkbox"],.admin-notifications input[type="checkbox"] { width:16px; height:16px; }
 @media (max-width:640px) { .topbar { align-items:flex-start; flex-direction:column; } .card { padding:18px; } .hero { padding-top:48px; } }
 @media (max-width:760px) {
+  .admin-diagnostics-heading { flex-direction:column; }
   .scanner-overview { grid-template-columns:repeat(2,minmax(0,1fr)); gap:10px; }
   .scanner-stat-card { padding:15px; }
   .scanner-panel { padding:16px; }
