@@ -8,6 +8,7 @@ ETHcryptohub is a Next.js 16 application for account verification, user settings
 - User sessions are stored as hashes in PostgreSQL and protected by secure, HTTP-only cookies.
 - Binance API credentials are encrypted at rest. The Binance integration is read-only; live order submission is disabled.
 - The scanner uses Binance USDⓈ-M USDT perpetuals as its authoritative market universe. Eligible pairs are synchronized into an admin-managed database table, and scheduled background batches run the existing technical and configured research pipeline. Admin-disabled pairs stay disabled across synchronization. Admins can add encrypted Glassnode, CryptoPanic, and CoinGlass keys for optional research context.
+- The verified crypto news feed uses configurable server-side CryptoPanic, RSS/Atom, and mapped JSON adapters. Admin review controls publishing, credentials are encrypted, and the authenticated UI can receive Supabase Realtime updates.
 - The application is informational only: paper-trading UI, routes, and wallet features are disabled.
 
 ## Local development

@@ -21,6 +21,7 @@ The application no longer uses a PHP origin, PHP proxy, MySQL database, or PHP r
    - `supabase/migrations/202611060004_subscriptions.sql`
    - `supabase/migrations/202611070001_high_risk_scalping.sql`
    - `supabase/migrations/202611070002_signal_history_performance.sql`
+   - `supabase/migrations/202611070003_news_platform.sql`
    - `202611050002_smartexit.sql` is legacy and is not required by the current app. Do not drop its tables from an existing database; they may contain historical user data.
 3. Keep the database reachable only through server-side credentials. The app does not expose database credentials to browser code.
 4. On first access, the server can apply the matching scanner, subscriptions, notification, market-research, or scalping migration when a required feature table is missing. Manually applying migrations in order remains the recommended production setup.
@@ -36,6 +37,9 @@ The application no longer uses a PHP origin, PHP proxy, MySQL database, or PHP r
 |---|---|
 | `SUPABASE_DB_URL` | Supabase Transaction Pooler connection string (port `6543`) for Vercel/serverless; or use `SUPABASE_DB_HOST`, `SUPABASE_DB_PORT=6543`, `SUPABASE_DB_NAME`, `SUPABASE_DB_USER`, and `SUPABASE_DB_PASSWORD` with the Transaction Pooler host |
 | `SUPABASE_DB_SSLMODE` | `require` enables TLS encryption without certificate verification; unset to verify the server certificate using Node's trusted CAs |
+| `NEXT_PUBLIC_SUPABASE_URL` | Supabase project URL; public project metadata used by the browser Realtime client |
+| `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Supabase publishable/anon key; safe for browser use only with the migration's RLS policies |
+| `SUPABASE_JWT_SECRET` | Private HS256 Supabase JWT signing secret used only to issue short-lived authenticated Realtime tokens; this implementation requires the project to accept HS256-signed JWTs. Never expose or use the service-role key in the browser |
 | `AUTH_SECRET` | At least 32 random characters |
 | `APP_URL` | Optional canonical public app origin for activation links, e.g. `https://cryptohub.vercel.app`; defaults to Vercel's production host |
 | `GMAIL_USER` | Gmail address used as the verification-email sender (optional if using Resend) |
@@ -45,7 +49,7 @@ The application no longer uses a PHP origin, PHP proxy, MySQL database, or PHP r
 | `MAIL_FROM` | Sender address on a domain verified with Resend; used only with `RESEND_API_KEY` |
 | `BINANCE_CREDENTIALS_KEY` | 32 random bytes encoded as 64 hex characters; encrypts user and market-research provider credentials |
 | `ADMIN_SETUP_TOKEN` | Optional, temporary token for one-time administrator setup |
-| `CRON_SECRET` | At least 32 random characters; authorizes the scheduled signal scan routes |
+| `CRON_SECRET` | At least 32 random characters; authorizes scheduled signal scan and news ingestion routes |
 | `VAPID_PUBLIC_KEY` | Public key from a VAPID key pair; used to create browser push subscriptions |
 | `VAPID_PRIVATE_KEY` | Private VAPID key; server-only, never expose to browser code |
 | `VAPID_SUBJECT` | Optional VAPID contact URI such as `mailto:ops@example.com` |
@@ -54,6 +58,9 @@ The application no longer uses a PHP origin, PHP proxy, MySQL database, or PHP r
 3. Deploy and verify the landing page and account routes. Apply database migrations before testing signup or login.
 4. Create the first admin through `/admin/setup`: add a private `ADMIN_SETUP_TOKEN` of at least 32 characters to the Vercel Production environment, redeploy, then create the administrator with a strong password. Remove `ADMIN_SETUP_TOKEN` and redeploy after provisioning. Admins can manually mark a pending user's email as verified from `/admin`; confirm the account belongs to the user before using this bypass.
 5. On the free Vercel Hobby plan, configure the GitHub repository Actions secret `CRON_SECRET` to the same value as the Vercel Production environment variable. Separate GitHub Actions workflows call the protected standard signal scan every 15 minutes and the high-risk scalping scan every 5 minutes. GitHub scheduled workflows can be delayed, and the standard free private-repository Actions allowance is shared across workflows. Vercel itself is configured with a once-daily backup invocation for each scanner because Hobby does not support more frequent Vercel Cron schedules.
+6. Apply `supabase/migrations/202611070003_news_platform.sql`. In Supabase, enable Realtime for the project and confirm `news_articles` and `news_notifications` are in the `supabase_realtime` publication. The migration adds the tables, indexes, policies and publication membership when available. Policies use a short-lived signed `app_user_id` claim issued only after the app's verified session check; the browser receives only the anon key and never the JWT secret.
+7. Set `NEXT_PUBLIC_SUPABASE_URL` and `NEXT_PUBLIC_SUPABASE_ANON_KEY` to the project URL and publishable/anon key. Set the private `SUPABASE_JWT_SECRET` to the project JWT signing secret. Do not use a service-role key for browser Realtime.
+8. Configure the GitHub Actions `CRON_SECRET` secret to match Vercel. The news workflow attempts ingestion every 15 minutes; the Vercel Hobby cron is a once-daily backup. Provider and platform intervals can reduce fetch frequency further.
 
 ## 3. Email and exchange safeguards
 
@@ -69,6 +76,9 @@ The application no longer uses a PHP origin, PHP proxy, MySQL database, or PHP r
 - Standard Signals supports 5m, 15m, 1h, and 4h timeframes. Default signal validity is 10, 25, 60, and 240 minutes respectively; administrators can change these values from `/admin`. The standard scanner does not include 1m or 3m.
 - High-Risk Scalping is an independent, disabled-by-default scanner with 1m, 3m, 5m, and 15m settings, its own signal history and per-user entered state. Apply `supabase/migrations/202611070001_high_risk_scalping.sql`, then enable it from `/admin` to start scanning. It checks up to 10 rotating pairs across each enabled timeframe per scheduled run. GitHub Actions' five-minute schedule is best-effort: delays may skip short entry windows, and lifecycle changes are recorded on the next successful scan, not continuously. The High-Risk tab is informational only and never places orders.
 - Apply `supabase/migrations/202611070002_signal_history_performance.sql` before deploying unified signal history, lifecycle, performance, or admin monitoring code. It preserves legacy High-Risk records while backfilling them into the shared history. `/scanner/history` and `/scanner/performance` provide premium-gated history and metrics; `/admin/signals` provides admin-only persistence monitoring. High-Risk signals complete at TP2; Standard signals complete at TP3. Simulated outcomes are one-unit trigger-price estimates without fees, funding, or leverage.
+- News administrators use `/admin` → **News management** to configure providers, categories, trusted-source auto-publication, review status, settings, and ingestion logs. API credentials are encrypted with `BINANCE_CREDENTIALS_KEY`; configure it before adding provider credentials. RSS/Atom endpoints use HTTPS. Mapped JSON sources use the configured field mapping; keep provider quotas and terms in mind. The default flow queues content for review; automatic publication requires both global publishing and a trusted source with its own auto-publish option enabled.
+- `/news` shows only verified, published articles. Sentiment is explicitly rule-based and informational; it is not connected to either signal generator. `maximum_articles` caps total stored articles and limits each ingestion run; existing historical rows are never deleted automatically. The **Fetch sources now** button is admin-only and limited to one run every five minutes.
+- `/positions` is a view of user-recorded entries tied to signals, not exchange-verified positions. The app does not execute orders.
 - Entry invalidation uses a configurable entry band of ±0.25 ATR around the generated reference entry by default. It is an informational invalidation rule, not an order trigger.
 - Foreground notification history synchronizes through the authenticated API; the dashboard refreshes it every 12 seconds. Web Push uses the service worker for background delivery where the browser and operating system support it. Browser/OS permission must be granted; no notification or sound is guaranteed when permission or system audio is disabled. Browser audio starts only after explicit user interaction.
 - Push subscriptions are stored server-side with user ownership. Invalid push endpoints are deleted. Quiet hours and Do Not Disturb suppress push and in-page sound; in-app history remains available.

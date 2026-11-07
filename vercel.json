@@ -10,6 +10,10 @@
     {
       "path": "/api/cron/high-risk-scalping",
       "schedule": "30 0 * * *"
+    },
+    {
+      "path": "/api/cron/news-ingest",
+      "schedule": "0 1 * * *"
     }
   ]
 }

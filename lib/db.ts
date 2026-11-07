@@ -34,6 +34,13 @@ const migrationFilesByTable = new Map<string, string>([
   ['public.signal_performance', 'supabase/migrations/202611070002_signal_history_performance.sql'],
   ['public.signal_user_entries', 'supabase/migrations/202611070002_signal_history_performance.sql'],
   ['public.signal_persistence_failures', 'supabase/migrations/202611070002_signal_history_performance.sql'],
+  ['public.news_categories', 'supabase/migrations/202611070003_news_platform.sql'],
+  ['public.news_sources', 'supabase/migrations/202611070003_news_platform.sql'],
+  ['public.news_articles', 'supabase/migrations/202611070003_news_platform.sql'],
+  ['public.news_processing_logs', 'supabase/migrations/202611070003_news_platform.sql'],
+  ['public.news_user_preferences', 'supabase/migrations/202611070003_news_platform.sql'],
+  ['public.news_notifications', 'supabase/migrations/202611070003_news_platform.sql'],
+  ['public.platform_settings', 'supabase/migrations/202611070003_news_platform.sql'],
 ]);
 const migrationRuns = new Map<string, Promise<void>>();
 
