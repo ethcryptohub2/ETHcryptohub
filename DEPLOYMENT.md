@@ -19,9 +19,12 @@ The application no longer uses a PHP origin, PHP proxy, MySQL database, or PHP r
    - `supabase/migrations/202611060002_signal_notifications.sql`
    - `supabase/migrations/202611060003_scanner_coin_management.sql`
    - `supabase/migrations/202611060004_subscriptions.sql`
+   - `supabase/migrations/202611070001_high_risk_scalping.sql`
+   - `supabase/migrations/202611070002_signal_history_performance.sql`
    - `202611050002_smartexit.sql` is legacy and is not required by the current app. Do not drop its tables from an existing database; they may contain historical user data.
 3. Keep the database reachable only through server-side credentials. The app does not expose database credentials to browser code.
-4. On first access, the server can apply the matching scanner, subscriptions, notification, or market-research migration when a required feature table is missing. Manually applying migrations in order remains the recommended production setup.
+4. On first access, the server can apply the matching scanner, subscriptions, notification, market-research, or scalping migration when a required feature table is missing. Manually applying migrations in order remains the recommended production setup.
+   The signal-history migration extends existing tables and therefore must be applied explicitly; the automatic missing-table migration helper does not upgrade existing tables.
 5. Copy the PostgreSQL connection string or host, port, database name, user, and password from Supabase project settings.
 
 ## 2. Vercel
@@ -42,7 +45,7 @@ The application no longer uses a PHP origin, PHP proxy, MySQL database, or PHP r
 | `MAIL_FROM` | Sender address on a domain verified with Resend; used only with `RESEND_API_KEY` |
 | `BINANCE_CREDENTIALS_KEY` | 32 random bytes encoded as 64 hex characters; encrypts user and market-research provider credentials |
 | `ADMIN_SETUP_TOKEN` | Optional, temporary token for one-time administrator setup |
-| `CRON_SECRET` | At least 32 random characters; authorizes the scheduled signal scan route |
+| `CRON_SECRET` | At least 32 random characters; authorizes the scheduled signal scan routes |
 | `VAPID_PUBLIC_KEY` | Public key from a VAPID key pair; used to create browser push subscriptions |
 | `VAPID_PRIVATE_KEY` | Private VAPID key; server-only, never expose to browser code |
 | `VAPID_SUBJECT` | Optional VAPID contact URI such as `mailto:ops@example.com` |
@@ -50,7 +53,7 @@ The application no longer uses a PHP origin, PHP proxy, MySQL database, or PHP r
 
 3. Deploy and verify the landing page and account routes. Apply database migrations before testing signup or login.
 4. Create the first admin through `/admin/setup`: add a private `ADMIN_SETUP_TOKEN` of at least 32 characters to the Vercel Production environment, redeploy, then create the administrator with a strong password. Remove `ADMIN_SETUP_TOKEN` and redeploy after provisioning. Admins can manually mark a pending user's email as verified from `/admin`; confirm the account belongs to the user before using this bypass.
-5. On the free Vercel Hobby plan, configure the GitHub repository Actions secret `CRON_SECRET` to the same value as the Vercel Production environment variable. The GitHub Actions workflow calls the protected production scan endpoint every 15 minutes and rotates across the four supported timeframes. GitHub scheduled workflows can be delayed, and the standard free private-repository Actions allowance is shared across workflows. Vercel itself is configured with a once-daily backup invocation because Hobby does not support more frequent Vercel Cron schedules.
+5. On the free Vercel Hobby plan, configure the GitHub repository Actions secret `CRON_SECRET` to the same value as the Vercel Production environment variable. Separate GitHub Actions workflows call the protected standard signal scan every 15 minutes and the high-risk scalping scan every 5 minutes. GitHub scheduled workflows can be delayed, and the standard free private-repository Actions allowance is shared across workflows. Vercel itself is configured with a once-daily backup invocation for each scanner because Hobby does not support more frequent Vercel Cron schedules.
 
 ## 3. Email and exchange safeguards
 
@@ -63,7 +66,9 @@ The application no longer uses a PHP origin, PHP proxy, MySQL database, or PHP r
 - The admin **System health** panel checks database connectivity, required configuration presence, Binance reachability, and the latest scanner sync. **Attempt safe scanner recovery** synchronizes the pair universe and runs one signal scan; it does not place trades or repair arbitrary application, deployment, or configuration errors. Use the displayed recommendations and server/deployment logs for issues outside those checks.
 - Apply `supabase/migrations/202611060004_subscriptions.sql` before deploying subscription-gated scanner and notification features. New accounts receive a seven-day trial; accounts that existed when this migration runs receive a one-time seven-day launch grace period beginning at migration time. License codes are stored as hashes keyed with `AUTH_SECRET`, and `SUBSCRIPTION_CONTACT_EMAIL` is optional.
 - The protected `/api/cron/signal-scan` endpoint scans a bounded batch of up to 10 enabled pairs on one supported timeframe (5m, 15m, 1h, 4h) and persists results for the user scanner to read. On the free setup, GitHub Actions triggers it every 15 minutes (with possible schedule delays) and Vercel Cron provides a once-daily backup. Set the GitHub Actions `CRON_SECRET` repository secret to the same value as Vercel's Production `CRON_SECRET`. Coverage depends on the enabled-pair count; lifecycle checks run on each successful invocation. Admins can run a one-off 15-minute batch from Scanner Management after syncing the universe. A Vercel Pro upgrade is not required, but the scan cadence is slower and less exact than the original one-minute schedule.
-- The scanner currently supports 5m, 15m, 1h, and 4h timeframes. Default signal validity is 10, 25, 60, and 240 minutes respectively; administrators can change these values from `/admin`. The 1m and 3m timeframes are not supported by the current scanner and are not enabled by this feature.
+- Standard Signals supports 5m, 15m, 1h, and 4h timeframes. Default signal validity is 10, 25, 60, and 240 minutes respectively; administrators can change these values from `/admin`. The standard scanner does not include 1m or 3m.
+- High-Risk Scalping is an independent, disabled-by-default scanner with 1m, 3m, 5m, and 15m settings, its own signal history and per-user entered state. Apply `supabase/migrations/202611070001_high_risk_scalping.sql`, then enable it from `/admin` to start scanning. It checks up to 10 rotating pairs across each enabled timeframe per scheduled run. GitHub Actions' five-minute schedule is best-effort: delays may skip short entry windows, and lifecycle changes are recorded on the next successful scan, not continuously. The High-Risk tab is informational only and never places orders.
+- Apply `supabase/migrations/202611070002_signal_history_performance.sql` before deploying unified signal history, lifecycle, performance, or admin monitoring code. It preserves legacy High-Risk records while backfilling them into the shared history. `/scanner/history` and `/scanner/performance` provide premium-gated history and metrics; `/admin/signals` provides admin-only persistence monitoring. High-Risk signals complete at TP2; Standard signals complete at TP3. Simulated outcomes are one-unit trigger-price estimates without fees, funding, or leverage.
 - Entry invalidation uses a configurable entry band of ±0.25 ATR around the generated reference entry by default. It is an informational invalidation rule, not an order trigger.
 - Foreground notification history synchronizes through the authenticated API; the dashboard refreshes it every 12 seconds. Web Push uses the service worker for background delivery where the browser and operating system support it. Browser/OS permission must be granted; no notification or sound is guaranteed when permission or system audio is disabled. Browser audio starts only after explicit user interaction.
 - Push subscriptions are stored server-side with user ownership. Invalid push endpoints are deleted. Quiet hours and Do Not Disturb suppress push and in-page sound; in-app history remains available.
@@ -79,6 +84,7 @@ The application no longer uses a PHP origin, PHP proxy, MySQL database, or PHP r
 3. Verify that unverified accounts cannot sign in and that resend verification works.
 4. Sign in and test `/dashboard`, `/settings`, `/binance`, `/scanner`, and `/admin`.
 5. In `/admin`, synchronize the Binance Futures universe, verify the pair count exceeds the old fixed list, and test individual and bulk enable/disable. Confirm admin-disabled pairs stay disabled after sync. In `/scanner`, verify background batch results use Binance data, stale results are non-actionable, and configured research feeds show LIVE only when provider data validates.
-6. Confirm paper-trading and wallet routes return `410 Gone`.
+6. To verify High-Risk Scalping, enable it explicitly in `/admin`, then check the separate tab and the scheduled Action run. Treat this as a best-effort scanner, not a real-time or automated trading system.
+7. Confirm paper-trading and wallet routes return `410 Gone`.
 
 Do not treat a successful Vercel build or local server as proof of production deployment. Public deployment also requires the GitHub push, Vercel project configuration, applied database migrations, and private provider credentials.

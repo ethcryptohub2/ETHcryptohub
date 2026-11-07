@@ -2,6 +2,8 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
+import { HighRiskScalping } from './high-risk-scalping';
+import { ScannerTabs } from './scanner-tabs';
 import type {
   MarketScannerCandidate as ScannerCandidate,
   MarketScannerResponse,
@@ -20,7 +22,26 @@ function formatPrice(value: number): string {
   return value.toLocaleString(undefined, { maximumSignificantDigits: 8 });
 }
 
-export function Scanner({ isAdmin }: { isAdmin: boolean }) {
+export function Scanner({ isAdmin, initialTab }: { isAdmin: boolean; initialTab: 'standard' | 'scalping' }) {
+  const [tab, setTab] = useState<'standard' | 'scalping'>(initialTab);
+  const changeTab = useCallback((nextTab: 'standard' | 'scalping') => {
+    setTab(nextTab);
+    window.history.replaceState(null, '', nextTab === 'scalping' ? '/scanner?tab=scalping' : '/scanner');
+  }, []);
+  return tab === 'standard'
+    ? <StandardSignals isAdmin={isAdmin} activeTab={tab} onTabChange={changeTab} />
+    : <HighRiskScalping activeTab={tab} onTabChange={changeTab} isAdmin={isAdmin} />;
+}
+
+function StandardSignals({
+  isAdmin,
+  activeTab,
+  onTabChange,
+}: {
+  isAdmin: boolean;
+  activeTab: 'standard' | 'scalping';
+  onTabChange: (tab: 'standard' | 'scalping') => void;
+}) {
   const [data, setData] = useState<MarketScannerResponse | null>(null);
   const [signalMetadata, setSignalMetadata] = useState<SignalMetadata | null>(null);
   const [notificationWarning, setNotificationWarning] = useState('');
@@ -96,7 +117,8 @@ export function Scanner({ isAdmin }: { isAdmin: boolean }) {
   const statusLabel = !data ? 'Connecting' : data.status === 'LIVE' ? 'Live data' : hasCandidates ? 'Partial data' : 'Awaiting scan';
   const healthLabel = data ? hasCandidates ? data.status : 'WAITING' : '—';
   return <main className="shell">
-    <header className="topbar"><Link className="brand" href="/">ETHCRYPTOHUB</Link><nav className="links"><Link href="/dashboard">Dashboard</Link><Link href="/settings">Settings</Link>{isAdmin && <Link href="/admin">Admin</Link>}<button className="scanner-refresh" onClick={() => void load()} disabled={loading}><span aria-hidden="true">{loading ? '↻' : '⟳'}</span> {loading ? 'Loading…' : 'Refresh results'}</button></nav></header>
+    <ScannerTabs active={activeTab} onChange={onTabChange} />
+    <header className="topbar"><Link className="brand" href="/">ETHCRYPTOHUB</Link><nav className="links"><Link href="/scanner/successful">Successful Signals</Link><Link href="/scanner/history">Signal History</Link><Link href="/scanner/performance">Performance</Link><Link href="/dashboard">Dashboard</Link><Link href="/settings">Settings</Link>{isAdmin && <Link href="/admin">Admin</Link>}<button className="scanner-refresh" onClick={() => void load()} disabled={loading}><span aria-hidden="true">{loading ? '↻' : '⟳'}</span> {loading ? 'Loading…' : 'Refresh results'}</button></nav></header>
     <section className="hero scanner-hero">
       <div className="scanner-eyebrow"><span className={`scanner-live-dot ${degraded ? 'is-warning' : ''}`} />PUBLIC PERPETUAL FUTURES <span className="scanner-eyebrow-divider">/</span> {data ? `${data.exchange} · ${data.market}` : 'LIVE MARKET DATA'}</div>
       <div className="scanner-heading-row"><div><h1>Market scanner</h1><p className="muted">High-conviction technical setups with transparent market context.</p></div><div className={`scanner-status ${degraded ? 'is-warning' : ''}`}>{statusLabel}</div></div>

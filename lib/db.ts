@@ -25,6 +25,15 @@ const migrationFilesByTable = new Map<string, string>([
   ['public.subscription_audit_log', 'supabase/migrations/202611060004_subscriptions.sql'],
   ['public.subscription_activation_attempts', 'supabase/migrations/202611060004_subscriptions.sql'],
   ['public.subscription_admin_rate_limits', 'supabase/migrations/202611060004_subscriptions.sql'],
+  ['public.high_risk_scalping_settings', 'supabase/migrations/202611070001_high_risk_scalping.sql'],
+  ['public.high_risk_scalping_signals', 'supabase/migrations/202611070001_high_risk_scalping.sql'],
+  ['public.high_risk_scalping_user_states', 'supabase/migrations/202611070001_high_risk_scalping.sql'],
+  ['public.high_risk_scalping_preferences', 'supabase/migrations/202611070001_high_risk_scalping.sql'],
+  ['public.high_risk_scalping_notifications', 'supabase/migrations/202611070001_high_risk_scalping.sql'],
+  ['public.signal_research_snapshots', 'supabase/migrations/202611070002_signal_history_performance.sql'],
+  ['public.signal_performance', 'supabase/migrations/202611070002_signal_history_performance.sql'],
+  ['public.signal_user_entries', 'supabase/migrations/202611070002_signal_history_performance.sql'],
+  ['public.signal_persistence_failures', 'supabase/migrations/202611070002_signal_history_performance.sql'],
 ]);
 const migrationRuns = new Map<string, Promise<void>>();
 
@@ -159,5 +168,44 @@ export async function query<Row extends QueryResultRow>(sql: string, values: rea
     if (!missingTable) throw error;
     if (!(await applyMigrationForTable(missingTable))) throw error;
     return pool().query<Row>(sql, [...values]);
+  }
+}
+
+function isRetryableDatabaseError(error: unknown) {
+  if (!error || typeof error !== 'object' || !('code' in error)) return false;
+  const code = String(error.code);
+  return code.startsWith('08') || ['40001', '40P01', '53300', '57P01', '57P02', '57P03'].includes(code);
+}
+
+export async function retryDatabaseWrite<T>(operation: () => Promise<T>, retries = 2): Promise<T> {
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      return await operation();
+    } catch (error) {
+      if (attempt >= retries || !isRetryableDatabaseError(error)) throw error;
+      const delayMs = 150 * (2 ** attempt);
+      console.error(`Transient database write failure; retrying in ${delayMs}ms (attempt ${attempt + 1}/${retries}).`);
+      await new Promise((resolve) => setTimeout(resolve, delayMs));
+    }
+  }
+}
+
+export async function recordSignalPersistenceFailure(
+  scannerType: 'STANDARD' | 'HIGH_RISK',
+  source: string,
+  error: unknown,
+) {
+  const message = error instanceof Error ? error.message : 'Unknown signal persistence failure.';
+  try {
+    await query(
+      `INSERT INTO public.signal_persistence_failures (scanner_type, source, error_message)
+       VALUES ($1, $2, $3)`,
+      [scannerType, source, message.slice(0, 4000)],
+    );
+  } catch (loggingError) {
+    console.error(
+      `Signal persistence failure could not be recorded in the database (${scannerType}/${source}):`,
+      loggingError instanceof Error ? loggingError.message : 'Unknown logging error.',
+    );
   }
 }

@@ -1,6 +1,7 @@
 import { sendNotification, setVapidDetails } from 'web-push';
 import type { PoolClient } from 'pg';
-import { pool, query } from './db';
+import { pool, query, recordSignalPersistenceFailure, retryDatabaseWrite } from './db';
+import { processPersistedSignalLifecycle } from './signal-lifecycle';
 import { TABLE_PAGE_SIZE } from './pagination';
 import type {
   MarketScannerCandidate,
@@ -67,9 +68,12 @@ type SignalStatus =
   | 'TP1_HIT'
   | 'TP2_HIT'
   | 'TP3_HIT'
+  | 'COMPLETED'
   | 'STOP_LOSS_HIT'
   | 'EXPIRED'
-  | 'ENTRY_INVALIDATED';
+  | 'ENTRY_INVALIDATED'
+  | 'MISSED'
+  | 'AMBIGUOUS';
 
 const EVENT_PREFERENCE: Record<string, keyof NotificationPreferences> = {
   TP1_HIT: 'tp1_enabled',
@@ -222,10 +226,14 @@ async function insertSignal(
   const validityMinutes = settings.validityMinutes[candidate.timeframe] ?? DEFAULT_VALIDITY[candidate.timeframe];
   const inserted = await client.query<{ id: string }>(
     `INSERT INTO public.market_signals (
-       signal_key, symbol, timeframe, side, setup_score, entry_price, entry_zone_low, entry_zone_high,
-       initial_stop, tp1, tp2, tp3, latest_price, last_candle_close_at, expires_at
-     ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14,
-               NOW() + ($15 * INTERVAL '1 minute'))
+       signal_key, scanner_type, exchange, strategy_name, symbol, timeframe, side, setup_score,
+       entry_price, entry_zone_low, entry_zone_high,
+       initial_stop, tp1, tp2, tp3, latest_price, last_candle_close_at,
+       expires_at, entry_expires_at, entry_status, source_metadata
+     ) VALUES ($1, 'STANDARD', 'BINANCE', 'STANDARD_TECHNICAL', $2, $3, $4, $5, $6, $7, $8, $9, $10,
+               $11, $12, $13, $14, NOW() + ($15 * INTERVAL '1 minute'),
+               NOW() + ($15 * INTERVAL '1 minute'), 'OPEN',
+               jsonb_build_object('priceSource', 'BINANCE_USDM_TICKER_LAST_PRICE'))
      ON CONFLICT (signal_key) DO NOTHING
      RETURNING id`,
     [
@@ -282,20 +290,43 @@ async function insertSignal(
   }
 
   const id = inserted.rows[0]!.id;
+  const generatedPayload = JSON.stringify({
+    scannerType: 'STANDARD',
+    symbol: candidate.symbol,
+    timeframe: candidate.timeframe,
+    side: candidate.side,
+    score: Math.round(candidate.score.value),
+    highConviction: candidate.score.value >= settings.highConvictionScore,
+  });
   await client.query(
-    `INSERT INTO public.signal_events (signal_id, idempotency_key, event_type, payload)
-     VALUES ($1, $2, 'NEW_SIGNAL', $3::JSONB)
+    `INSERT INTO public.signal_events (signal_id, idempotency_key, event_type, payload, event_price, metadata)
+     VALUES
+       ($1, $2, 'NEW_SIGNAL', $4::JSONB, $5, $6::JSONB),
+       ($1, $3, 'SIGNAL_GENERATED', $4::JSONB, $5, $6::JSONB),
+       ($1, $7, 'ENTRY_OPEN', $4::JSONB, $5, $6::JSONB)
      ON CONFLICT (idempotency_key) DO NOTHING`,
     [
       id,
       `${signalKey}:NEW_SIGNAL`,
-      JSON.stringify({
-        symbol: candidate.symbol,
-        timeframe: candidate.timeframe,
-        side: candidate.side,
-        score: Math.round(candidate.score.value),
-        highConviction: candidate.score.value >= settings.highConvictionScore,
-      }),
+      `${signalKey}:SIGNAL_GENERATED`,
+      generatedPayload,
+      candidate.setup.entryPrice,
+      JSON.stringify({ priceSource: 'BINANCE_USDM_TICKER_LAST_PRICE' }),
+      `${signalKey}:ENTRY_OPEN`,
+    ],
+  );
+  await client.query(
+    `INSERT INTO public.signal_research_snapshots (
+       signal_id, indicator_snapshot, volume_snapshot, market_structure_snapshot,
+       derivatives_snapshot, sentiment_snapshot, data_sources
+     ) VALUES ($1, $2::JSONB, $3::JSONB, $4::JSONB, '{}'::JSONB, '{}'::JSONB, $5::JSONB)
+     ON CONFLICT (signal_id) DO NOTHING`,
+    [
+      id,
+      JSON.stringify(candidate),
+      JSON.stringify({ quoteVolume24h: candidate.quoteVolume24h ?? null }),
+      JSON.stringify({ timeframe: candidate.timeframe, side: candidate.side, rationale: candidate.rationale }),
+      JSON.stringify(['BINANCE_USDM_TICKER_LAST_PRICE', 'BINANCE_USDM_KLINES']),
     ],
   );
   return true;
@@ -306,21 +337,37 @@ export async function persistSignalScan(
   settings: NotificationSystemSettings,
 ): Promise<{ created: number; signals: Record<string, { id: string; generatedAt: string; expiresAt: string; status: SignalStatus }> }> {
   let created = 0;
-  const client = await pool().connect();
   try {
-    await client.query('BEGIN');
-    for (const candidate of candidates) {
-      if (await insertSignal(client, candidate, settings)) created += 1;
-    }
-    await client.query('COMMIT');
+    await retryDatabaseWrite(async () => {
+      created = 0;
+      const client = await pool().connect();
+      try {
+        await client.query('BEGIN');
+        for (const candidate of candidates) {
+          if (await insertSignal(client, candidate, settings)) created += 1;
+        }
+        await client.query('COMMIT');
+      } catch (error) {
+        try {
+          await client.query('ROLLBACK');
+        } catch (rollbackError) {
+          console.error('Standard signal persistence rollback failed:', rollbackError instanceof Error ? rollbackError.message : 'Unknown rollback error.');
+        }
+        throw error;
+      } finally {
+        client.release();
+      }
+    });
   } catch (error) {
-    await client.query('ROLLBACK');
+    await recordSignalPersistenceFailure('STANDARD', 'persistSignalScan', error);
     throw error;
-  } finally {
-    client.release();
   }
 
-  await dispatchSignalEvents(settings);
+  try {
+    await dispatchSignalEvents(settings);
+  } catch (error) {
+    console.error('Standard signal event dispatch failed; pending outbox events remain retryable:', error instanceof Error ? error.message : 'Unknown event dispatch error.');
+  }
   return { created, signals: await getPersistedSignalMetadata(candidates) };
 }
 
@@ -347,115 +394,8 @@ export async function getPersistedSignalMetadata(candidates: MarketScannerCandid
   ]));
 }
 
-interface LifecycleSignal {
-  id: string;
-  symbol: string;
-  side: 'LONG' | 'SHORT';
-  status: SignalStatus;
-  expires_at: string;
-  entry_zone_low: string;
-  entry_zone_high: string;
-  initial_stop: string;
-  tp1: string;
-  tp2: string;
-  tp3: string;
-  latest_price: string;
-  setup_score: number;
-}
-
-async function updateSignalState(signal: LifecycleSignal, price: number, status: SignalStatus, eventType: string) {
-  const client = await pool().connect();
-  try {
-    await client.query('BEGIN');
-    const locked = await client.query<{ status: SignalStatus }>(
-      'SELECT status FROM public.market_signals WHERE id = $1 FOR UPDATE',
-      [signal.id],
-    );
-    const currentStatus = locked.rows[0]?.status;
-    if (!currentStatus || !['ACTIVE', 'TP1_HIT', 'TP2_HIT'].includes(currentStatus)) {
-      await client.query('COMMIT');
-      return false;
-    }
-    const currentTarget = currentStatus === 'TP1_HIT' ? 1 : currentStatus === 'TP2_HIT' ? 2 : 0;
-    const nextTarget = eventType.startsWith('TP') ? Number(eventType.slice(2, 3)) : 0;
-    if (nextTarget && nextTarget <= currentTarget) {
-      await client.query('COMMIT');
-      return false;
-    }
-    await client.query(
-      'UPDATE public.market_signals SET status = $2, latest_price = $3 WHERE id = $1',
-      [signal.id, status, price],
-    );
-    await client.query(
-      `INSERT INTO public.signal_events (signal_id, idempotency_key, event_type, payload)
-       VALUES ($1, $2, $3, $4::JSONB) ON CONFLICT (idempotency_key) DO NOTHING`,
-      [
-        signal.id,
-        `${signal.id}:${eventType}`,
-        eventType,
-        JSON.stringify({ symbol: signal.symbol, side: signal.side, price, score: signal.setup_score }),
-      ],
-    );
-    await client.query('COMMIT');
-    return true;
-  } catch (error) {
-    await client.query('ROLLBACK');
-    throw error;
-  } finally {
-    client.release();
-  }
-}
-
 export async function processSignalLifecycle(snapshot: FuturesMarketSnapshot) {
-  const result = await query<LifecycleSignal>(
-    `SELECT id, symbol, side, status, expires_at, entry_zone_low, entry_zone_high, initial_stop,
-            tp1, tp2, tp3, latest_price, setup_score
-       FROM public.market_signals
-      WHERE status IN ('ACTIVE', 'TP1_HIT', 'TP2_HIT')
-      ORDER BY expires_at ASC LIMIT 1000`,
-  );
-  const prices = new Map(snapshot.symbols.map((market) => [market.symbol, market.lastPrice]));
-  for (const signal of result.rows) {
-    const price = prices.get(signal.symbol);
-    if (Date.parse(signal.expires_at) <= Date.now()) {
-      await updateSignalState(signal, price ?? Number(signal.latest_price), 'EXPIRED', 'SIGNAL_EXPIRED');
-      continue;
-    }
-    if (price === null || price === undefined || !Number.isFinite(price) || price <= 0) continue;
-
-    const low = Number(signal.entry_zone_low);
-    const high = Number(signal.entry_zone_high);
-    const stopHit = signal.side === 'LONG'
-      ? price <= Number(signal.initial_stop)
-      : price >= Number(signal.initial_stop);
-    if (stopHit) {
-      await updateSignalState(signal, price, 'STOP_LOSS_HIT', 'STOP_LOSS_HIT');
-      continue;
-    }
-
-    const targets = [
-      { price: Number(signal.tp1), status: 'TP1_HIT' as const },
-      { price: Number(signal.tp2), status: 'TP2_HIT' as const },
-      { price: Number(signal.tp3), status: 'TP3_HIT' as const },
-    ];
-    let lastStatus = signal.status;
-    let targetReached = false;
-    for (const target of targets) {
-      const alreadyReached = lastStatus === 'TP1_HIT' || lastStatus === 'TP2_HIT' || lastStatus === 'TP3_HIT';
-      const currentRank = lastStatus === 'TP1_HIT' ? 1 : lastStatus === 'TP2_HIT' ? 2 : lastStatus === 'TP3_HIT' ? 3 : 0;
-      const targetRank = Number(target.status.slice(2, 3));
-      const reached = signal.side === 'LONG' ? price >= target.price : price <= target.price;
-      if (reached && (!alreadyReached || targetRank > currentRank)) {
-        if (await updateSignalState(signal, price, target.status, target.status)) {
-          lastStatus = target.status;
-          targetReached = true;
-        }
-      }
-    }
-    if (signal.status === 'ACTIVE' && !targetReached && (price < low || price > high)) {
-      await updateSignalState(signal, price, 'ENTRY_INVALIDATED', 'ENTRY_INVALIDATED');
-    }
-  }
+  await processPersistedSignalLifecycle(snapshot);
 }
 
 function isWithinQuietHours(preferences: NotificationPreferences, now = new Date()) {

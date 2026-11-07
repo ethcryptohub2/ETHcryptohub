@@ -63,7 +63,7 @@ export async function GET(request: NextRequest) {
       }
       return candidate;
     });
-    const staleStatuses = new Set(['EXPIRED', 'ENTRY_INVALIDATED', 'STOP_LOSS_HIT', 'TP3_HIT']);
+    const staleStatuses = new Set(['EXPIRED', 'ENTRY_INVALIDATED', 'STOP_LOSS_HIT', 'TP3_HIT', 'MISSED', 'AMBIGUOUS']);
     let signalMap: Record<string, Awaited<ReturnType<typeof getPersistedSignalMetadata>>[string] | null> = {};
     if (candidates.length && !notificationWarning) {
       try {

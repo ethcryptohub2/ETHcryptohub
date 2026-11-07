@@ -6,7 +6,8 @@ import { Scanner } from './scanner';
 import { SubscriptionPanel } from '../subscription-panel';
 
 export const dynamic = 'force-dynamic';
-export default async function ScannerPage() {
+export default async function ScannerPage({ searchParams }: { searchParams: Promise<{ tab?: string }> }) {
+  const { tab } = await searchParams;
   const user = await currentUser();
   if (!user) redirect('/login');
   const subscription = await getSubscriptionEntitlement(user.id);
@@ -17,5 +18,5 @@ export default async function ScannerPage() {
       <SubscriptionPanel paywall />
     </main>;
   }
-  return <Scanner isAdmin={user.role === 'admin'} />;
+  return <Scanner isAdmin={user.role === 'admin'} initialTab={tab === 'scalping' ? 'scalping' : 'standard'} />;
 }
