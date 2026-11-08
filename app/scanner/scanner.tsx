@@ -108,8 +108,6 @@ function StandardSignals({
   const ready = candidates.filter((item) => item.status === 'READY' && item.setup);
   const unavailable = candidates.filter((item) => item.status === 'DATA_UNAVAILABLE').length;
   const stale = candidates.filter((item) => item.status === 'STALE').length;
-  const waiting = candidates.filter((item) => item.status === 'WAIT');
-  const rejected = candidates.filter((item) => item.status !== 'READY');
   const longSignals = ready.filter((item) => item.side === 'LONG').length;
   const shortSignals = ready.filter((item) => item.side === 'SHORT').length;
   const hasCandidates = (data?.candidates.length ?? 0) > 0;
@@ -141,12 +139,7 @@ function StandardSignals({
       {degraded && <p role="status" className="scanner-warning"><strong>Partial market data</strong><span>{stale} stale and {unavailable} unavailable pairs. Treat this scan as incomplete and refresh before relying on its indicators.</span></p>}
       {!error && loading && !data && <p className="muted">Loading the latest scheduled Binance scan results…</p>}
       {data && candidates.length === 0 && <p className="scanner-empty"><strong>No scan results yet</strong><span>Background scans refresh a bounded batch of Binance pairs on a rotating timeframe. After syncing the coin universe, an administrator can run an immediate 15-minute scan from Scanner Management.</span>{isAdmin && <Link href="/admin#scanner-management">Open coin management</Link>}</p>}
-      {data && ready.length === 0 && candidates.length > 0 && <p className="scanner-empty"><strong>No actionable setups right now</strong><span>Review each pair&apos;s checks below, or try another timeframe or market list.</span></p>}
-      {data && ready.length === 0 && candidates.length > 0 && <details open={data.status === 'DEGRADED'}>
-        <summary>Why no signals?</summary>
-        <p className="muted">{waiting.length} waiting · {stale} stale · {unavailable} unavailable. A signal requires fresh data and aligned trend, momentum, volume, and minimum-score checks. These are informational setups, not executed trades.</p>
-        {rejected.length > 0 && <ul>{rejected.map((item) => <li key={item.symbol}><strong>{item.symbol} · {item.status}:</strong> {item.warnings[0] ?? item.rationale}</li>)}</ul>}
-      </details>}
+      {data && ready.length === 0 && candidates.length > 0 && <p className="scanner-empty"><strong>No actionable setups right now</strong><span>Try another timeframe or market list. These indicators are informational and do not execute trades.</span></p>}
       {candidates.length > 0 && <div className="scanner-signal-list">{candidates.map((item) => <article className={`scanner-signal-card ${item.status === 'READY' ? item.side === 'LONG' ? 'is-long' : 'is-short' : 'is-wait'} `} key={item.symbol}>
         <div className="scanner-signal-header">
           <div className="scanner-market-title">

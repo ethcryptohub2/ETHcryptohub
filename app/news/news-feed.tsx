@@ -70,11 +70,11 @@ export function NewsFeed({ userId }: { userId: number }) {
   const [realtimeState, setRealtimeState] = useState(
     process.env.NEXT_PUBLIC_SUPABASE_URL && process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
       ? 'Connecting'
-      : 'Manual refresh',
+      : 'Polling updates',
   );
 
-  const load = useCallback(async () => {
-    setLoading(true);
+  const load = useCallback(async (quiet = false) => {
+    if (!quiet) setLoading(true);
     setError('');
     try {
       const params = new URLSearchParams({ page: String(page), pageSize: '30' });
@@ -90,7 +90,7 @@ export function NewsFeed({ userId }: { userId: number }) {
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : 'News feed could not be loaded.');
     } finally {
-      setLoading(false);
+      if (!quiet) setLoading(false);
     }
   }, [category, page, priority, sentiment, ticker]);
 
@@ -110,7 +110,16 @@ export function NewsFeed({ userId }: { userId: number }) {
       void load();
       void loadPreferences().catch((reason: unknown) => setError(reason instanceof Error ? reason.message : 'News preferences could not be loaded.'));
     }, 0);
-    return () => window.clearTimeout(timer);
+    const refreshVisible = () => {
+      if (document.visibilityState === 'visible') void load(true);
+    };
+    const refreshTimer = window.setInterval(refreshVisible, 60_000);
+    document.addEventListener('visibilitychange', refreshVisible);
+    return () => {
+      window.clearTimeout(timer);
+      window.clearInterval(refreshTimer);
+      document.removeEventListener('visibilitychange', refreshVisible);
+    };
   }, [load, loadPreferences]);
 
   useEffect(() => {
@@ -143,7 +152,7 @@ export function NewsFeed({ userId }: { userId: number }) {
         }, () => { void load(); })
         .subscribe((status) => {
           if (!active) return;
-          setRealtimeState(status === 'SUBSCRIBED' ? 'Live updates on' : status === 'CHANNEL_ERROR' ? 'Reconnect required' : 'Connecting');
+          setRealtimeState(status === 'SUBSCRIBED' ? 'Live updates on' : status === 'CHANNEL_ERROR' ? 'Polling updates · realtime unavailable' : 'Connecting');
         });
       refreshTimer = window.setInterval(() => {
         void refreshAuth().catch((reason: unknown) => {
@@ -156,7 +165,7 @@ export function NewsFeed({ userId }: { userId: number }) {
       return () => client.removeChannel(channel);
     }).catch((reason: unknown) => {
       if (active) {
-        setRealtimeState('Manual refresh');
+        setRealtimeState('Polling updates · realtime unavailable');
         console.error('News realtime setup failed:', reason);
       }
     });

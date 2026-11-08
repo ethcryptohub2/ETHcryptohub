@@ -33,6 +33,17 @@ type Performance = {
   bySymbol: Array<Record<string, string>>;
 };
 
+const breakdowns: Array<{ title: string; key: keyof Pick<Performance, 'byScanner' | 'byStrategy' | 'byTimeframe' | 'bySymbol'> }> = [
+  { title: 'By scanner', key: 'byScanner' },
+  { title: 'By strategy', key: 'byStrategy' },
+  { title: 'By timeframe', key: 'byTimeframe' },
+  { title: 'By coin', key: 'bySymbol' },
+];
+
+function columnLabel(key: string) {
+  return key.replaceAll('_', ' ').replace(/\b\w/g, (letter) => letter.toUpperCase());
+}
+
 const cards: Array<[keyof Summary, string]> = [
   ['total', 'Total generated'], ['standard', 'Standard'], ['high_risk', 'High-Risk'],
   ['active', 'Active'], ['tp1', 'TP1 achievements'], ['tp2', 'TP2 achievements'],
@@ -78,10 +89,21 @@ export function SignalPerformance() {
         <p className="muted">{data.definitions.targetRates} {data.definitions.entrySuccessRate} {data.definitions.winRate} {data.definitions.averageRealizedPnl}</p>
       </section>
       <section className="card stack"><h2>Breakdowns</h2>
-        {[['By scanner', data.byScanner], ['By strategy', data.byStrategy], ['By timeframe', data.byTimeframe], ['By coin', data.bySymbol]].map(([label, rows]) => <details key={label as string} className="performance-breakdown">
-          <summary>{label as string}</summary>
-          <pre>{JSON.stringify(rows, null, 2)}</pre>
-        </details>)}
+        {breakdowns.map(({ title, key }) => {
+          const rows = data[key];
+          const columns = rows[0] ? Object.keys(rows[0]) : [];
+          return <section key={key} className="performance-breakdown">
+            <h3>{title}</h3>
+            {rows.length === 0
+              ? <p className="muted">No records yet.</p>
+              : <div className="performance-table-wrap"><table className="performance-table">
+                <thead><tr>{columns.map((column) => <th key={column} scope="col">{columnLabel(column)}</th>)}</tr></thead>
+                <tbody>{rows.map((row, index) => <tr key={`${key}-${index}`}>
+                  {columns.map((column) => <td key={column}>{row[column] ?? '—'}</td>)}
+                </tr>)}</tbody>
+              </table></div>}
+          </section>;
+        })}
       </section>
     </>}
   </main>;

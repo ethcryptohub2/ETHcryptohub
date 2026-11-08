@@ -20,5 +20,5 @@ export function LogoutButton() {
     } catch (reason) { setError(reason instanceof Error ? reason.message : 'Sign-out failed.'); }
     finally { setBusy(false); }
   }
-  return <span><button onClick={() => void logout()} disabled={busy}>{busy ? 'Signing out…' : 'Sign out'}</button>{error && <span role="alert" className="error">{error}</span>}</span>;
+  return <span><button onClick={() => void logout()} disabled={busy}>{busy ? 'Signing out…' : 'Log out'}</button>{error && <span role="alert" className="error">{error}</span>}</span>;
 }

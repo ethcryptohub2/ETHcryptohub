@@ -125,7 +125,7 @@ export function SubscriptionPanel({ paywall = false }: { paywall?: boolean }) {
     return `mailto:${encodeURIComponent(supportEmail)}?subject=${subject}&body=${body}`;
   };
 
-  return <section className={`card stack subscription-panel${isLocked ? ' is-locked' : ''}`}>
+  return <section id="subscription" className={`card stack subscription-panel${isLocked ? ' is-locked' : ''}`}>
     {isLocked ? <>
       <p className="mono">SUBSCRIPTION REQUIRED</p>
       <h2>{subscription?.status === 'PREMIUM_EXPIRED' ? 'Your Premium Subscription Has Expired' : 'Your Free Trial Has Expired'}</h2>

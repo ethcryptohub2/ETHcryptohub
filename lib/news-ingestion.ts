@@ -1,4 +1,4 @@
-import { pool, query } from './db';
+import { connectDedicatedClient, query } from './db';
 import {
   getPlatformNewsSettings,
   getNewsSourceCredential,
@@ -62,7 +62,7 @@ export async function runNewsIngestion(options: { manual?: boolean } = {}) {
     return { status: 'PAUSED' as const, sources: 0, stored: 0, duplicates: 0, published: 0, errors: 0 };
   }
 
-  const client = await pool().connect();
+  const client = await connectDedicatedClient();
   let locked = false;
   try {
     const lock = await client.query<{ locked: boolean }>(
@@ -192,6 +192,10 @@ export async function runNewsIngestion(options: { manual?: boolean } = {}) {
         console.error('News ingestion lock release failed:', error instanceof Error ? error.message : 'Unknown database error.');
       }
     }
-    client.release();
+    try {
+      await client.end();
+    } catch (error) {
+      console.error('News ingestion lock connection close failed:', error instanceof Error ? error.message : 'Unknown database error.');
+    }
   }
 }

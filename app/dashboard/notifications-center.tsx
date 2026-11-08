@@ -205,7 +205,7 @@ export function NotificationsCenter() {
     }
   }
 
-  return <section id="notification-center" className="card stack notification-center">
+  return <section id="notifications" className="card stack notification-center">
     {toast && <div className="notification-toast" role="status">
       <div><strong>{eventLabel(toast)} · {toast.symbol}</strong><span>Score {toast.setup_score} · {toast.timeframe}</span></div>
       <Link href={`/signals/${toast.signal_id}`} onClick={(event) => {
