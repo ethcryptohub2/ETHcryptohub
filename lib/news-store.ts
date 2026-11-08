@@ -294,7 +294,7 @@ export async function storeFetchedNewsArticle(
        ) VALUES (
          $1, $2, $3, $4, $5, $6, $7, $8, $9::TIMESTAMPTZ, $10::TEXT[], $11,
          $12, $13, $14, $15,
-         CASE WHEN $15 = 'PUBLISHED' THEN NOW() ELSE NULL END
+         CASE WHEN $16 THEN NOW() ELSE NULL END
        )
        ON CONFLICT DO NOTHING
        RETURNING id::TEXT AS id`,
@@ -314,6 +314,7 @@ export async function storeFetchedNewsArticle(
         article.priority,
         publication.publish ? 'VERIFIED' : 'PENDING',
         publication.publish ? 'PUBLISHED' : 'PENDING',
+        publication.publish,
       ],
     );
     const articleId = saved.rows[0]?.id;
