@@ -63,13 +63,15 @@ export interface NewsArticleRow {
 
 const DEFAULT_CATEGORIES = ['market', 'exchange', 'onchain', 'economics', 'regulation', 'technology'];
 
-export async function getPlatformNewsSettings(): Promise<PlatformNewsSettings> {
-  const result = await query<PlatformNewsSettings>(
-    `SELECT news_enabled, automatic_fetching, automatic_publishing,
+export async function getPlatformNewsSettings(client?: PoolClient): Promise<PlatformNewsSettings> {
+  const sql = `
+    SELECT news_enabled, automatic_fetching, automatic_publishing,
             refresh_interval_minutes, allowed_categories, sentiment_analysis_enabled,
             breaking_news_alerts_enabled, duplicate_detection_enabled, maximum_articles
-       FROM public.platform_settings WHERE singleton = TRUE`,
-  );
+       FROM public.platform_settings WHERE singleton = TRUE`;
+  const result = client
+    ? await client.query<PlatformNewsSettings>(sql)
+    : await query<PlatformNewsSettings>(sql);
   const settings = result.rows[0];
   if (!settings) throw new Error('Platform news settings are missing; apply the news platform migration.');
   return settings;
@@ -277,8 +279,10 @@ export async function storeFetchedNewsArticle(
   article: IncomingNewsArticle,
   categoryId: number,
   publication: { publish: boolean; issueBreakingNotifications: boolean },
+  connection?: PoolClient,
 ): Promise<'stored' | 'duplicate'> {
-  const client = await pool().connect();
+  const client = connection ?? await pool().connect();
+  const ownsConnection = !connection;
   try {
     await client.query('BEGIN');
     const saved = await client.query<{ id: string }>(
@@ -330,7 +334,7 @@ export async function storeFetchedNewsArticle(
     }
     throw error;
   } finally {
-    client.release();
+    if (ownsConnection) client.release();
   }
 }
 
@@ -525,8 +529,8 @@ export async function getNewsSourceCredential(ciphertext: string | null): Promis
   return ciphertext ? decryptCredential(ciphertext) : null;
 }
 
-export async function listRunnableNewsSources() {
-  const result = await query<{
+export async function listRunnableNewsSources(client?: PoolClient) {
+  type RunnableNewsSource = {
     id: number;
     source_key: string;
     name: string;
@@ -540,30 +544,33 @@ export async function listRunnableNewsSources() {
     auto_publish: boolean;
     refresh_interval_minutes: number | null;
     last_fetch_at: string | null;
-  }>(
-    `SELECT id, source_key, name, adapter, source_type, endpoint, credential_ciphertext,
-            configuration, allowed_categories, is_trusted, auto_publish,
-            refresh_interval_minutes, last_fetch_at
-       FROM public.news_sources
-      WHERE is_enabled = TRUE AND archived_at IS NULL
-      ORDER BY last_fetch_at NULLS FIRST, id
-      LIMIT 50`,
-  );
+  };
+  const sql = `
+    SELECT id, source_key, name, adapter, source_type, endpoint, credential_ciphertext,
+           configuration, allowed_categories, is_trusted, auto_publish,
+           refresh_interval_minutes, last_fetch_at
+      FROM public.news_sources
+     WHERE is_enabled = TRUE AND archived_at IS NULL
+     ORDER BY last_fetch_at NULLS FIRST, id
+     LIMIT 50`;
+  const result = client
+    ? await client.query<RunnableNewsSource>(sql)
+    : await query<RunnableNewsSource>(sql);
   return result.rows;
 }
 
 export async function updateNewsSourceFetchState(
   id: number,
   state: { successful: boolean; error: string | null },
+  client?: PoolClient,
 ): Promise<void> {
-  await query(
-    `UPDATE public.news_sources
+  const sql = `UPDATE public.news_sources
         SET last_fetch_at = NOW(),
             last_success_at = CASE WHEN $2 THEN NOW() ELSE last_success_at END,
             last_error = $3, updated_at = NOW()
-      WHERE id = $1`,
-    [id, state.successful, state.error],
-  );
+      WHERE id = $1`;
+  if (client) await client.query(sql, [id, state.successful, state.error]);
+  else await query(sql, [id, state.successful, state.error]);
 }
 
 export async function addNewsProcessingLog(input: {
@@ -576,13 +583,13 @@ export async function addNewsProcessingLog(input: {
   published: number;
   error: string | null;
   startedAt: string;
+  client?: PoolClient;
 }): Promise<void> {
-  await query(
-    `INSERT INTO public.news_processing_logs (
+  const sql = `INSERT INTO public.news_processing_logs (
        source_id, source_name, status, fetched_count, stored_count,
        duplicate_count, published_count, error_message, started_at, finished_at
-     ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::TIMESTAMPTZ, NOW())`,
-    [
+     ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::TIMESTAMPTZ, NOW())`;
+  const values = [
       input.sourceId,
       input.sourceName,
       input.status,
@@ -592,6 +599,7 @@ export async function addNewsProcessingLog(input: {
       input.published,
       input.error?.slice(0, 1000) ?? null,
       input.startedAt,
-    ],
-  );
+    ];
+  if (input.client) await input.client.query(sql, values);
+  else await query(sql, values);
 }

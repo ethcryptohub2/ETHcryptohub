@@ -163,8 +163,8 @@ function StandardSignals({
         <div className="scanner-target-section"><div className="scanner-target-heading"><span>PROFIT TARGETS</span><span>Risk multiples from entry</span></div><div className="scanner-target-grid">
           {[item.setup?.tp1, item.setup?.tp2, item.setup?.tp3].map((target, index) => <div className={`scanner-target-card ${target ? 'is-active' : ''}`} key={index}><span>TP {index + 1}<small>{index + 1}R</small></span><strong>{target ? formatPrice(target) : '—'}</strong></div>)}
         </div></div>
-        <details className="scanner-analysis">
-          <summary>{item.status === 'READY' ? 'Review signal rationale & market research' : 'See why this pair is waiting'}</summary>
+        {item.status === 'READY' && <details className="scanner-analysis">
+          <summary>Review signal rationale & market research</summary>
           <div className="scanner-analysis-content"><p>{item.rationale}</p>
             {item.warnings.length > 0 && <ul>{item.warnings.map((warning) => <li key={warning}>{warning}</li>)}</ul>}
             <div className="scanner-research-grid">
@@ -183,7 +183,7 @@ function StandardSignals({
             </div>
             {item.research.news.data?.stories.map((story) => <a className="scanner-news-link" key={story.url} href={story.url} target="_blank" rel="noreferrer">{story.title} ↗</a>)}
           </div>
-        </details>
+        </details>}
       </article>)}</div>}
       <p className="scanner-disclaimer">Research feeds provide context, not certainty. Exchange netflow is not verified smart-wallet attribution; news votes are community signals. Setups are informational and do not place orders.</p>
     </section>

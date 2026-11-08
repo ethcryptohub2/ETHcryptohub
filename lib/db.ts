@@ -1,6 +1,6 @@
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
-import { Client, Pool, type PoolConfig, type QueryResultRow } from 'pg';
+import { Pool, type PoolConfig, type QueryResultRow } from 'pg';
 
 const globalForPg = globalThis as typeof globalThis & { ethcryptohubPool?: Pool };
 
@@ -100,12 +100,6 @@ function config(): PoolConfig {
 export function pool(): Pool {
   globalForPg.ethcryptohubPool ??= new Pool(config());
   return globalForPg.ethcryptohubPool;
-}
-
-export async function connectDedicatedClient(): Promise<Client> {
-  const client = new Client(config());
-  await client.connect();
-  return client;
 }
 
 function missingTableFromError(error: unknown): string | null {

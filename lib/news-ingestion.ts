@@ -1,4 +1,5 @@
-import { connectDedicatedClient, query } from './db';
+import { pool } from './db';
+import type { PoolClient } from 'pg';
 import {
   getPlatformNewsSettings,
   getNewsSourceCredential,
@@ -36,15 +37,15 @@ function errorMessage(error: unknown): string {
   return message.replace(/(auth[_-]?token|api[_-]?key|token|secret|signature)=([^&\s]+)/gi, '$1=[redacted]').slice(0, 1000);
 }
 
-async function categoryMap(): Promise<Map<string, number>> {
-  const result = await query<{ id: number; category_key: string; is_enabled: boolean }>(
+async function categoryMap(client: PoolClient): Promise<Map<string, number>> {
+  const result = await client.query<{ id: number; category_key: string; is_enabled: boolean }>(
     'SELECT id, category_key, is_enabled FROM public.news_categories',
   );
   return new Map(result.rows.filter((row) => row.is_enabled).map((row) => [row.category_key, row.id]));
 }
 
-async function isNearDuplicate(headline: string, canonicalUrl: string): Promise<boolean> {
-  const result = await query<{ duplicate: boolean }>(
+async function isNearDuplicate(client: PoolClient, headline: string, canonicalUrl: string): Promise<boolean> {
+  const result = await client.query<{ duplicate: boolean }>(
     `SELECT EXISTS (
        SELECT 1 FROM public.news_articles
         WHERE canonical_url = $1
@@ -56,15 +57,16 @@ async function isNearDuplicate(headline: string, canonicalUrl: string): Promise<
 }
 
 export async function runNewsIngestion(options: { manual?: boolean } = {}) {
-  const settings = await getPlatformNewsSettings();
-  if (!settings.news_enabled) return { status: 'DISABLED' as const, sources: 0, stored: 0, duplicates: 0, published: 0, errors: 0 };
-  if (!options.manual && !settings.automatic_fetching) {
-    return { status: 'PAUSED' as const, sources: 0, stored: 0, duplicates: 0, published: 0, errors: 0 };
-  }
-
-  const client = await connectDedicatedClient();
+  const client = await pool().connect();
   let locked = false;
+  let discardClient = false;
   try {
+    const settings = await getPlatformNewsSettings(client);
+    if (!settings.news_enabled) return { status: 'DISABLED' as const, sources: 0, stored: 0, duplicates: 0, published: 0, errors: 0 };
+    if (!options.manual && !settings.automatic_fetching) {
+      return { status: 'PAUSED' as const, sources: 0, stored: 0, duplicates: 0, published: 0, errors: 0 };
+    }
+
     const lock = await client.query<{ locked: boolean }>(
       'SELECT pg_try_advisory_lock(hashtext($1)) AS locked',
       [NEWS_INGESTION_LOCK],
@@ -73,7 +75,7 @@ export async function runNewsIngestion(options: { manual?: boolean } = {}) {
     if (!locked) return { status: 'BUSY' as const, sources: 0, stored: 0, duplicates: 0, published: 0, errors: 0 };
 
     if (options.manual) {
-      const recent = await query<{ recent: boolean }>(
+      const recent = await client.query<{ recent: boolean }>(
         `SELECT EXISTS (
            SELECT 1 FROM public.news_processing_logs
             WHERE source_id IS NULL AND source_name = 'Manual admin fetch'
@@ -85,11 +87,11 @@ export async function runNewsIngestion(options: { manual?: boolean } = {}) {
       }
     }
 
-    const [sources, categories] = await Promise.all([listRunnableNewsSources(), categoryMap()]);
+    const [sources, categories] = await Promise.all([listRunnableNewsSources(client), categoryMap(client)]);
     const totals = { sources: sources.length, stored: 0, duplicates: 0, published: 0, errors: 0 };
     const runStartedAt = new Date().toISOString();
     const now = Date.now();
-    const articleCount = await query<{ total: string }>(
+    const articleCount = await client.query<{ total: string }>(
       'SELECT COUNT(*)::TEXT AS total FROM public.news_articles',
     );
     let remainingCapacity = Math.min(
@@ -128,7 +130,7 @@ export async function runNewsIngestion(options: { manual?: boolean } = {}) {
           const categoryId = categories.get(article.categoryKey);
           if (!categoryId) continue;
           if (settings.duplicate_detection_enabled &&
-              await isNearDuplicate(article.headline, article.canonicalUrl)) {
+              await isNearDuplicate(client, article.headline, article.canonicalUrl)) {
             duplicates += 1;
             continue;
           }
@@ -137,6 +139,7 @@ export async function runNewsIngestion(options: { manual?: boolean } = {}) {
             article,
             categoryId,
             { publish: canAutoPublish, issueBreakingNotifications: sendBreakingAlerts },
+            client,
           );
           if (status === 'duplicate') {
             duplicates += 1;
@@ -151,7 +154,7 @@ export async function runNewsIngestion(options: { manual?: boolean } = {}) {
         totals.errors += 1;
       }
 
-      await updateNewsSourceFetchState(source.id, { successful: failure === null, error: failure });
+      await updateNewsSourceFetchState(source.id, { successful: failure === null, error: failure }, client);
       totals.stored += stored;
       totals.duplicates += duplicates;
       totals.published += published;
@@ -165,6 +168,7 @@ export async function runNewsIngestion(options: { manual?: boolean } = {}) {
         published,
         error: failure,
         startedAt,
+        client,
       });
     }
 
@@ -178,6 +182,7 @@ export async function runNewsIngestion(options: { manual?: boolean } = {}) {
       published: totals.published,
       error: totals.errors ? `${totals.errors} source(s) failed.` : null,
       startedAt: runStartedAt,
+      client,
     });
 
     return {
@@ -190,12 +195,9 @@ export async function runNewsIngestion(options: { manual?: boolean } = {}) {
         await client.query('SELECT pg_advisory_unlock(hashtext($1))', [NEWS_INGESTION_LOCK]);
       } catch (error) {
         console.error('News ingestion lock release failed:', error instanceof Error ? error.message : 'Unknown database error.');
+        discardClient = true;
       }
     }
-    try {
-      await client.end();
-    } catch (error) {
-      console.error('News ingestion lock connection close failed:', error instanceof Error ? error.message : 'Unknown database error.');
-    }
+    client.release(discardClient);
   }
 }
