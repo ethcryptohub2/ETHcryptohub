@@ -31,6 +31,7 @@ export interface IncomingNewsArticle {
   externalId: string;
   headline: string;
   description: string;
+  imageUrl: string | null;
   originalUrl: string;
   canonicalUrl: string;
   publishedAt: string | null;
@@ -133,6 +134,59 @@ function parsePublishedAt(value: unknown): string | null {
   return Number.isFinite(timestamp) ? new Date(timestamp).toISOString() : null;
 }
 
+function decodeHtmlEntities(value: string): string {
+  const named: Record<string, string> = {
+    amp: '&',
+    apos: "'",
+    gt: '>',
+    lt: '<',
+    nbsp: ' ',
+    quot: '"',
+  };
+  return value.replace(/&(#x[\da-f]{1,6}|#\d{1,7}|[a-z]+);/gi, (entity, code: string) => {
+    if (code[0] !== '#') return named[code.toLowerCase()] ?? entity;
+    const hexadecimal = code[1]?.toLowerCase() === 'x';
+    const number = Number.parseInt(code.slice(hexadecimal ? 2 : 1), hexadecimal ? 16 : 10);
+    return Number.isInteger(number) && number > 0 && number <= 0x10ffff
+      ? String.fromCodePoint(number)
+      : entity;
+  });
+}
+
+function cleanNewsDescription(value: string): string {
+  return decodeHtmlEntities(value
+    .replace(/<(script|style)\b[^>]*>[\s\S]*?<\/\1>/gi, ' ')
+    .replace(/<\s*br\b[^>]*>|<\/(?:p|div|li|h[1-6])\s*>/gi, ' ')
+    .replace(/<[^>]*>/g, ' '))
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 20_000);
+}
+
+function imageUrlFromValue(value: unknown): string {
+  if (Array.isArray(value)) {
+    for (const candidate of value) {
+      const url = imageUrlFromValue(candidate);
+      if (url) return url;
+    }
+    return '';
+  }
+  if (typeof value === 'string') return value.trim();
+  if (!isPlainObject(value)) return '';
+  for (const key of ['@_url', '@_href', 'url', 'href', '#text']) {
+    const url = text(value[key]);
+    if (url) return url;
+  }
+  return '';
+}
+
+function imageUrlFromMarkup(value: string): string {
+  const image = value.match(/<img\b[^>]*>/i)?.[0];
+  if (!image) return '';
+  const source = image.match(/\bsrc\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))/i);
+  return decodeHtmlEntities(source?.[1] ?? source?.[2] ?? source?.[3] ?? '').trim();
+}
+
 function categoryFor(source: NewsSourceAdapterConfig, itemCategory: string): string {
   const normalized = itemCategory.toLowerCase().replace(/[^a-z]/g, '');
   const aliases: Record<string, string> = {
@@ -197,7 +251,10 @@ function normalizeItem(
   const link = getStringField(item, mapping, 'url');
   const canonical = canonicalizeNewsUrl(link);
   if (!headline || !canonical) return null;
-  const description = getStringField(item, mapping, 'description').slice(0, 20_000);
+  const rawDescription = getStringField(item, mapping, 'description');
+  const imageCandidate = imageUrlFromValue(getPath(item, mapping.imageUrl)) || imageUrlFromMarkup(rawDescription);
+  const imageUrl = imageCandidate ? safeHttpsUrl(decodeHtmlEntities(imageCandidate), true)?.toString() ?? null : null;
+  const description = cleanNewsDescription(rawDescription);
   const externalIdValue = getStringField(item, mapping, 'id');
   const externalId = (externalIdValue || createHash('sha256').update(canonical.canonicalUrl).digest('hex')).slice(0, 300);
   const mappedTickers = getPath(item, mapping.tickers);
@@ -215,6 +272,7 @@ function normalizeItem(
     externalId,
     headline,
     description,
+    imageUrl,
     originalUrl: canonical.originalUrl,
     canonicalUrl: canonical.canonicalUrl,
     publishedAt: parsePublishedAt(dateValue),
@@ -259,6 +317,7 @@ function mapRssItem(item: unknown): Record<string, unknown> | null {
     id: isPlainObject(id) ? id['#text'] : id,
     headline: item.title,
     description: item.description ?? item.summary ?? item.content,
+    imageUrl: item.enclosure ?? item['media:content'] ?? item['media:thumbnail'],
     url: typeof url === 'string' ? url : atomUrl(item),
     publishedAt: item.pubDate ?? item.published ?? item.updated,
     tickers: item.tickers ?? item.symbols,
@@ -288,6 +347,7 @@ function defaultMapping(source: NewsSourceAdapterConfig): Record<string, unknown
       publishedAt: 'published_at',
       tickers: 'currencies',
       priority: 'kind',
+      imageUrl: 'imageUrl',
     };
   }
   if (source.adapter === 'RSS') {
@@ -301,6 +361,7 @@ function defaultMapping(source: NewsSourceAdapterConfig): Record<string, unknown
       category: 'category',
       sentiment: 'sentiment',
       priority: 'priority',
+      imageUrl: 'imageUrl',
     };
   }
   return {
@@ -313,6 +374,7 @@ function defaultMapping(source: NewsSourceAdapterConfig): Record<string, unknown
     category: 'category',
     sentiment: 'sentiment',
     priority: 'priority',
+    imageUrl: 'imageUrl',
   };
 }
 

@@ -51,6 +51,19 @@ describe('news provider adapters', () => {
     expect(articles[0]?.publishedAt).toBe('2026-11-06T10:00:00.000Z');
   });
 
+  it('cleans RSS HTML and extracts only safe HTTPS article images', async () => {
+    const fetcher = vi.fn<typeof fetch>().mockResolvedValue(new Response(
+      `<rss><channel><item><title>Bitcoin market update</title><link>https://news.example.org/btc</link><description><![CDATA[<p>Market <strong>story</strong> &amp; details</p><img src="https://images.example.org/btc.jpg">]]></description></item><item><title>Unsafe image</title><link>https://news.example.org/unsafe</link><description><![CDATA[<img src="http://images.example.org/unsafe.jpg">A report]]></description></item></channel></rss>`,
+      { headers: { 'content-type': 'application/rss+xml' } },
+    ));
+    const articles = await fetchNormalizedNews(source, null, true, fetcher);
+    expect(articles[0]).toMatchObject({
+      description: 'Market story & details',
+      imageUrl: 'https://images.example.org/btc.jpg',
+    });
+    expect(articles[1]).toMatchObject({ description: 'A report', imageUrl: null });
+  });
+
   it('uses configured JSON mappings and source-approved categories', async () => {
     const jsonSource: NewsSourceAdapterConfig = {
       ...source,

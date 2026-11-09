@@ -1,5 +1,6 @@
 'use client';
 
+/* eslint-disable @next/next/no-img-element -- Publisher image hosts are not known at build time. */
 import { createClient } from '@supabase/supabase-js';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 
@@ -7,6 +8,7 @@ type NewsItem = {
   id: string;
   headline: string;
   description: string;
+  image_url: string | null;
   original_url: string;
   source_name: string;
   published_at: string | null;
@@ -35,6 +37,50 @@ type Preferences = {
 };
 
 type Category = { category_key: string; label: string };
+
+function decodeNewsEntities(value: string) {
+  const named: Record<string, string> = { amp: '&', apos: "'", gt: '>', lt: '<', nbsp: ' ', quot: '"' };
+  return value.replace(/&(#x[\da-f]{1,6}|#\d{1,7}|[a-z]+);/gi, (entity, code: string) => {
+    if (code[0] !== '#') return named[code.toLowerCase()] ?? entity;
+    const hexadecimal = code[1]?.toLowerCase() === 'x';
+    const number = Number.parseInt(code.slice(hexadecimal ? 2 : 1), hexadecimal ? 16 : 10);
+    return Number.isInteger(number) && number > 0 && number <= 0x10ffff
+      ? String.fromCodePoint(number)
+      : entity;
+  });
+}
+
+function cleanNewsText(value: string) {
+  return decodeNewsEntities(value
+    .replace(/<(script|style)\b[^>]*>[\s\S]*?<\/\1>/gi, ' ')
+    .replace(/<\s*br\b[^>]*>|<\/(?:p|div|li|h[1-6])\s*>/gi, ' ')
+    .replace(/<[^>]*>/g, ' '))
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function safeNewsImageUrl(value: string | null | undefined) {
+  if (!value) return null;
+  try {
+    const url = new URL(value);
+    if (url.protocol !== 'https:' || url.username || url.password ||
+      url.hostname === 'localhost' || url.hostname.endsWith('.localhost') ||
+      url.hostname.endsWith('.local') || url.hostname.endsWith('.internal') ||
+      /^[\d.]+$/.test(url.hostname) || url.hostname.includes(':')) {
+      return null;
+    }
+    return url.toString();
+  } catch {
+    return null;
+  }
+}
+
+function legacyNewsImageUrl(description: string) {
+  const image = description.match(/<img\b[^>]*>/i)?.[0];
+  const source = image?.match(/\bsrc\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))/i);
+  const candidate = source?.[1] ?? source?.[2] ?? source?.[3];
+  return safeNewsImageUrl(candidate ? decodeNewsEntities(candidate) : null);
+}
 
 function relativeTime(value: string) {
   const timestamp = Date.parse(value);
@@ -279,19 +325,31 @@ export function NewsFeed({ userId }: { userId: number }) {
       {loading && !data && <p className="muted">Loading published news…</p>}
       {!loading && data?.items.length === 0 && <p className="muted">No published stories match these filters.</p>}
       <div className="news-article-list">
-        {data?.items.map((item) => <article className={`news-article${item.priority === 'BREAKING' ? ' is-breaking' : ''}`} key={item.id}>
+        {data?.items.map((item) => {
+          const imageUrl = safeNewsImageUrl(item.image_url) ?? legacyNewsImageUrl(item.description);
+          const description = cleanNewsText(item.description);
+          return <article className={`news-article${item.priority === 'BREAKING' ? ' is-breaking' : ''}`} key={item.id}>
           <div className="news-article-meta">
             <span className="news-category">{item.category_label}</span>
             <span className={`news-sentiment is-${item.sentiment.toLowerCase()}`}>{item.sentiment === 'UNAVAILABLE' ? 'Sentiment unavailable' : item.sentiment}</span>
             {item.priority === 'BREAKING' && <span className="news-breaking-badge">BREAKING</span>}
             <time dateTime={item.published_at ?? item.fetched_at}>{relativeTime(item.published_at ?? item.fetched_at)}</time>
           </div>
+          {imageUrl
+            ? <><img className="news-article-image" src={imageUrl} alt="" loading="lazy" decoding="async" referrerPolicy="no-referrer"
+                onError={(event) => {
+                  event.currentTarget.hidden = true;
+                  event.currentTarget.nextElementSibling?.removeAttribute('hidden');
+                }} />
+              <div className="news-article-image-placeholder" hidden aria-hidden="true">Image unavailable</div></>
+            : <div className="news-article-image-placeholder" aria-hidden="true">Publisher image unavailable</div>}
           <h2><a href={item.original_url} target="_blank" rel="noopener noreferrer">{item.headline} <span aria-hidden="true">↗</span></a></h2>
-          {item.description && <p>{item.description}</p>}
+          {description && <p>{description}</p>}
           <div className="news-article-footer"><span>{item.source_name}</span>
             {item.ticker_symbols.length > 0 && <span>{item.ticker_symbols.map((value) => `#${value}`).join(' ')}</span>}
           </div>
-        </article>)}
+          </article>;
+        })}
       </div>
       {data && pageCount > 1 && <div className="signal-history-pagination">
         <span>Page {page} of {pageCount} · {data.total} stories</span>

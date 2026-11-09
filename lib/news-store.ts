@@ -47,6 +47,7 @@ export interface NewsArticleRow {
   id: string;
   headline: string;
   description: string;
+  image_url: string | null;
   original_url: string;
   source_name: string;
   published_at: string | null;
@@ -214,7 +215,7 @@ export async function archiveNewsSource(id: number): Promise<void> {
 
 export async function listAdminNewsArticles(limit = 100) {
   const result = await query(
-    `SELECT a.id::TEXT AS id, a.headline, a.description, a.original_url,
+    `SELECT a.id::TEXT AS id, a.headline, a.description, a.image_url, a.original_url,
             a.source_name, a.published_at, a.fetched_at, a.ticker_symbols,
             c.category_key, c.label AS category_label, a.sentiment, a.priority,
             a.verification_status, a.publication_status
@@ -287,14 +288,14 @@ export async function storeFetchedNewsArticle(
     await client.query('BEGIN');
     const saved = await client.query<{ id: string }>(
       `INSERT INTO public.news_articles (
-         source_id, external_id, article_key, canonical_url, headline, description,
+         source_id, external_id, article_key, canonical_url, headline, description, image_url,
          original_url, source_name, published_at, ticker_symbols, category_id,
          sentiment, priority, verification_status, publication_status,
          published_at_admin
        ) VALUES (
-         $1, $2, $3, $4, $5, $6, $7, $8, $9::TIMESTAMPTZ, $10::TEXT[], $11,
-         $12, $13, $14, $15,
-         CASE WHEN $16 THEN NOW() ELSE NULL END
+         $1, $2, $3, $4, $5, $6, $7, $8, $9, $10::TIMESTAMPTZ, $11::TEXT[], $12,
+         $13, $14, $15, $16,
+         CASE WHEN $17 THEN NOW() ELSE NULL END
        )
        ON CONFLICT DO NOTHING
        RETURNING id::TEXT AS id`,
@@ -305,6 +306,7 @@ export async function storeFetchedNewsArticle(
         article.canonicalUrl,
         article.headline,
         article.description,
+        article.imageUrl,
         article.originalUrl,
         source.name,
         article.publishedAt,
@@ -425,7 +427,7 @@ export async function getPublishedNews(input: {
   const pageSize = Math.min(input.pageSize, settings.maximum_articles, 100);
   const offset = (input.page - 1) * pageSize;
   const rows = await query<NewsArticleRow>(
-    `SELECT a.id::TEXT AS id, a.headline, a.description, a.original_url,
+    `SELECT a.id::TEXT AS id, a.headline, a.description, a.image_url, a.original_url,
             a.source_name, a.published_at, a.fetched_at, a.ticker_symbols,
             c.category_key, c.label AS category_label, a.sentiment, a.priority,
             a.verification_status, a.publication_status,

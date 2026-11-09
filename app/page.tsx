@@ -1,6 +1,7 @@
 import Link from 'next/link';
 import { currentUser } from '../lib/auth';
 import { isDatabaseConfigured } from '../lib/db';
+import { ThemeToggle } from './theme-toggle';
 
 export const dynamic = 'force-dynamic';
 
@@ -9,7 +10,7 @@ export default async function HomePage() {
   const user = databaseConfigured ? await currentUser() : null;
   return (
     <main className="shell">
-      <header className="topbar"><Link className="brand" href="/">ETHCRYPTOHUB</Link><nav className="links">{user ? <><Link href="/dashboard">Dashboard</Link><Link href="/scanner">Scanner</Link></> : <><Link href="/login">Sign in</Link><Link href="/signup">Create account</Link></>}</nav></header>
+      <header className="topbar"><Link className="brand" href="/">ETHCRYPTOHUB</Link><nav className="links">{user ? <><Link href="/dashboard">Dashboard</Link><Link href="/scanner">Scanner</Link></> : <><Link href="/login">Sign in</Link><Link href="/signup">Create account</Link></>}<ThemeToggle /></nav></header>
       {!databaseConfigured && <p className="error" role="status">Database is not configured. Account, settings, and scanner services will remain unavailable until Supabase connection variables are set.</p>}
       <section className="hero">
         <p className="mono">MARKET INTELLIGENCE · ACCOUNT CONTROLS</p>

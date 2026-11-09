@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
+import { ThemeToggle } from './theme-toggle';
 
 async function csrf() {
   const response = await fetch('/api/csrf', { credentials: 'same-origin', cache: 'no-store' });
@@ -99,7 +100,7 @@ export function AuthForm({
   const title = mode === 'signup' ? 'Create your account' : mode === 'login' ? 'Welcome back' : mode === 'verify' ? 'Verify your email' : 'Resend verification';
   return (
     <main className="card auth">
-      <Link className="brand" href="/">ETHCRYPTOHUB</Link>
+      <div className="auth-topline"><Link className="brand" href="/">ETHCRYPTOHUB</Link><ThemeToggle /></div>
       <h1>{title}</h1>
       <p className="muted">{mode === 'verify' ? 'Enter the six-digit code sent to your email.' : 'Secure access to your trading intelligence terminal.'}</p>
       {emailVerified && <p className="success">Email verified. Sign in to continue.</p>}
