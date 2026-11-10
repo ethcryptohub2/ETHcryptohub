@@ -217,7 +217,7 @@ async function insertSignal(
     ].every((value) => Number.isFinite(value) && value > 0) ||
     !Number.isFinite(candidate.supertrend.atr) ||
     !candidate.supertrend.atr
-  ) return false;
+  ) return null;
 
   const signalKey = stableSignalKey(candidate);
   const atrDelta = candidate.supertrend.atr * settings.entryZoneAtrFraction;
@@ -286,7 +286,7 @@ async function insertSignal(
         ],
       );
     }
-    return false;
+    return null;
   }
 
   const id = inserted.rows[0]!.id;
@@ -329,22 +329,23 @@ async function insertSignal(
       JSON.stringify(['BINANCE_USDM_TICKER_LAST_PRICE', 'BINANCE_USDM_KLINES']),
     ],
   );
-  return true;
+  return id;
 }
 
 export async function persistSignalScan(
   candidates: MarketScannerCandidate[],
   settings: NotificationSystemSettings,
-): Promise<{ created: number; signals: Record<string, { id: string; generatedAt: string; expiresAt: string; status: SignalStatus }> }> {
-  let created = 0;
+): Promise<{ created: number; createdSignalIds: string[]; signals: Record<string, { id: string; generatedAt: string; expiresAt: string; status: SignalStatus }> }> {
+  let createdSignalIds: string[] = [];
   try {
     await retryDatabaseWrite(async () => {
-      created = 0;
+      createdSignalIds = [];
       const client = await pool().connect();
       try {
         await client.query('BEGIN');
         for (const candidate of candidates) {
-          if (await insertSignal(client, candidate, settings)) created += 1;
+          const createdId = await insertSignal(client, candidate, settings);
+          if (createdId) createdSignalIds.push(createdId);
         }
         await client.query('COMMIT');
       } catch (error) {
@@ -368,7 +369,7 @@ export async function persistSignalScan(
   } catch (error) {
     console.error('Standard signal event dispatch failed; pending outbox events remain retryable:', error instanceof Error ? error.message : 'Unknown event dispatch error.');
   }
-  return { created, signals: await getPersistedSignalMetadata(candidates) };
+  return { created: createdSignalIds.length, createdSignalIds, signals: await getPersistedSignalMetadata(candidates) };
 }
 
 export async function getPersistedSignalMetadata(candidates: MarketScannerCandidate[]) {

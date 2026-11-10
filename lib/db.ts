@@ -41,6 +41,8 @@ const migrationFilesByTable = new Map<string, string>([
   ['public.news_user_preferences', 'supabase/migrations/202611070003_news_platform.sql'],
   ['public.news_notifications', 'supabase/migrations/202611070003_news_platform.sql'],
   ['public.platform_settings', 'supabase/migrations/202611070003_news_platform.sql'],
+  ['public.user_trading_settings', 'supabase/migrations/202611100001_live_futures_trading.sql'],
+  ['public.trade_executions', 'supabase/migrations/202611100001_live_futures_trading.sql'],
 ]);
 const migrationRuns = new Map<string, Promise<void>>();
 

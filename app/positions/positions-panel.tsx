@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
+import { ExchangePositionsPanel } from './exchange-positions-panel';
 
 type Position = {
   signal_id: string;
@@ -63,6 +64,7 @@ export function PositionsPanel() {
       <h1>Position records.</h1>
       <p className="muted">These are entries you recorded against signals. They are not exchange positions; the platform does not execute or verify orders.</p>
     </section>
+    <ExchangePositionsPanel />
     <section className="card stack">
       <div className="position-toolbar">
         <div className="links" role="group" aria-label="Position record filter">

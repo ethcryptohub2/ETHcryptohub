@@ -6,10 +6,10 @@ ETHcryptohub is a Next.js 16 application for account verification, user settings
 - PostgreSQL on Supabase, accessed server-side with parameterized queries.
 - Email verification through Resend; password hashes use bcrypt.
 - User sessions are stored as hashes in PostgreSQL and protected by secure, HTTP-only cookies.
-- Binance API credentials are encrypted at rest. The Binance integration is read-only; live order submission is disabled.
+- Binance API credentials are encrypted at rest in separate Demo and Live records. Futures order placement and per-environment auto-trading require explicit deployment gates and user confirmation; all order-submission gates are off by default.
 - The scanner uses Binance USDⓈ-M USDT perpetuals as its authoritative market universe. Eligible pairs are synchronized into an admin-managed database table, and scheduled background batches run the existing technical and configured research pipeline. Admin-disabled pairs stay disabled across synchronization. Admins can add encrypted Glassnode, CryptoPanic, and CoinGlass keys for optional research context.
 - The verified crypto news feed uses configurable server-side CryptoPanic, RSS/Atom, and mapped JSON adapters. Admin review controls publishing, credentials are encrypted, and the authenticated UI can receive Supabase Realtime updates.
-- The application is informational only: paper-trading UI, routes, and wallet features are disabled.
+- Signal and market data are informational. The gated Futures order flows route through fixed, environment-specific Demo/Live adapters; automatic signal processing is environment-specific and remains off by default. Do not enable either environment until its deployment and exchange checks pass.
 
 ## Local development
 
@@ -23,7 +23,7 @@ npm.cmd run dev
 
 Set the database and authentication values in `.env.local` before using database-backed pages. Apply the required migrations listed in [DEPLOYMENT.md](./DEPLOYMENT.md) in order. Do not commit `.env.local`.
 
-Open `http://localhost:3000`. The dashboard provides market information, account settings, and optional Binance API credential entry for read-only connectivity checks.
+Open `http://localhost:3000`. The dashboard provides market information, account settings, and optional separate Demo/Live Binance API credential entry. Do not enable Futures order submission without completing the Demo and production safeguards in [DEPLOYMENT.md](./DEPLOYMENT.md).
 
 ## Validation
 

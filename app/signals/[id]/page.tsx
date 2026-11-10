@@ -5,6 +5,8 @@ import { query } from '../../../lib/db';
 import { SignalCountdown } from '../../countdown';
 import { getSubscriptionEntitlement } from '../../../lib/subscriptions';
 import { SubscriptionPanel } from '../../subscription-panel';
+import { TradeSignalAction } from './trade-signal-action';
+import { getTradingSettings } from '../../../lib/trading-settings';
 
 export const dynamic = 'force-dynamic';
 
@@ -36,6 +38,7 @@ export default async function SignalDetailPage({ params }: { params: Promise<{ i
   const user = await currentUser();
   if (!user) redirect('/login');
   const subscription = await getSubscriptionEntitlement(user.id);
+  const tradingSettings = await getTradingSettings(user.id);
   if (!subscription.hasPremiumAccess) {
     return <main className="shell">
       <header className="topbar"><Link className="brand" href="/">ETHCRYPTOHUB</Link><nav className="links"><Link href="/dashboard">Dashboard</Link><Link href="/settings">Account settings</Link></nav></header>
@@ -54,10 +57,11 @@ export default async function SignalDetailPage({ params }: { params: Promise<{ i
   if (!signal) notFound();
   const serverNow = new Date().toISOString();
   const terminal = ['EXPIRED', 'ENTRY_INVALIDATED', 'STOP_LOSS_HIT', 'TP3_HIT'].includes(signal.status);
+  const canShowTradeAction = signal.status === 'ACTIVE';
   return <main className="shell">
     <header className="topbar"><Link className="brand" href="/">ETHCRYPTOHUB</Link><nav className="links"><Link href="/dashboard">Dashboard</Link><Link href="/scanner">Scanner</Link><Link href="/settings">Settings</Link></nav></header>
     <section className="hero signal-detail-hero">
-      <p className="mono">PERSISTED SIGNAL · {signal.timeframe}</p>
+      <p className="mono">PERSISTED SIGNAL · {signal.timeframe} · {tradingSettings.active_environment === 'DEMO' ? 'DEMO / VIRTUAL FUNDS' : 'LIVE / REAL FUNDS'}</p>
       <div className="signal-detail-heading">
         <div><h1>{signal.symbol}</h1><p className="muted">{signal.side} · rule-based setup score {signal.setup_score}/100</p></div>
         <span className={`scanner-signal-badge ${signal.side === 'LONG' ? 'is-long' : 'is-short'}`}>{signal.status.replaceAll('_', ' ')}</span>
@@ -80,5 +84,6 @@ export default async function SignalDetailPage({ params }: { params: Promise<{ i
       </div>
       <p className="scanner-disclaimer">Research reference only. The countdown and signal do not execute or authorize a trade. Market data, availability, and signal validity can change.</p>
     </section>
+    {canShowTradeAction && <TradeSignalAction signalId={signal.id} />}
   </main>;
 }

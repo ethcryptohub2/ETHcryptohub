@@ -7,6 +7,7 @@ import {
   persistSignalScan,
   processSignalLifecycle,
 } from './notifications';
+import { processNewAutomaticTrades } from './trading-execution';
 import {
   getEnabledScannerSymbols,
   getScannerSyncState,
@@ -68,6 +69,7 @@ export async function runSignalScan(timeframeOverride?: typeof timeframes[number
   await saveScannerCandidates(result.candidates);
   const persisted = await persistSignalScan(result.candidates, settings);
   await processSignalLifecycle(marketSnapshot);
+  await processNewAutomaticTrades(persisted.createdSignalIds);
   await flushSignalNotifications();
   return {
     timeframe,
