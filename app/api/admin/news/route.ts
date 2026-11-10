@@ -7,6 +7,7 @@ import {
   archiveNewsSource,
   getAdminNewsOverview,
   getPlatformNewsSettings,
+  publishPendingNewsArticles,
   reviewNewsArticle,
   saveNewsSource,
   updatePlatformNewsSettings,
@@ -77,13 +78,22 @@ const actionSchema = z.discriminatedUnion('action', [
     id: z.string().regex(/^\d{1,20}$/),
     decision: z.enum(['publish', 'reject', 'archive']),
   }).strict(),
+  z.object({
+    action: z.literal('publish_pending'),
+    ids: z.array(z.string().regex(/^\d{1,20}$/)).min(1).max(20).refine((ids) => new Set(ids).size === ids.length),
+  }).strict(),
   z.object({ action: z.literal('fetch_now') }).strict(),
 ]);
 
-export async function GET() {
+export async function GET(request: NextRequest) {
   try {
     await requireAdmin();
-    return Response.json({ data: await getAdminNewsOverview() }, {
+    const rawPage = Number(request.nextUrl.searchParams.get('page') ?? '1');
+    const status = request.nextUrl.searchParams.get('status') ?? 'PENDING';
+    if (!Number.isInteger(rawPage) || rawPage < 1 || rawPage > 1_000_000 || !['PENDING', 'PUBLISHED'].includes(status)) {
+      return Response.json({ error: 'Invalid news review page.' }, { status: 422 });
+    }
+    return Response.json({ data: await getAdminNewsOverview({ page: rawPage, status: status as 'PENDING' | 'PUBLISHED' }) }, {
       headers: { 'Cache-Control': 'no-store' },
     });
   } catch (error) {
@@ -124,6 +134,17 @@ export async function POST(request: NextRequest) {
           settings.breaking_news_alerts_enabled,
         );
         break;
+      }
+      case 'publish_pending': {
+        const settings = await getPlatformNewsSettings();
+        const published = await publishPendingNewsArticles(
+          parsed.data.ids,
+          admin.id,
+          settings.breaking_news_alerts_enabled,
+        );
+        return Response.json({ data: { published, overview: await getAdminNewsOverview() } }, {
+          headers: { 'Cache-Control': 'no-store' },
+        });
       }
       case 'fetch_now':
         return Response.json({ data: { ingestion: await runNewsIngestion({ manual: true }), overview: await getAdminNewsOverview() } }, {

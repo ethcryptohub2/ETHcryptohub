@@ -213,20 +213,53 @@ export async function archiveNewsSource(id: number): Promise<void> {
   if (!archived.rowCount) throw new Error('News source not found or already archived.');
 }
 
-export async function listAdminNewsArticles(limit = 100) {
-  const result = await query(
-    `SELECT a.id::TEXT AS id, a.headline, a.description, a.image_url, a.original_url,
-            a.source_name, a.published_at, a.fetched_at, a.ticker_symbols,
-            c.category_key, c.label AS category_label, a.sentiment, a.priority,
-            a.verification_status, a.publication_status
-       FROM public.news_articles a
-       JOIN public.news_categories c ON c.id = a.category_id
-      ORDER BY CASE WHEN a.publication_status = 'PENDING' THEN 0 ELSE 1 END,
-               a.fetched_at DESC, a.id DESC
-      LIMIT $1`,
-    [Math.min(Math.max(limit, 1), 200)],
-  );
-  return result.rows;
+const ADMIN_NEWS_PAGE_SIZE = 20;
+
+export async function listAdminNewsArticles(input: { page?: number; status?: 'PENDING' | 'PUBLISHED' } = {}) {
+  const page = Math.max(1, Math.floor(input.page ?? 1));
+  const status = input.status ?? 'PENDING';
+  const offset = (page - 1) * ADMIN_NEWS_PAGE_SIZE;
+  const [result, counts] = await Promise.all([
+    query(
+      `SELECT a.id::TEXT AS id, a.headline, a.description, a.image_url, a.original_url,
+              a.source_name, a.published_at, a.fetched_at, a.ticker_symbols,
+              c.category_key, c.label AS category_label, a.sentiment, a.priority,
+              a.verification_status, a.publication_status
+         FROM public.news_articles a
+         JOIN public.news_categories c ON c.id = a.category_id
+        WHERE a.publication_status = $1
+        ORDER BY a.fetched_at DESC, a.id DESC
+        LIMIT $2 OFFSET $3`,
+      [status, ADMIN_NEWS_PAGE_SIZE, offset],
+    ),
+    query<{ pending: string; published: string }>(
+      `SELECT COUNT(*) FILTER (WHERE publication_status = 'PENDING')::TEXT AS pending,
+              COUNT(*) FILTER (WHERE publication_status = 'PUBLISHED')::TEXT AS published
+         FROM public.news_articles`,
+    ),
+  ]);
+  const pendingTotal = Number(counts.rows[0]?.pending ?? 0);
+  const publishedTotal = Number(counts.rows[0]?.published ?? 0);
+  return {
+    items: result.rows,
+    total: status === 'PENDING' ? pendingTotal : publishedTotal,
+    pendingTotal,
+    publishedTotal,
+    page,
+    pageSize: ADMIN_NEWS_PAGE_SIZE,
+    status,
+  };
+}
+
+export async function getAdminNewsOverview(input: { page?: number; status?: 'PENDING' | 'PUBLISHED' } = {}) {
+  const [settings, categories, sources, articles, logs] = await Promise.all([
+    getPlatformNewsSettings(),
+    listNewsCategories(),
+    listNewsSources(),
+    listAdminNewsArticles(input),
+    listNewsProcessingLogs(),
+  ]);
+  return { settings, categories, sources, articles: articles.items, articlePagination: articles, logs };
 }
 
 export async function listNewsProcessingLogs(limit = 100) {
@@ -238,17 +271,6 @@ export async function listNewsProcessingLogs(limit = 100) {
     [Math.min(Math.max(limit, 1), 200)],
   );
   return result.rows;
-}
-
-export async function getAdminNewsOverview() {
-  const [settings, categories, sources, articles, logs] = await Promise.all([
-    getPlatformNewsSettings(),
-    listNewsCategories(),
-    listNewsSources(),
-    listAdminNewsArticles(),
-    listNewsProcessingLogs(),
-  ]);
-  return { settings, categories, sources, articles, logs };
 }
 
 async function createBreakingNotifications(
@@ -384,6 +406,64 @@ export async function reviewNewsArticle(
       await client.query('ROLLBACK');
     } catch (rollbackError) {
       console.error('News review transaction rollback failed:', rollbackError instanceof Error ? rollbackError.message : 'Unknown rollback error.');
+    }
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+export async function publishPendingNewsArticles(
+  articleIds: string[],
+  adminUserId: number,
+  issueBreakingNotifications: boolean,
+): Promise<number> {
+  const ids = [...new Set(articleIds)];
+  if (!ids.length || ids.length !== articleIds.length) throw new Error('Select one or more distinct pending articles.');
+  const client = await pool().connect();
+  try {
+    await client.query('BEGIN');
+    const selected = await client.query<{
+      id: string;
+      category_key: string;
+      ticker_symbols: string[];
+      priority: string;
+    }>(
+      `SELECT a.id::TEXT AS id, c.category_key, a.ticker_symbols, a.priority
+         FROM public.news_articles a
+         JOIN public.news_categories c ON c.id = a.category_id
+        WHERE a.id = ANY($1::BIGINT[]) AND a.publication_status = 'PENDING'
+        ORDER BY a.id
+        FOR UPDATE OF a`,
+      [ids],
+    );
+    if (selected.rows.length !== ids.length) {
+      throw new Error('Some selected articles are no longer pending. Refresh the list and select articles again.');
+    }
+
+    const updated = await client.query(
+      `UPDATE public.news_articles
+          SET publication_status = 'PUBLISHED', verification_status = 'VERIFIED',
+              published_by = $2, published_at_admin = NOW(), updated_at = NOW()
+        WHERE id = ANY($1::BIGINT[]) AND publication_status = 'PENDING'`,
+      [ids, adminUserId],
+    );
+    if (updated.rowCount !== ids.length) throw new Error('Not all selected articles could be published.');
+
+    if (issueBreakingNotifications) {
+      for (const article of selected.rows) {
+        if (article.priority === 'BREAKING') {
+          await createBreakingNotifications(client, article.id, article.category_key, article.ticker_symbols);
+        }
+      }
+    }
+    await client.query('COMMIT');
+    return updated.rowCount;
+  } catch (error) {
+    try {
+      await client.query('ROLLBACK');
+    } catch (rollbackError) {
+      console.error('Bulk news publication rollback failed:', rollbackError instanceof Error ? rollbackError.message : 'Unknown rollback error.');
     }
     throw error;
   } finally {

@@ -62,10 +62,25 @@ type Log = {
   started_at: string;
   finished_at: string | null;
 };
-type Overview = { settings: Settings; categories: Category[]; sources: Source[]; articles: Article[]; logs: Log[] };
-type ActionData = Overview | { ingestion: unknown; overview: Overview };
+type Overview = {
+  settings: Settings;
+  categories: Category[];
+  sources: Source[];
+  articles: Article[];
+  articlePagination: {
+    total: number;
+    pendingTotal: number;
+    publishedTotal: number;
+    page: number;
+    pageSize: number;
+    status: 'PENDING' | 'PUBLISHED';
+  };
+  logs: Log[];
+};
+type ActionData = Overview | { ingestion: unknown; overview: Overview } | { published: number; overview: Overview };
 type ReviewDecision = 'publish' | 'reject' | 'archive';
 type ArticleFeedback = { type: 'success' | 'error'; message: string };
+type ReviewStatus = 'PENDING' | 'PUBLISHED';
 
 type SourceForm = {
   id?: number;
@@ -126,6 +141,9 @@ export function AdminNewsSettings() {
   const [busy, setBusy] = useState(false);
   const [busyReview, setBusyReview] = useState<{ id: string; decision: ReviewDecision } | null>(null);
   const [articleFeedback, setArticleFeedback] = useState<Record<string, ArticleFeedback>>({});
+  const [articlePage, setArticlePage] = useState(1);
+  const [articleStatus, setArticleStatus] = useState<ReviewStatus>('PENDING');
+  const [selectedArticles, setSelectedArticles] = useState<string[]>([]);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
 
@@ -133,16 +151,18 @@ export function AdminNewsSettings() {
     setLoading(true);
     setError('');
     try {
-      const response = await fetch('/api/admin/news', { cache: 'no-store' });
+      const params = new URLSearchParams({ page: String(articlePage), status: articleStatus });
+      const response = await fetch(`/api/admin/news?${params}`, { cache: 'no-store' });
       const body = await response.json() as { data?: Overview; error?: string };
       if (!response.ok || !body.data) throw new Error(body.error ?? 'News settings could not be loaded.');
       setOverview(body.data);
+      setSelectedArticles([]);
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : 'News settings could not be loaded.');
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [articlePage, articleStatus]);
 
   useEffect(() => {
     const timer = window.setTimeout(() => void load(), 0);
@@ -172,6 +192,11 @@ export function AdminNewsSettings() {
       const body = await response.json() as { data?: ActionData; error?: string };
       if (!response.ok || !body.data) throw new Error(body.error ?? 'News settings could not be saved.');
       if (body.data) setOverview('overview' in body.data ? body.data.overview : body.data);
+      if (action.action === 'publish_pending' && 'published' in body.data) {
+        setNotice(`${body.data.published} pending article${body.data.published === 1 ? '' : 's'} published.`);
+        await load();
+        return body.data;
+      }
       if (review) {
         const messages: Record<ReviewDecision, string> = {
           publish: 'Article verified and published.',
@@ -182,6 +207,7 @@ export function AdminNewsSettings() {
           ...current,
           [review.id]: { type: 'success', message: messages[review.decision] },
         }));
+        await load();
       }
       setNotice('News settings updated.');
       return body.data;
@@ -345,15 +371,47 @@ export function AdminNewsSettings() {
 
       <div className="admin-news-review stack">
         <h3>Review and publish</h3>
+        <div className="links" role="tablist" aria-label="News review status">
+          <button type="button" role="tab" aria-selected={articleStatus === 'PENDING'} className={articleStatus === 'PENDING' ? '' : 'button-secondary'}
+            onClick={() => { setArticleStatus('PENDING'); setArticlePage(1); setSelectedArticles([]); }}>
+            Pending ({overview.articlePagination.pendingTotal})
+          </button>
+          <button type="button" role="tab" aria-selected={articleStatus === 'PUBLISHED'} className={articleStatus === 'PUBLISHED' ? '' : 'button-secondary'}
+            onClick={() => { setArticleStatus('PUBLISHED'); setArticlePage(1); setSelectedArticles([]); }}>
+            Published / successful ({overview.articlePagination.publishedTotal})
+          </button>
+        </div>
+        {articleStatus === 'PENDING' && overview.articles.length > 0 && <div className="admin-news-bulk-actions">
+          <label className="news-check">
+            <input type="checkbox"
+              checked={overview.articles.every((article) => selectedArticles.includes(article.id))}
+              onChange={(event) => setSelectedArticles(event.target.checked ? overview.articles.map((article) => article.id) : [])} />
+            Select all pending on this page
+          </label>
+          <button type="button" disabled={busy || selectedArticles.length === 0} onClick={() => {
+            if (window.confirm(`Publish all ${selectedArticles.length} selected pending article${selectedArticles.length === 1 ? '' : 's'}?`)) {
+              void sendAction({ action: 'publish_pending', ids: selectedArticles });
+            }
+          }}>
+            {busy && !busyReview ? 'Publishing…' : `Publish All (${selectedArticles.length})`}
+          </button>
+        </div>}
         {overview.articles.length === 0 && <p className="muted">No articles have been ingested.</p>}
         {overview.articles.map((article) => <article className="admin-news-article" key={article.id}>
+          {articleStatus === 'PENDING' && <label className="news-check admin-news-article-select">
+            <input type="checkbox" checked={selectedArticles.includes(article.id)} disabled={busy}
+              onChange={(event) => setSelectedArticles((current) => event.target.checked
+                ? [...current, article.id]
+                : current.filter((id) => id !== article.id))} />
+            Select for bulk publish
+          </label>}
           <div className="news-article-meta"><span className="news-category">{article.category_label}</span><span>{article.source_name}</span>
             <span>{article.verification_status} · {article.publication_status}</span><span>{article.priority}</span>
           </div>
           <h4><a href={article.original_url} target="_blank" rel="noopener noreferrer">{article.headline} ↗</a></h4>
           <p>{article.description}</p>
           <small>{article.ticker_symbols.map((ticker) => `#${ticker}`).join(' ') || 'No tickers'} · {new Date(article.fetched_at).toLocaleString()}</small>
-          <div className="links">
+          {articleStatus === 'PENDING' && <div className="links">
             <button type="button" disabled={busy} onClick={() => void sendAction({ action: 'review_article', id: article.id, decision: 'publish' })}>
               {busyReview?.id === article.id && busyReview.decision === 'publish' ? 'Publishing…' : 'Verify & publish'}
             </button>
@@ -363,11 +421,18 @@ export function AdminNewsSettings() {
             <button type="button" className="button-secondary" disabled={busy} onClick={() => void sendAction({ action: 'review_article', id: article.id, decision: 'archive' })}>
               {busyReview?.id === article.id && busyReview.decision === 'archive' ? 'Archiving…' : 'Archive'}
             </button>
-          </div>
+          </div>}
           {articleFeedback[article.id] && <p className={`admin-news-action-feedback is-${articleFeedback[article.id].type}`} role={articleFeedback[article.id].type === 'error' ? 'alert' : 'status'}>
             {articleFeedback[article.id].message}
           </p>}
         </article>)}
+        <div className="signal-history-pagination admin-news-pagination">
+          <span>{overview.articlePagination.total} {articleStatus === 'PENDING' ? 'pending' : 'published'} · Page {overview.articlePagination.page} of {Math.max(1, Math.ceil(overview.articlePagination.total / overview.articlePagination.pageSize))}</span>
+          <button type="button" className="button-secondary" disabled={busy || articlePage <= 1}
+            onClick={() => { setArticlePage((page) => page - 1); setSelectedArticles([]); }}>Previous</button>
+          <button type="button" className="button-secondary" disabled={busy || articlePage * overview.articlePagination.pageSize >= overview.articlePagination.total}
+            onClick={() => { setArticlePage((page) => page + 1); setSelectedArticles([]); }}>Next</button>
+        </div>
       </div>
 
       <div className="admin-news-logs stack">
