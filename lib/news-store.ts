@@ -368,9 +368,9 @@ export async function reviewNewsArticle(
     const verificationStatus = action === 'publish' ? 'VERIFIED' : action === 'reject' ? 'REJECTED' : 'PENDING';
     await client.query(
       `UPDATE public.news_articles
-          SET publication_status = $2, verification_status = $3,
-              published_by = CASE WHEN $2 = 'PUBLISHED' THEN $4 ELSE published_by END,
-              published_at_admin = CASE WHEN $2 = 'PUBLISHED' THEN NOW() ELSE published_at_admin END,
+          SET publication_status = $2::TEXT, verification_status = $3,
+              published_by = CASE WHEN $2::TEXT = 'PUBLISHED' THEN $4 ELSE published_by END,
+              published_at_admin = CASE WHEN $2::TEXT = 'PUBLISHED' THEN NOW() ELSE published_at_admin END,
               updated_at = NOW()
         WHERE id = $1`,
       [articleId, publicationStatus, verificationStatus, adminUserId],
