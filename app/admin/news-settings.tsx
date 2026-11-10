@@ -64,6 +64,8 @@ type Log = {
 };
 type Overview = { settings: Settings; categories: Category[]; sources: Source[]; articles: Article[]; logs: Log[] };
 type ActionData = Overview | { ingestion: unknown; overview: Overview };
+type ReviewDecision = 'publish' | 'reject' | 'archive';
+type ArticleFeedback = { type: 'success' | 'error'; message: string };
 
 type SourceForm = {
   id?: number;
@@ -98,6 +100,18 @@ function blankSource(): SourceForm {
   };
 }
 
+function reviewActionDetails(action: Record<string, unknown>): { id: string; decision: ReviewDecision } | null {
+  if (typeof action.id !== 'string') return null;
+  switch (action.decision) {
+    case 'publish':
+    case 'reject':
+    case 'archive':
+      return { id: action.id, decision: action.decision };
+    default:
+      return null;
+  }
+}
+
 async function csrfToken() {
   const response = await fetch('/api/csrf', { cache: 'no-store' });
   const body = await response.json() as { data?: { csrfToken: string } };
@@ -110,6 +124,8 @@ export function AdminNewsSettings() {
   const [sourceForm, setSourceForm] = useState<SourceForm>(blankSource);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
+  const [busyReview, setBusyReview] = useState<{ id: string; decision: ReviewDecision } | null>(null);
+  const [articleFeedback, setArticleFeedback] = useState<Record<string, ArticleFeedback>>({});
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
 
@@ -134,7 +150,16 @@ export function AdminNewsSettings() {
   }, [load]);
 
   async function sendAction(action: Record<string, unknown>) {
+    const review = action.action === 'review_article' ? reviewActionDetails(action) : null;
     setBusy(true);
+    if (review) {
+      setBusyReview(review);
+      setArticleFeedback((current) => {
+        const next = { ...current };
+        delete next[review.id];
+        return next;
+      });
+    }
     setError('');
     setNotice('');
     try {
@@ -145,15 +170,34 @@ export function AdminNewsSettings() {
         body: JSON.stringify(action),
       });
       const body = await response.json() as { data?: ActionData; error?: string };
-      if (!response.ok) throw new Error(body.error ?? 'News settings could not be saved.');
+      if (!response.ok || !body.data) throw new Error(body.error ?? 'News settings could not be saved.');
       if (body.data) setOverview('overview' in body.data ? body.data.overview : body.data);
+      if (review) {
+        const messages: Record<ReviewDecision, string> = {
+          publish: 'Article verified and published.',
+          reject: 'Article rejected.',
+          archive: 'Article archived.',
+        };
+        setArticleFeedback((current) => ({
+          ...current,
+          [review.id]: { type: 'success', message: messages[review.decision] },
+        }));
+      }
       setNotice('News settings updated.');
       return body.data;
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : 'News settings could not be saved.');
+      const message = reason instanceof Error ? reason.message : 'News settings could not be saved.';
+      setError(message);
+      if (review) {
+        setArticleFeedback((current) => ({
+          ...current,
+          [review.id]: { type: 'error', message },
+        }));
+      }
       return null;
     } finally {
       setBusy(false);
+      setBusyReview(null);
     }
   }
 
@@ -310,10 +354,19 @@ export function AdminNewsSettings() {
           <p>{article.description}</p>
           <small>{article.ticker_symbols.map((ticker) => `#${ticker}`).join(' ') || 'No tickers'} · {new Date(article.fetched_at).toLocaleString()}</small>
           <div className="links">
-            <button type="button" disabled={busy} onClick={() => void sendAction({ action: 'review_article', id: article.id, decision: 'publish' })}>Verify & publish</button>
-            <button type="button" className="button-secondary" disabled={busy} onClick={() => void sendAction({ action: 'review_article', id: article.id, decision: 'reject' })}>Reject</button>
-            <button type="button" className="button-secondary" disabled={busy} onClick={() => void sendAction({ action: 'review_article', id: article.id, decision: 'archive' })}>Archive</button>
+            <button type="button" disabled={busy} onClick={() => void sendAction({ action: 'review_article', id: article.id, decision: 'publish' })}>
+              {busyReview?.id === article.id && busyReview.decision === 'publish' ? 'Publishing…' : 'Verify & publish'}
+            </button>
+            <button type="button" className="button-secondary" disabled={busy} onClick={() => void sendAction({ action: 'review_article', id: article.id, decision: 'reject' })}>
+              {busyReview?.id === article.id && busyReview.decision === 'reject' ? 'Rejecting…' : 'Reject'}
+            </button>
+            <button type="button" className="button-secondary" disabled={busy} onClick={() => void sendAction({ action: 'review_article', id: article.id, decision: 'archive' })}>
+              {busyReview?.id === article.id && busyReview.decision === 'archive' ? 'Archiving…' : 'Archive'}
+            </button>
           </div>
+          {articleFeedback[article.id] && <p className={`admin-news-action-feedback is-${articleFeedback[article.id].type}`} role={articleFeedback[article.id].type === 'error' ? 'alert' : 'status'}>
+            {articleFeedback[article.id].message}
+          </p>}
         </article>)}
       </div>
 

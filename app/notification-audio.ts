@@ -1,6 +1,80 @@
+export type AlertRingtone = 'coin-drop' | 'sharp-bell' | 'digital-beep' | 'high-conviction-siren';
+
+export const ALERT_RINGTONES: Array<{ value: AlertRingtone; label: string }> = [
+  { value: 'coin-drop', label: 'Classic Cash / Coin Drop' },
+  { value: 'sharp-bell', label: 'Sharp Bell' },
+  { value: 'digital-beep', label: 'Digital Beep' },
+  { value: 'high-conviction-siren', label: 'High-Conviction Siren' },
+];
+
+const RINGTONE_STORAGE_KEY = 'ethcryptohub-alert-ringtone';
+const DEFAULT_RINGTONE: AlertRingtone = 'coin-drop';
+let ringtoneSnapshot: AlertRingtone = DEFAULT_RINGTONE;
 let sharedAudioContext: AudioContext | null = null;
 
-export async function playSignalAlarm(kind: 'LONG' | 'SHORT' | 'HIGH', volume: number) {
+function isAlertRingtone(value: string | null): value is AlertRingtone {
+  return ALERT_RINGTONES.some((ringtone) => ringtone.value === value);
+}
+
+export function getSelectedAlertRingtone(): AlertRingtone {
+  try {
+    const saved = window.localStorage.getItem(RINGTONE_STORAGE_KEY);
+    if (isAlertRingtone(saved)) ringtoneSnapshot = saved;
+  } catch (error) {
+    console.error('Unable to read the saved alert ringtone:', error);
+  }
+  return ringtoneSnapshot;
+}
+
+export function setSelectedAlertRingtone(ringtone: AlertRingtone): void {
+  ringtoneSnapshot = ringtone;
+  try {
+    window.localStorage.setItem(RINGTONE_STORAGE_KEY, ringtone);
+  } catch (error) {
+    console.error('Unable to save the alert ringtone preference:', error);
+  }
+}
+
+type Note = { frequency: number; start: number; duration: number; type?: OscillatorType };
+
+function ringtoneNotes(ringtone: AlertRingtone): Note[] {
+  switch (ringtone) {
+    case 'coin-drop':
+      return [
+        { frequency: 1318, start: 0, duration: 0.11, type: 'sine' },
+        { frequency: 1760, start: 0.1, duration: 0.12, type: 'triangle' },
+        { frequency: 1318, start: 0.24, duration: 0.1, type: 'sine' },
+        { frequency: 988, start: 0.37, duration: 0.28, type: 'sine' },
+      ];
+    case 'sharp-bell':
+      return [
+        { frequency: 1760, start: 0, duration: 0.34, type: 'triangle' },
+        { frequency: 2349, start: 0.03, duration: 0.24, type: 'sine' },
+        { frequency: 1760, start: 0.48, duration: 0.34, type: 'triangle' },
+        { frequency: 2349, start: 0.51, duration: 0.24, type: 'sine' },
+      ];
+    case 'digital-beep':
+      return [
+        { frequency: 1046, start: 0, duration: 0.12, type: 'square' },
+        { frequency: 1397, start: 0.17, duration: 0.12, type: 'square' },
+        { frequency: 1046, start: 0.34, duration: 0.12, type: 'square' },
+        { frequency: 1397, start: 0.51, duration: 0.12, type: 'square' },
+      ];
+    case 'high-conviction-siren':
+      return [
+        { frequency: 880, start: 0, duration: 0.2, type: 'sawtooth' },
+        { frequency: 1320, start: 0.22, duration: 0.2, type: 'sawtooth' },
+        { frequency: 880, start: 0.44, duration: 0.2, type: 'sawtooth' },
+        { frequency: 1320, start: 0.66, duration: 0.2, type: 'sawtooth' },
+        { frequency: 1760, start: 0.9, duration: 0.24, type: 'triangle' },
+      ];
+  }
+}
+
+export async function playSignalAlarm(
+  volume: number,
+  ringtone: AlertRingtone = getSelectedAlertRingtone(),
+) {
   const AudioContextConstructor = window.AudioContext;
   if (!AudioContextConstructor) throw new Error('Audio playback is not supported by this browser.');
   sharedAudioContext ??= new AudioContextConstructor();
@@ -9,20 +83,21 @@ export async function playSignalAlarm(kind: 'LONG' | 'SHORT' | 'HIGH', volume: n
   const gain = context.createGain();
   gain.gain.value = Math.max(0, Math.min(1, volume));
   gain.connect(context.destination);
-  const notes = kind === 'LONG' ? [740, 988] : kind === 'SHORT' ? [523, 392] : [1046, 1318, 1568];
   const now = context.currentTime;
-  notes.forEach((frequency, index) => {
+
+  ringtoneNotes(ringtone).forEach(({ frequency, start, duration, type = 'sine' }) => {
     const oscillator = context.createOscillator();
     const noteGain = context.createGain();
-    oscillator.type = 'sine';
+    const noteStart = now + start;
+    oscillator.type = type;
     oscillator.frequency.value = frequency;
-    noteGain.gain.setValueAtTime(0.001, now + index * 0.16);
-    noteGain.gain.exponentialRampToValueAtTime(0.55, now + index * 0.16 + 0.025);
-    noteGain.gain.exponentialRampToValueAtTime(0.001, now + index * 0.16 + 0.14);
+    noteGain.gain.setValueAtTime(0.001, noteStart);
+    noteGain.gain.exponentialRampToValueAtTime(type === 'sawtooth' || type === 'square' ? 0.3 : 0.48, noteStart + 0.012);
+    noteGain.gain.exponentialRampToValueAtTime(0.001, noteStart + duration);
     oscillator.connect(noteGain);
     noteGain.connect(gain);
-    oscillator.start(now + index * 0.16);
-    oscillator.stop(now + index * 0.16 + 0.15);
+    oscillator.start(noteStart);
+    oscillator.stop(noteStart + duration + 0.01);
   });
 }
 

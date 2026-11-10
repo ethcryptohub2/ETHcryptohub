@@ -117,10 +117,7 @@ export function NotificationsCenter() {
             )
           ) {
             try {
-              const kind = notification.event_type === 'NEW_SIGNAL' && notification.payload?.highConviction
-                ? 'HIGH'
-                : notification.side;
-              void playSignalAlarm(kind, prefs.alarm_volume)
+              void playSignalAlarm(prefs.alarm_volume)
                 .catch((reason: unknown) => setError(reason instanceof Error ? reason.message : 'Signal sound could not be played.'));
             } catch (reason) {
               setError(reason instanceof Error ? reason.message : 'Signal sound could not be played.');
