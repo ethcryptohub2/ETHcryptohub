@@ -16,6 +16,6 @@
     "plugins": [{ "name": "next" }],
     "paths": { "@/*": ["./*"] }
   },
-  "include": ["next-env.d.ts", ".next/types/**/*.ts", ".next/dev/types/**/*.ts", "app/**/*.ts", "app/**/*.tsx", "lib/**/*.ts", "next.config.ts"],
+  "include": ["next-env.d.ts", ".next/types/**/*.ts", ".next/dev/types/**/*.ts", "app/**/*.ts", "app/**/*.tsx", "lib/**/*.ts", "next.config.ts", "proxy.ts"],
   "exclude": ["node_modules", "smartexit"]
 }

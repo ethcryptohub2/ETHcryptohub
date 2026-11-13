@@ -1,6 +1,11 @@
 import { Pool, type PoolConfig, type QueryResultRow } from 'pg';
+import { assertDatabaseAccessAllowed, getUiPreviewFlagStatus } from './ui-preview-mode.mjs';
 
 const globalForPg = globalThis as typeof globalThis & { ethcryptohubPool?: Pool };
+
+function assertDatabaseAccessEnabled() {
+  assertDatabaseAccessAllowed(process.env);
+}
 
 function sslOptions(hostname: string) {
   const mode = process.env.SUPABASE_DB_SSLMODE?.trim().toLowerCase();
@@ -11,6 +16,7 @@ function sslOptions(hostname: string) {
 }
 
 export function isDatabaseConfigured() {
+  if (getUiPreviewFlagStatus(process.env) !== 'disabled') return false;
   const connectionString = process.env.SUPABASE_DB_URL ?? process.env.DATABASE_URL;
   return Boolean(
     connectionString ||
@@ -21,6 +27,7 @@ export function isDatabaseConfigured() {
 }
 
 function config(): PoolConfig {
+  assertDatabaseAccessEnabled();
   const connectionString = process.env.SUPABASE_DB_URL ?? process.env.DATABASE_URL;
   if (connectionString) {
     const url = new URL(connectionString);
@@ -56,6 +63,7 @@ function config(): PoolConfig {
 }
 
 export function pool(): Pool {
+  assertDatabaseAccessEnabled();
   globalForPg.ethcryptohubPool ??= new Pool(config());
   return globalForPg.ethcryptohubPool;
 }
