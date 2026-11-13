@@ -1,9 +1,11 @@
 'use client';
 
-import { useEffect, useRef, useState, type FormEvent } from 'react';
+import { useState, type FormEvent } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { ThemeToggle } from './theme-toggle';
+
+type AuthMode = 'signup' | 'login' | 'verify' | 'resend' | 'forgot-password' | 'reset-password';
 
 async function csrf() {
   const response = await fetch('/api/csrf', { credentials: 'same-origin', cache: 'no-store' });
@@ -15,45 +17,35 @@ async function csrf() {
 export function AuthForm({
   mode,
   initialEmail = '',
-  initialCode = '',
+  initialError = '',
   emailVerified = false,
 }: {
-  mode: 'signup' | 'login' | 'verify' | 'resend';
+  mode: AuthMode;
   initialEmail?: string;
-  initialCode?: string;
+  initialError?: string;
   emailVerified?: boolean;
 }) {
   const router = useRouter();
-  const formRef = useRef<HTMLFormElement>(null);
-  const autoSubmittedCode = useRef('');
   const [email, setEmail] = useState(initialEmail);
-  const [error, setError] = useState('');
+  const [error, setError] = useState(initialError);
   const [notice, setNotice] = useState('');
   const [busy, setBusy] = useState(false);
   const [signupComplete, setSignupComplete] = useState(false);
-  const [canResend, setCanResend] = useState(false);
-  const [verificationRequired, setVerificationRequired] = useState(false);
-
-  function openVerificationPage() {
-    router.push(`/verify-email?email=${encodeURIComponent(email)}`);
-  }
-
-  useEffect(() => {
-    if (mode !== 'verify' || !initialEmail || !/^[0-9]{6}$/.test(initialCode) || autoSubmittedCode.current === initialCode) return;
-    autoSubmittedCode.current = initialCode;
-    formRef.current?.requestSubmit();
-  }, [initialCode, initialEmail, mode]);
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setBusy(true);
     setError('');
     setNotice('');
-    setCanResend(false);
     const values = new FormData(event.currentTarget);
-    const action = mode === 'verify' ? 'verify' : mode;
     const payload: Record<string, string> = {};
-    for (const [key, value] of values.entries()) if (typeof value === 'string') payload[key] = value;
+    for (const [key, value] of values.entries()) {
+      if (typeof value === 'string') payload[key] = value;
+    }
+
+    const action = mode === 'forgot-password' ? 'recovery'
+      : mode === 'reset-password' ? 'update-password'
+        : mode;
     try {
       const token = await csrf();
       const response = await fetch(`/api/auth/${action}`, {
@@ -63,32 +55,39 @@ export function AuthForm({
         body: JSON.stringify(payload),
       });
       const result = await response.json() as {
-        data?: { verificationRequired?: boolean; signedIn?: boolean; verified?: boolean; notice?: string };
+        data?: {
+          verificationRequired?: boolean;
+          signedIn?: boolean;
+          notice?: string;
+          passwordUpdated?: boolean;
+        };
         error?: string;
         code?: string;
       };
       if (!response.ok) {
-        if (result.code === 'EMAIL_DELIVERY_FAILED') setCanResend(true);
-        const needsVerification = mode === 'login'
-          && response.status === 403
-          && (result.code === 'EMAIL_NOT_VERIFIED' || result.error?.toLowerCase().includes('verify your email'));
-        if (needsVerification) {
-          setVerificationRequired(true);
-          openVerificationPage();
+        if (mode === 'login' && result.code === 'EMAIL_NOT_VERIFIED') {
+          router.push(`/verify-email?email=${encodeURIComponent(email)}`);
           return;
         }
         throw new Error(result.error ?? 'Request could not be completed.');
       }
+
       if (mode === 'signup') {
-        setSignupComplete(true);
+        if (result.data?.signedIn) {
+          router.push('/dashboard');
+          router.refresh();
+        } else {
+          setSignupComplete(true);
+        }
       } else if (mode === 'login') {
         router.push('/dashboard');
         router.refresh();
-      } else if (mode === 'verify') {
-        setNotice('Email verified. You can now sign in.');
-        router.push(`/login?verified=1&email=${encodeURIComponent(email)}`);
+      } else if (mode === 'reset-password') {
+        setNotice('Password updated. You can continue to your dashboard.');
+        router.push('/dashboard');
+        router.refresh();
       } else {
-        setNotice(result.data?.notice ?? 'If this address needs verification, a code will be sent.');
+        setNotice(result.data?.notice ?? 'If this address needs attention, instructions will be sent.');
       }
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : 'Request could not be completed.');
@@ -97,47 +96,81 @@ export function AuthForm({
     }
   }
 
-  const title = mode === 'signup' ? 'Create your account' : mode === 'login' ? 'Welcome back' : mode === 'verify' ? 'Verify your email' : 'Resend verification';
+  const title = mode === 'signup' ? 'Create your account'
+    : mode === 'login' ? 'Welcome back'
+      : mode === 'verify' ? 'Confirm your email'
+        : mode === 'resend' ? 'Resend confirmation'
+          : mode === 'forgot-password' ? 'Recover your password'
+            : 'Set a new password';
+  const description = mode === 'verify'
+    ? 'Email confirmation now uses a secure Supabase link. Legacy verification codes are no longer accepted.'
+    : 'Secure access to your trading intelligence terminal.';
+  const emailRequired = mode !== 'reset-password' && mode !== 'verify';
+
   return (
     <main className="card auth">
       <div className="auth-topline"><Link className="brand" href="/">ETHCRYPTOHUB</Link><ThemeToggle /></div>
       <h1>{title}</h1>
-      <p className="muted">{mode === 'verify' ? 'Enter the six-digit code sent to your email.' : 'Secure access to your trading intelligence terminal.'}</p>
-      {emailVerified && <p className="success">Email verified. Sign in to continue.</p>}
+      <p className="muted">{description}</p>
+      {emailVerified && <p className="success">Email confirmed. Sign in to continue.</p>}
       {error && <p role="alert" className="error">{error}</p>}
-      {verificationRequired && (
-        <p role="status" className="success">
-          Your email needs verification. <button type="button" onClick={openVerificationPage}>Enter verification code</button>
-        </p>
-      )}
-      {canResend && <p><Link href={`/resend-verification?email=${encodeURIComponent(email)}`}>Request another verification email</Link></p>}
       {notice && <p role="status" className="success">{notice}</p>}
-      <form ref={formRef} className="stack" onSubmit={submit}>
-        <label>Email<input name="email" type="email" required maxLength={255} autoComplete="email" value={email} onChange={(event) => setEmail(event.target.value)} /></label>
-        {mode === 'signup' && <>
-          <label>Password<input name="password" type="password" required minLength={8} maxLength={72} autoComplete="new-password" /></label>
-          <label>Full name (optional)<input name="fullName" maxLength={150} autoComplete="name" /></label>
-          <div className="grid">
-            <label>Country code<select name="countryCode" defaultValue="+91"><option>+91</option><option>+1</option><option>+44</option><option>+971</option></select></label>
-            <label>10-digit phone (optional)<input name="phoneNumber" inputMode="numeric" pattern="[0-9]{10}" maxLength={10} /></label>
-          </div>
-        </>}
-        {mode === 'login' && <label>Password<input name="password" type="password" required maxLength={72} autoComplete="current-password" /></label>}
-        {mode === 'verify' && <label>Six-digit code<input name="code" inputMode="numeric" pattern="[0-9]{6}" minLength={6} maxLength={6} required autoComplete="one-time-code" defaultValue={initialCode} /></label>}
-        <button disabled={busy}>{busy ? 'Please wait…' : mode === 'signup' ? 'Create account' : mode === 'login' ? 'Sign in' : mode === 'verify' ? 'Verify email' : 'Send new code'}</button>
-      </form>
-      <p className="form-footer">{mode === 'signup' ? <>Already registered? <a href="/login">Sign in</a></> : mode === 'login' ? <>New to ETHcryptohub? <a href="/signup">Create an account</a><br /><a href="/resend-verification">Resend verification code</a></> : <> <a href="/login">Back to sign in</a></>}</p>
+      {mode === 'verify' ? (
+        <div className="stack">
+          <p>Use the confirmation link sent by Supabase. If it expired, request a new link.</p>
+          <Link href={`/resend-verification?email=${encodeURIComponent(email)}`}>Resend confirmation email</Link>
+        </div>
+      ) : (
+        <form className="stack" onSubmit={(event) => void submit(event)}>
+          {emailRequired && (
+            <label>
+              Email
+              <input
+                name="email"
+                type="email"
+                required
+                maxLength={255}
+                autoComplete="email"
+                value={email}
+                onChange={(event) => setEmail(event.target.value)}
+              />
+            </label>
+          )}
+          {mode === 'signup' && <>
+            <label>Password<input name="password" type="password" required minLength={8} maxLength={72} autoComplete="new-password" /></label>
+            <label>Full name (optional)<input name="fullName" maxLength={150} autoComplete="name" /></label>
+            <div className="grid">
+              <label>Country code<select name="countryCode" defaultValue="+91"><option>+91</option><option>+1</option><option>+44</option><option>+971</option></select></label>
+              <label>10-digit phone (optional)<input name="phoneNumber" inputMode="numeric" pattern="[0-9]{10}" maxLength={10} /></label>
+            </div>
+          </>}
+          {mode === 'login' && <label>Password<input name="password" type="password" required maxLength={72} autoComplete="current-password" /></label>}
+          {mode === 'reset-password' && <>
+            <label>New password<input name="password" type="password" required minLength={8} maxLength={72} autoComplete="new-password" /></label>
+            <label>Confirm new password<input name="confirmation" type="password" required minLength={8} maxLength={72} autoComplete="new-password" /></label>
+          </>}
+          <button disabled={busy}>{busy ? 'Please wait…'
+            : mode === 'signup' ? 'Create account'
+              : mode === 'login' ? 'Sign in'
+                : mode === 'resend' ? 'Send confirmation link'
+                  : mode === 'forgot-password' ? 'Send recovery link'
+                    : 'Update password'}</button>
+        </form>
+      )}
+      <p className="form-footer">
+        {mode === 'signup' ? <>Already registered? <Link href="/login">Sign in</Link></>
+          : mode === 'login' ? <>New to ETHcryptohub? <Link href="/signup">Create an account</Link><br /><Link href="/forgot-password">Forgot password?</Link><br /><Link href="/resend-verification">Resend confirmation</Link></>
+            : mode === 'reset-password' ? <Link href="/login">Back to sign in</Link>
+              : <Link href="/login">Back to sign in</Link>}
+      </p>
       {signupComplete && (
         <div className="auth-dialog-backdrop">
           <section className="auth-dialog" role="dialog" aria-modal="true" aria-labelledby="signup-success-title">
-            <h2 id="signup-success-title">Congratulations!</h2>
-            <p>Your account has been created, and an activation code was sent to <strong>{email}</strong>.</p>
-            <p>Enter the six-digit code to activate your account, then sign in.</p>
-            <button
-              autoFocus
-              onClick={() => router.push(`/verify-email?email=${encodeURIComponent(email)}`)}
-            >
-              Enter activation code
+            <h2 id="signup-success-title">Confirm your email</h2>
+            <p>If this address can be registered, Supabase will send a confirmation link to <strong>{email}</strong>.</p>
+            <p>Open the link to finish creating your account, then sign in.</p>
+            <button autoFocus onClick={() => router.push(`/login?email=${encodeURIComponent(email)}`)}>
+              Continue to sign in
             </button>
           </section>
         </div>

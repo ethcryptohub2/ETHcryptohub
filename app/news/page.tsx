@@ -7,5 +7,5 @@ export const dynamic = 'force-dynamic';
 export default async function NewsPage() {
   const user = await currentUser();
   if (!user) redirect('/login');
-  return <NewsFeed userId={user.id} />;
+  return <NewsFeed />;
 }

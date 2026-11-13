@@ -1,7 +1,6 @@
 'use client';
 
 /* eslint-disable @next/next/no-img-element -- Publisher image hosts are not known at build time. */
-import { createClient } from '@supabase/supabase-js';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 
 type NewsItem = {
@@ -100,7 +99,7 @@ async function csrfToken() {
   return body.data.csrfToken;
 }
 
-export function NewsFeed({ userId }: { userId: number }) {
+export function NewsFeed() {
   const [data, setData] = useState<FeedData | null>(null);
   const [categories, setCategories] = useState<Category[]>([]);
   const [preferences, setPreferences] = useState<Preferences | null>(null);
@@ -113,11 +112,7 @@ export function NewsFeed({ userId }: { userId: number }) {
   const [savingPreferences, setSavingPreferences] = useState(false);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
-  const [realtimeState, setRealtimeState] = useState(
-    process.env.NEXT_PUBLIC_SUPABASE_URL && process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
-      ? 'Connecting'
-      : 'Polling updates',
-  );
+  const updateStatus = 'Polling updates · refreshes every minute';
 
   const load = useCallback(async (quiet = false) => {
     if (!quiet) setLoading(true);
@@ -167,61 +162,6 @@ export function NewsFeed({ userId }: { userId: number }) {
       document.removeEventListener('visibilitychange', refreshVisible);
     };
   }, [load, loadPreferences]);
-
-  useEffect(() => {
-    const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
-    const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
-    if (!url || !anonKey) return;
-
-    let active = true;
-    let refreshTimer: number | undefined;
-    const client = createClient(url, anonKey, { auth: { persistSession: false, autoRefreshToken: false } });
-    const refreshAuth = async () => {
-      const response = await fetch('/api/news/realtime-token', { cache: 'no-store' });
-      const body = await response.json() as { data?: { token: string }; error?: string };
-      if (!response.ok || !body.data?.token) throw new Error(body.error ?? 'Realtime authentication is unavailable.');
-      await client.realtime.setAuth(body.data.token);
-    };
-    void refreshAuth().then(() => {
-      if (!active) return;
-      const channel = client.channel('published-news-feed')
-        .on('postgres_changes', {
-          event: 'INSERT',
-          schema: 'public',
-          table: 'news_articles',
-        }, () => { void load(); })
-        .on('postgres_changes', {
-          event: 'INSERT',
-          schema: 'public',
-          table: 'news_notifications',
-          filter: `user_id=eq.${userId}`,
-        }, () => { void load(); })
-        .subscribe((status) => {
-          if (!active) return;
-          setRealtimeState(status === 'SUBSCRIBED' ? 'Live updates on' : status === 'CHANNEL_ERROR' ? 'Polling updates · realtime unavailable' : 'Connecting');
-        });
-      refreshTimer = window.setInterval(() => {
-        void refreshAuth().catch((reason: unknown) => {
-          if (active) {
-            setRealtimeState('Reconnect required');
-            console.error('Realtime news token refresh failed:', reason);
-          }
-        });
-      }, 8 * 60_000);
-      return () => client.removeChannel(channel);
-    }).catch((reason: unknown) => {
-      if (active) {
-        setRealtimeState('Polling updates · realtime unavailable');
-        console.error('News realtime setup failed:', reason);
-      }
-    });
-
-    return () => {
-      active = false;
-      if (refreshTimer) window.clearInterval(refreshTimer);
-      void client.removeAllChannels();
-    };
-  }, [load, userId]);
 
   const availableCategories = useMemo(
     () => categories.filter((item) => preferences?.enabled_categories.includes(item.category_key)),
@@ -282,7 +222,7 @@ export function NewsFeed({ userId }: { userId: number }) {
     </section>
     <section className="card stack news-feed">
       <div className="news-feed-toolbar">
-        <div><strong>Latest updates</strong><span className="mono">{realtimeState}</span></div>
+        <div><strong>Latest updates</strong><span className="mono">{updateStatus}</span></div>
         <div className="links">
           <span className="news-unread-count" aria-live="polite">{data?.unreadCount ?? 0} unread</span>
           <button type="button" className="button-secondary" onClick={() => void markBreakingRead()} disabled={!data?.unreadCount}>Mark alerts read</button>
