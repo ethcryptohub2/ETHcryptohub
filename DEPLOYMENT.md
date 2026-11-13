@@ -29,8 +29,8 @@ The application no longer uses a PHP origin, PHP proxy, MySQL database, or PHP r
    - `supabase/migrations/202611100002_binance_demo_environments.sql`
    - `202611050002_smartexit.sql` is legacy and is not required by the current app. Do not drop its tables from an existing database; they may contain historical user data.
 3. Keep the database reachable only through server-side credentials. The app does not expose database credentials to browser code.
-4. On first access, the server can apply the matching scanner, subscriptions, notification, market-research, or scalping migration when a required feature table is missing. Manually applying migrations in order remains the recommended production setup.
-   The signal-history migration extends existing tables and therefore must be applied explicitly; the automatic missing-table migration helper does not upgrade existing tables.
+4. The application never applies schema migrations during startup or API requests. A missing table fails the request; apply reviewed migration files only through a separately approved administrative process.
+   The signal-history migration extends existing tables and must be applied explicitly as part of that process.
 5. Copy the PostgreSQL connection string or host, port, database name, user, and password from Supabase project settings.
 
 ## 2. Vercel
@@ -46,7 +46,7 @@ The application no longer uses a PHP origin, PHP proxy, MySQL database, or PHP r
 | `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Supabase publishable/anon key; safe for browser use only with the migration's RLS policies |
 | `SUPABASE_JWT_SECRET` | Private HS256 Supabase JWT signing secret used only to issue short-lived authenticated Realtime tokens; this implementation requires the project to accept HS256-signed JWTs. Never expose or use the service-role key in the browser |
 | `AUTH_SECRET` | At least 32 random characters |
-| `APP_URL` | Optional canonical public app origin for activation links, e.g. `https://cryptohub.vercel.app`; defaults to Vercel's production host |
+| `APP_URL` | Optional canonical origin for activation links. Preview uses its deployment `VERCEL_URL` and never falls back to the Production host |
 | `GMAIL_USER` | Gmail address used as the verification-email sender (optional if using Resend) |
 | `GMAIL_APP_PASSWORD` | Google App Password for `GMAIL_USER`; requires Google 2-Step Verification. Never use your normal Google password. |
 | `GMAIL_SMTP_PORT` | Optional Gmail SMTP port: `465` (SSL, default) or `587` (STARTTLS) |

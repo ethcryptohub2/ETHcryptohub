@@ -10,20 +10,33 @@ type MailTransportFailure = Error & {
   responseCode?: number;
 };
 
-function verificationLink(email: string, code: string) {
+export function verificationLink(email: string, code: string) {
   const configuredOrigin = process.env.APP_URL?.trim();
   const productionHost = process.env.VERCEL_PROJECT_PRODUCTION_URL?.trim();
   const deploymentHost = process.env.VERCEL_URL?.trim();
-  const origin = configuredOrigin
-    || (productionHost ? `https://${productionHost}` : deploymentHost ? `https://${deploymentHost}` : 'http://localhost:3000');
+  const vercelEnvironment = process.env.VERCEL_ENV;
+  if (vercelEnvironment === 'preview' && !configuredOrigin && !deploymentHost) {
+    throw new EmailDeliveryError('APP_URL or VERCEL_URL must identify the Preview origin.');
+  }
+  const vercelHost = vercelEnvironment === 'preview' ? deploymentHost : productionHost || deploymentHost;
+  const origin = configuredOrigin || (vercelHost ? `https://${vercelHost}` : 'http://localhost:3000');
   let url: URL;
   try {
     url = new URL('/verify-email', origin);
   } catch {
     throw new EmailDeliveryError('APP_URL must be a valid HTTP or HTTPS origin.');
   }
-  if (url.protocol !== 'https:' && url.hostname !== 'localhost') {
-    throw new EmailDeliveryError('APP_URL must use HTTPS in production.');
+  if (vercelEnvironment === 'preview' && productionHost) {
+    const productionOrigin = productionHost.startsWith('http') ? productionHost : `https://${productionHost}`;
+    if (url.hostname.toLowerCase() === new URL(productionOrigin).hostname.toLowerCase()) {
+      throw new EmailDeliveryError('Preview verification links must not use the Production host.');
+    }
+  }
+  const isDeployed = vercelEnvironment === 'preview' ||
+    vercelEnvironment === 'production' ||
+    process.env.NODE_ENV === 'production';
+  if (url.protocol !== 'https:' && !(url.hostname === 'localhost' && !isDeployed)) {
+    throw new EmailDeliveryError('APP_URL must use HTTPS in deployed environments.');
   }
   url.searchParams.set('email', email);
   url.searchParams.set('code', code);
