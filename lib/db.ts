@@ -1,3 +1,4 @@
+import { X509Certificate } from 'node:crypto';
 import { Pool, type PoolConfig, type QueryResultRow } from 'pg';
 import { assertDatabaseAccessAllowed, getUiPreviewFlagStatus } from './ui-preview-mode.mjs';
 
@@ -14,11 +15,30 @@ function validateSslMode(mode: string | undefined) {
   }
 }
 
-export function databaseSslOptions(hostname: string, mode = process.env.SUPABASE_DB_SSLMODE) {
+function certificateAuthority(certificate: string | undefined) {
+  const value = certificate?.trim();
+  if (!value) return undefined;
+
+  try {
+    if (!new X509Certificate(value).ca) throw new Error();
+  } catch {
+    throw new Error('SUPABASE_DB_CA_CERT must be a valid PEM-encoded CA certificate.');
+  }
+
+  return value;
+}
+
+export function databaseSslOptions(
+  hostname: string,
+  mode = process.env.SUPABASE_DB_SSLMODE,
+  caCertificate = process.env.SUPABASE_DB_CA_CERT,
+) {
   validateSslMode(mode);
+  const ca = certificateAuthority(caCertificate);
   return {
     rejectUnauthorized: true,
     servername: hostname,
+    ...(ca ? { ca } : {}),
   };
 }
 

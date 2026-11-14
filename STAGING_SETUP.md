@@ -36,6 +36,7 @@ In Vercel **Project Settings → Environment Variables**, set values by exact sc
 | `SMARTEXIT_PRODUCTION_BINANCE_CREDENTIALS_KEY_SHA256` | Required SHA-256 fingerprint of the Production encryption key; fingerprint only, never the key | Not needed | Not needed |
 | `SUPABASE_DB_URL` or `SUPABASE_DB_HOST`, `SUPABASE_DB_USER`, `SUPABASE_DB_PASSWORD` | Staging database only | Production database only | Local development database only |
 | `SUPABASE_DB_SSLMODE` | `verify-full` (default) or `require`; both enforce certificate and hostname verification. Insecure modes are rejected. | Same strict TLS requirement | Same strict TLS requirement |
+| `SUPABASE_DB_CA_CERT` | The Staging project's downloaded PEM CA certificate, only when needed to validate its database TLS chain | Production project's own CA certificate if required; never copy the Staging certificate | Local/test project's CA certificate if required |
 | `NEXT_PUBLIC_SUPABASE_URL` | Staging Supabase URL | Production Supabase URL | Local/test project URL |
 | `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Staging anon/publishable key | Production anon/publishable key | Local/test key |
 | `SUPABASE_SERVICE_ROLE_KEY` | Private Staging service-role key, required only when the approved Admin Demo authorization RPC is integrated | Do not configure for the Admin Demo feature | Local Supabase service-role key only |
@@ -63,6 +64,7 @@ To establish the key fingerprint without printing the key, compute SHA-256 over 
 1. Set `SMARTEXIT_STAGING_SUPABASE_PROJECT_REF` and `SMARTEXIT_PRODUCTION_SUPABASE_PROJECT_REF` to the independently verified references.
 2. Set `NEXT_PUBLIC_SUPABASE_URL` to the Staging project URL.
 3. Set the server database URL/host/user/password to that same Staging project. With a direct Supabase database hostname, use `db.<staging-ref>.supabase.co`; with a pooler, retain `postgres.<staging-ref>` in the username.
+   If Node cannot validate the pooler's certificate chain, download that project's CA from Project Settings → Database → SSL configuration and set it as `SUPABASE_DB_CA_CERT` in the matching Vercel environment. Keep certificate and hostname verification enabled; never disable `rejectUnauthorized`.
 4. The Vercel Preview build preflight runs automatically before `next build`. Review its sanitized output; it must fail closed if project refs do not match, required variables are absent, secrets are malformed or shared, or any execution gate is enabled.
 5. Inspect the sanitized preflight result and Vercel's environment-variable scope selection. Never print `.env` values or database URLs.
 6. Confirm the deployment URL is a Vercel Preview URL and that its environment has no Production credentials. This application-level project check cannot prove the contents of a database; inspect/sanitize the staging data using the approved operator process.
