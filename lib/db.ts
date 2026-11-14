@@ -7,12 +7,33 @@ function assertDatabaseAccessEnabled() {
   assertDatabaseAccessAllowed(process.env);
 }
 
-function sslOptions(hostname: string) {
-  const mode = process.env.SUPABASE_DB_SSLMODE?.trim().toLowerCase();
+function validateSslMode(mode: string | undefined) {
+  const normalizedMode = mode?.trim().toLowerCase();
+  if (normalizedMode && normalizedMode !== 'require' && normalizedMode !== 'verify-full') {
+    throw new Error('SUPABASE_DB_SSLMODE must be require or verify-full; certificate verification cannot be disabled.');
+  }
+}
+
+export function databaseSslOptions(hostname: string, mode = process.env.SUPABASE_DB_SSLMODE) {
+  validateSslMode(mode);
   return {
-    rejectUnauthorized: mode !== 'require',
+    rejectUnauthorized: true,
     servername: hostname,
   };
+}
+
+export function normalizeDatabaseConnectionString(
+  connectionString: string,
+  mode = process.env.SUPABASE_DB_SSLMODE,
+) {
+  const url = new URL(connectionString);
+  if (!['postgres:', 'postgresql:'].includes(url.protocol)) {
+    throw new Error('Database URL must use PostgreSQL.');
+  }
+  validateSslMode(mode);
+  validateSslMode(url.searchParams.get('sslmode') ?? undefined);
+  url.searchParams.delete('sslmode');
+  return { connectionString: url.toString(), hostname: url.hostname };
 }
 
 export function isDatabaseConfigured() {
@@ -30,11 +51,10 @@ function config(): PoolConfig {
   assertDatabaseAccessEnabled();
   const connectionString = process.env.SUPABASE_DB_URL ?? process.env.DATABASE_URL;
   if (connectionString) {
-    const url = new URL(connectionString);
-    if (!['postgres:', 'postgresql:'].includes(url.protocol)) throw new Error('Database URL must use PostgreSQL.');
+    const normalized = normalizeDatabaseConnectionString(connectionString);
     return {
-      connectionString,
-      ssl: sslOptions(url.hostname),
+      connectionString: normalized.connectionString,
+      ssl: databaseSslOptions(normalized.hostname),
       max: 1,
       idleTimeoutMillis: 5_000,
       connectionTimeoutMillis: 10_000,
@@ -54,7 +74,7 @@ function config(): PoolConfig {
     database: process.env.SUPABASE_DB_NAME ?? 'postgres',
     user,
     password,
-    ssl: sslOptions(host),
+    ssl: databaseSslOptions(host),
     max: 1,
     idleTimeoutMillis: 5_000,
     connectionTimeoutMillis: 10_000,

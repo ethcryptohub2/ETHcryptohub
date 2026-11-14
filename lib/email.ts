@@ -14,11 +14,12 @@ export function verificationLink(email: string, code: string) {
   const configuredOrigin = process.env.APP_URL?.trim();
   const productionHost = process.env.VERCEL_PROJECT_PRODUCTION_URL?.trim();
   const deploymentHost = process.env.VERCEL_URL?.trim();
+  const previewHost = process.env.VERCEL_BRANCH_URL?.trim() || deploymentHost;
   const vercelEnvironment = process.env.VERCEL_ENV;
-  if (vercelEnvironment === 'preview' && !configuredOrigin && !deploymentHost) {
-    throw new EmailDeliveryError('APP_URL or VERCEL_URL must identify the Preview origin.');
+  if (vercelEnvironment === 'preview' && !configuredOrigin && !previewHost) {
+    throw new EmailDeliveryError('APP_URL, VERCEL_BRANCH_URL, or VERCEL_URL must identify the Preview origin.');
   }
-  const vercelHost = vercelEnvironment === 'preview' ? deploymentHost : productionHost || deploymentHost;
+  const vercelHost = vercelEnvironment === 'preview' ? previewHost : productionHost || deploymentHost;
   const origin = configuredOrigin || (vercelHost ? `https://${vercelHost}` : 'http://localhost:3000');
   let url: URL;
   try {
@@ -43,11 +44,7 @@ export function verificationLink(email: string, code: string) {
   return url.toString();
 }
 
-export async function sendVerificationCode(email: string, code: string) {
-  const verifyUrl = verificationLink(email, code);
-  const text = `Your verification code is ${code}. It expires in 10 minutes.\n\nActivate your account: ${verifyUrl}`;
-  const htmlLink = verifyUrl.replace(/&/g, '&amp;');
-  const html = `<p>Your verification code is <strong>${code}</strong>. It expires in 10 minutes.</p><p><a href="${htmlLink}">Activate your ETHcryptohub account</a></p>`;
+async function sendEmail(email: string, subject: string, text: string, html: string) {
   const gmailUser = process.env.GMAIL_USER?.trim();
   const gmailAppPassword = process.env.GMAIL_APP_PASSWORD?.replace(/\s/g, '');
   if (gmailUser || gmailAppPassword) {
@@ -75,14 +72,14 @@ export async function sendVerificationCode(email: string, code: string) {
       await transporter.sendMail({
         from: { name: 'ETHcryptohub', address: gmailUser },
         to: email,
-        subject: 'Your ETHcryptohub verification code',
+        subject,
         text,
         html,
       });
       return;
     } catch (error) {
       const failure = error instanceof Error ? error as MailTransportFailure : null;
-      console.error('Gmail verification email delivery failed:', {
+      console.error('Gmail authentication email delivery failed:', {
         errorName: error instanceof Error ? error.name : 'UnknownError',
         code: failure?.code,
         command: failure?.command,
@@ -114,7 +111,7 @@ export async function sendVerificationCode(email: string, code: string) {
       body: JSON.stringify({
         from,
         to: [email],
-        subject: 'Your ETHcryptohub verification code',
+        subject,
         text,
         html,
       }),
@@ -125,4 +122,18 @@ export async function sendVerificationCode(email: string, code: string) {
     if (error instanceof EmailDeliveryError) throw error;
     throw new EmailDeliveryError('Email delivery provider could not be reached.');
   }
+}
+
+export async function sendVerificationCode(email: string, code: string) {
+  const verifyUrl = verificationLink(email, code);
+  const text = `Your verification code is ${code}. It expires in 10 minutes.\n\nActivate your account: ${verifyUrl}`;
+  const htmlLink = verifyUrl.replace(/&/g, '&amp;');
+  const html = `<p>Your verification code is <strong>${code}</strong>. It expires in 10 minutes.</p><p><a href="${htmlLink}">Activate your ETHcryptohub account</a></p>`;
+  await sendEmail(email, 'Your ETHcryptohub verification code', text, html);
+}
+
+export async function sendPasswordResetCode(email: string, code: string) {
+  const text = `Your password reset code is ${code}. It expires in 10 minutes. If you did not request this, you can ignore this email.`;
+  const html = `<p>Your password reset code is <strong>${code}</strong>. It expires in 10 minutes.</p><p>If you did not request this, you can ignore this email.</p>`;
+  await sendEmail(email, 'Your ETHcryptohub password reset code', text, html);
 }

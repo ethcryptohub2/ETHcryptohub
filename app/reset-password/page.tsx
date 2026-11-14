@@ -1,10 +1,10 @@
-import { redirect } from 'next/navigation';
 import { AuthForm } from '../auth-form';
-import { currentUser } from '../../lib/auth';
 
-export const dynamic = 'force-dynamic';
-
-export default async function ResetPasswordPage() {
-  if (!(await currentUser())) redirect('/forgot-password');
-  return <AuthForm mode="reset-password" />;
+export default async function ResetPasswordPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ email?: string; code?: string }>;
+}) {
+  const params = await searchParams;
+  return <AuthForm mode="reset" initialEmail={params.email ?? ''} initialCode={params.code ?? ''} />;
 }

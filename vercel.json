@@ -1,19 +1,5 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "framework": "nextjs",
-  "regions": ["bom1"],
-  "crons": [
-    {
-      "path": "/api/cron/signal-scan",
-      "schedule": "0 0 * * *"
-    },
-    {
-      "path": "/api/cron/high-risk-scalping",
-      "schedule": "30 0 * * *"
-    },
-    {
-      "path": "/api/cron/news-ingest",
-      "schedule": "0 1 * * *"
-    }
-  ]
+  "regions": ["bom1"]
 }

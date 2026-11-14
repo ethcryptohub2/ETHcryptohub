@@ -1,9 +1,15 @@
 # Deployment
 
+For isolated Supabase Staging and Vercel Preview configuration, required project-reference checks, key separation, and preflight behavior, see [STAGING_SETUP.md](./STAGING_SETUP.md). For offline migration file validation, backup, restore, and read-only SQL verification, see [docs/DATABASE-SAFETY.md](./docs/DATABASE-SAFETY.md).
+
+Current `functional-staging` target: Supabase Staging project `ghecpkpaxbrvehquhzkr`, Preview branch origin `https://cryptohub-git-functional-staging-eth-cryptohub.vercel.app`, and separate Production project `kafsdnzzjawikoavkhvm`. The current release must not modify Production or `main`; keep trading and CRON disabled. Do not apply migration `202611100003_multi_exchange_foundation.sql` or migrations `202611110001`–`202611110005`; the first seeds enabled Binance providers and later migrations depend on it. Verify the Staging migration ledger and backup through approved read-only access before any migration.
+
+The Admin Binance Demo migrations (`202611110004_admin_binance_demo_testing.sql` and `202611110005_admin_binance_demo_rpc_grant.sql`) are review-only until a separately approved Staging migration window. A server-only Supabase RPC adapter now targets the fixed authorization function, but it is not called by an Admin execution route; the isolated repository and test-start adapter remain unimplemented. These files do not enable Admin orders or customer execution.
+
 ## Architecture
 
 - **Vercel:** Next.js web application and server routes.
-- **Supabase:** PostgreSQL database for users, sessions, rate limits, and encrypted Binance API credentials.
+- **Supabase:** PostgreSQL database for users, sessions, rate limits, and encrypted exchange API credentials.
 - **Resend:** email verification delivery.
 - **Vercel Cron + Web Push:** scheduled signal evaluation, per-user notification delivery, and browser push subscriptions.
 
@@ -11,10 +17,11 @@ The application no longer uses a PHP origin, PHP proxy, MySQL database, or PHP r
 
 ## 1. Supabase
 
-1. Create a Supabase project and keep its database credentials private.
-2. Apply these migrations in order using the SQL editor or a trusted migration runner:
+1. For a new environment, create a dedicated Supabase project and keep its database credentials private. For this Staging release, use only the existing project identified above.
+2. For a new environment, apply these migrations in order with an approved authenticated migration runner:
    - `supabase/migrations/202611050001_initial_schema.sql`
    - `supabase/migrations/202611050003_nextjs_auth.sql`
+   - `supabase/migrations/202611050004_password_recovery.sql`
    - `supabase/migrations/202611060001_market_research.sql`
    - `supabase/migrations/202611060002_signal_notifications.sql`
    - `supabase/migrations/202611060003_scanner_coin_management.sql`
@@ -27,10 +34,17 @@ The application no longer uses a PHP origin, PHP proxy, MySQL database, or PHP r
    - `supabase/migrations/202611090002_news_article_images.sql`
    - `supabase/migrations/202611100001_live_futures_trading.sql`
    - `supabase/migrations/202611100002_binance_demo_environments.sql`
+   - `supabase/migrations/202611140001_password_recovery.sql`
    - `202611050002_smartexit.sql` is legacy and is not required by the current app. Do not drop its tables from an existing database; they may contain historical user data.
 3. Keep the database reachable only through server-side credentials. The app does not expose database credentials to browser code.
 4. The application never applies schema migrations during startup or API requests. A missing table fails the request; apply reviewed migration files only through a separately approved administrative process.
    The signal-history migration extends existing tables and must be applied explicitly as part of that process.
+   The current `functional-staging` release includes the non-destructive `202611140001_password_recovery.sql` migration after the existing auth and trading schema. An earlier operator report says 15 migrations are applied through `202611100002_binance_demo_environments.sql`; verify that ledger and the recovery point before applying the pending recovery migration.
+   Do not apply `202611100003_multi_exchange_foundation.sql` or migrations `202611110001`–`202611110005`; the first seeds Binance customer and Demo providers as enabled, and dependent migrations are outside this release.
+   Those later migrations are not automatically applied. Any future use requires separate review and approval, a verified backup, a migration-ledger check, and a matching application release. Keep all customer execution disabled.
+   The strategy profile migration is also manual and depends on migration 003. It preserves current Binance settings in the existing settings tables and copies the active Binance profile into Standard with the strategy disabled until explicit position and daily-loss limits are configured. High-Risk profiles start disabled. Apply it only after backing up and reviewing both pending multi-exchange migrations.
+   The Binance protection lifecycle migration depends on migrations 003 and 110001 and records the native TP1-activated trailing order plus reconciliation locks. Apply it manually after backup; the app does not apply it automatically.
+   The credential environment confirmation migration depends on migrations 100002 and 100003. It marks pre-existing encrypted credentials as requiring re-entry into their explicit Demo or Live slot; their ciphertext is preserved, but those records cannot be used until the account owner re-enters credentials for the selected environment. Apply it after the other trading migrations before deploying the matching application code.
 5. Copy the PostgreSQL connection string or host, port, database name, user, and password from Supabase project settings.
 
 ## 2. Vercel
@@ -41,12 +55,13 @@ The application no longer uses a PHP origin, PHP proxy, MySQL database, or PHP r
 | Variable | Requirement |
 |---|---|
 | `SUPABASE_DB_URL` | Supabase Transaction Pooler connection string (port `6543`) for Vercel/serverless; or use `SUPABASE_DB_HOST`, `SUPABASE_DB_PORT=6543`, `SUPABASE_DB_NAME`, `SUPABASE_DB_USER`, and `SUPABASE_DB_PASSWORD` with the Transaction Pooler host |
-| `SUPABASE_DB_SSLMODE` | `require` enables TLS encryption without certificate verification; unset to verify the server certificate using Node's trusted CAs |
-| `NEXT_PUBLIC_SUPABASE_URL` | Supabase project URL; public project metadata used by the browser Realtime client |
+| `SUPABASE_DB_SSLMODE` | `verify-full` (recommended) or `require`; both enforce TLS with CA and hostname verification. Unset also verifies. Insecure modes are rejected. |
+| `NEXT_PUBLIC_SUPABASE_URL` | Supabase project URL; checked against the approved environment's project reference |
 | `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Supabase publishable/anon key; safe for browser use only with the migration's RLS policies |
-| `SUPABASE_JWT_SECRET` | Private HS256 Supabase JWT signing secret used only to issue short-lived authenticated Realtime tokens; this implementation requires the project to accept HS256-signed JWTs. Never expose or use the service-role key in the browser |
+| `SUPABASE_SERVICE_ROLE_KEY` | Server-only Staging key for the Admin authorization RPC after its migrations and execution integration are approved; never expose to browser code |
+| `SUPABASE_JWT_SECRET` | Not used. News updates use the authenticated server API and do not mint custom Supabase JWTs. Do not configure the legacy JWT secret. |
 | `AUTH_SECRET` | At least 32 random characters |
-| `APP_URL` | Optional canonical origin for activation links. Preview uses its deployment `VERCEL_URL` and never falls back to the Production host |
+| `APP_URL` | Set to the exact approved Preview origin for staging verification links. Without it, Preview prefers `VERCEL_BRANCH_URL` and never falls back to the Production host |
 | `GMAIL_USER` | Gmail address used as the verification-email sender (optional if using Resend) |
 | `GMAIL_APP_PASSWORD` | Google App Password for `GMAIL_USER`; requires Google 2-Step Verification. Never use your normal Google password. |
 | `GMAIL_SMTP_PORT` | Optional Gmail SMTP port: `465` (SSL, default) or `587` (STARTTLS) |
@@ -65,10 +80,10 @@ The application no longer uses a PHP origin, PHP proxy, MySQL database, or PHP r
 | `SUBSCRIPTION_CONTACT_EMAIL` | Optional support address displayed for manual premium-payment instructions |
 
 3. Deploy and verify the landing page and account routes. Apply database migrations before testing signup or login.
-4. Create the first admin through `/admin/setup`: add a private `ADMIN_SETUP_TOKEN` of at least 32 characters to the Vercel Production environment, redeploy, then create the administrator with a strong password. Remove `ADMIN_SETUP_TOKEN` and redeploy after provisioning. Admins can manually mark a pending user's email as verified from `/admin`; confirm the account belongs to the user before using this bypass.
-5. On the free Vercel Hobby plan, configure the GitHub repository Actions secret `CRON_SECRET` to the same value as the Vercel Production environment variable. Separate GitHub Actions workflows call the protected standard signal scan every 15 minutes and the high-risk scalping scan every 5 minutes. GitHub scheduled workflows can be delayed, and the standard free private-repository Actions allowance is shared across workflows. Vercel itself is configured with a once-daily backup invocation for each scanner because Hobby does not support more frequent Vercel Cron schedules.
-6. Apply `supabase/migrations/202611070003_news_platform.sql`, `supabase/migrations/202611070004_seed_news_sources.sql`, `supabase/migrations/202611090001_enable_trusted_news_autopublishing.sql`, and `supabase/migrations/202611090002_news_article_images.sql`. The trusted-publishing migration enables the platform auto-publishing gate and marks only the seeded CoinDesk and Cointelegraph RSS endpoints trusted and auto-publish enabled; other sources still require explicit trust and auto-publish configuration. Newly fetched articles from eligible sources are published only after the ingestion pipeline verifies and stores them. The image migration adds the nullable `image_url` column used by the redesigned news feed. In Supabase, confirm `news_articles` and `news_notifications` are in the `supabase_realtime` publication. The news migration adds tables, indexes, policies and publication membership when available. Policies use a short-lived signed `app_user_id` claim issued only after the app's verified session check; the browser receives only the anon key and never the JWT secret.
-7. Set `NEXT_PUBLIC_SUPABASE_URL` and `NEXT_PUBLIC_SUPABASE_ANON_KEY` to the project URL and publishable/anon key. Set the private `SUPABASE_JWT_SECRET` to the project JWT signing secret. Do not use a service-role key for browser Realtime.
+4. Create the first staging admin through `/admin/setup` only after Staging schema and Preview settings are verified: configure a private `ADMIN_SETUP_TOKEN` in the Vercel Preview scope, create the administrator with a strong password, then remove the token. Never add this token to Production for the Staging release.
+5. Keep Staging CRON disabled. Production scan schedules described below are not authorization to configure or run Staging workflows; do not enable any staging CRON variable, GitHub workflow, or Vercel schedule for this release.
+6. Apply `supabase/migrations/202611070003_news_platform.sql`, `supabase/migrations/202611070004_seed_news_sources.sql`, `supabase/migrations/202611090001_enable_trusted_news_autopublishing.sql`, and `supabase/migrations/202611090002_news_article_images.sql`. The trusted-publishing migration enables the platform auto-publishing gate and marks only the seeded CoinDesk and Cointelegraph RSS endpoints trusted and auto-publish enabled; other sources still require explicit trust and auto-publish configuration. Newly fetched articles from eligible sources are published only after the ingestion pipeline verifies and stores them. The image migration adds the nullable `image_url` column used by the redesigned news feed. The feed polls the authenticated server API; it does not open a browser Realtime connection or mint custom Supabase JWTs.
+7. Set `NEXT_PUBLIC_SUPABASE_URL` and `NEXT_PUBLIC_SUPABASE_ANON_KEY` to the project URL and publishable/anon key. The news feed polls the authenticated server API; it does not mint custom Supabase JWTs or use a browser Realtime connection. Never expose a service-role key to the browser.
 8. Configure the GitHub Actions `CRON_SECRET` secret to match Vercel. The news workflow attempts ingestion every 15 minutes; the Vercel Hobby cron is a once-daily backup. Provider and platform intervals can reduce fetch frequency further. Check `/admin` → News feed management for each source's last success/error and the ingestion log if scheduled imports do not run.
 
 ## 3. Email and exchange safeguards
@@ -127,3 +142,34 @@ The code build and public Demo market-data reachability are not evidence that th
 7. Confirm paper-trading and wallet routes return `410 Gone`. Keep Futures order submission locked unless the full Demo acceptance checklist above has passed.
 
 Do not treat a successful Vercel build or local server as proof of production deployment. Public deployment also requires the GitHub push, Vercel project configuration, applied database migrations, and private provider credentials.
+
+## Multi-exchange release status and rollback
+
+- The multi-exchange schema is additive for credentials, preferences, per-exchange settings, provider control, and Admin test events. It copies existing Binance credentials/settings and keeps Binance executions labeled `BINANCE`; verify row counts and a database backup before applying it.
+- Before applying `202611100003_multi_exchange_foundation.sql`, disable order submission through the existing Binance deployment gates and take a restorable Supabase backup/PITR recovery point. Apply the migration manually as part of the matching release; the application does not apply it automatically.
+- After migration, verify the `trade_executions.exchange` column, Binance Demo/Live records, and Admin Exchange Control before enabling any order path. Keep Binance gates unchanged/off during validation. Never enable Bybit customer trading or any new Live provider as part of this release.
+- Bybit Demo uses the fixed `https://api-demo.bybit.com` host. Its encrypted credentials reuse `BINANCE_CREDENTIALS_KEY`; no Bybit-specific endpoint or encryption environment variable is accepted. Remote Demo tests require an administrator-owned Bybit Demo API key with read and derivatives-trading permissions only. Remote API tests are not run by the automated suite.
+- Strategy profiles require `max_open_positions` and `max_daily_loss_percent` before enabling. The profile UI and storage do not make Bybit customer trading or any Live execution available. Binance customer execution remains locked until the native trailing order, reconciliation, and recovery paths pass remote Demo verification.
+- The current application deliberately refuses to enable or execute either customer strategy: the Binance Demo TP/SL lifecycle still requires remote Demo verification and operational scheduling, High-Risk lacks a verified customer execution lifecycle, and execution previews report `canExecute: false`. Do not change deployment gates or database profile flags to bypass this application gate.
+- Binance Demo entries install the initial stop, full-position TP3 close, and a reduce-only 1% trailing-stop market order with TP1 as its activation price. The CRON-protected route `/api/cron/binance-protection` reconciles Demo positions and protections, closes residual positions reduce-only if protection is missing, and cancels stored protective orders only after Binance confirms the position is flat. The GitHub Actions workflow invokes it every five minutes; scheduled workflow delays are possible, so monitor failures and keep native exchange protection active independently. It is not added to Vercel Cron because the current Hobby configuration supports only daily Vercel schedules.
+- The reconciler verifies the trailing algo order's active status, activation price, 1% callback rate, side, and full-position quantity. The app does not obtain Binance's dynamically changing internal trailing trigger price or exact activation event from that order query; TP1/TP2 history timestamps are sampled during reconciliation, not exchange event timestamps. Do not represent these values as an exact current trailing stop price or as evidence of remote validation.
+- The scheduled GitHub Actions reconciler is disabled unless repository variable `SMARTEXIT_CRON_RECONCILIATION_ENABLED=true`, repository variable `SMARTEXIT_CRON_TARGET_ENVIRONMENT=staging`, and secrets `CRON_SECRET`, `SMARTEXIT_CRON_BASE_URL`, and `SMARTEXIT_STAGING_PREVIEW_URL` are configured. The workflow requires an exact HTTPS Preview-origin match and manual dispatch confirmation. Keep it disabled until the Staging database, Preview routes, and Demo lifecycle are separately verified; never point it at Production.
+- OKX, Bitget, and Gate.io remain `NOT IMPLEMENTED — DISABLED`. Before future adapters are enabled, verify each exchange's current official API docs for credential fields, signature/timestamp rules, Demo/Testnet endpoints, quantity filters, position mode, protection, and reconciliation behavior. Their registry endpoints are not evidence of readiness.
+
+### Staging migration procedure
+
+1. Use only Supabase Staging project `ghecpkpaxbrvehquhzkr` and confirm the Preview deployment targets that project; never paste credentials into source control or chat.
+2. Verify the migration ledger and a restorable backup/PITR point through approved authenticated CLI/MCP tooling. Do not use the SQL Editor. The earlier report of 15 migrations applied through `202611100002_binance_demo_environments.sql` remains unverified.
+3. If and only if `202611140001_password_recovery.sql` is absent from the ledger, apply that non-destructive migration with the approved migration runner. It creates a reset-code table, enables RLS, and revokes direct `anon`/`authenticated` access.
+4. Run `supabase/verification/202611140001_password_recovery.sql` read-only and confirm RLS is enabled with no grants to `anon` or `authenticated`. Do not select or report reset-code values.
+5. Do not apply `202611100003_multi_exchange_foundation.sql` or `202611110001`–`202611110005`; migration 003 seeds customer and Demo Binance providers as enabled and later migrations are outside this release.
+6. Keep trading, Demo execution, automatic orders, and CRON disabled. Do not restore or mutate Production data or switch to `main`.
+
+### Rollback
+
+1. Immediately turn off the Binance order-submission deployment gates and any provider/environment access, then stop traffic to order routes.
+2. If the migration has **not** been applied, roll the application back normally; no database rollback is needed.
+3. If the migration **has** been applied, do not roll back only the application: the previous release targets the old `trade_executions` uniqueness constraint. Restore the verified pre-migration Supabase recovery point first, then roll back the application to the matching release.
+4. If restoring a snapshot is not possible, keep order routes disabled and deploy a reviewed forward-fix/rollback migration made against a backup of the actual schema and data. Do not drop the new tables, remove exchange history, or guess at constraint changes in production.
+5. Re-verify Binance credential rows, settings, execution history, and Demo/Live isolation before reopening any order route. Keep all new exchange and Live trading paths disabled.
+6. Migrations `202611110001_strategy_profiles.sql` and `202611110002_binance_protection_lifecycle.sql` are additive and can be rolled back only with a reviewed SQL script and a verified pre-migration backup. Because they add profile, order, and lifecycle metadata, do not drop their columns or tables if post-migration records exist; restore the pre-migration recovery point or use a reviewed forward fix instead.
