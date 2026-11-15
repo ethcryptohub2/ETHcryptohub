@@ -24,10 +24,11 @@ const balanceRowSchema = z.object({
 const credentialsSchema = z.object({
   api_key_ciphertext: z.string().min(1),
   api_secret_ciphertext: z.string().min(1),
+  environment_confirmed: z.boolean(),
 });
 
 export class BinanceFuturesError extends Error {
-  constructor(message: string, readonly status = 502) {
+  constructor(message: string, readonly status = 502, readonly exchangeCode?: number) {
     super(message);
     this.name = 'BinanceFuturesError';
   }
@@ -49,13 +50,19 @@ export function tradingExecutionGate(environment: TradingEnvironment) {
 async function getCredentials(userId: number, environment: TradingEnvironment) {
   if (!isTradingEnvironment(environment)) throw new BinanceFuturesError('Invalid Binance environment.', 422);
   const result = await query(
-    `SELECT api_key_ciphertext, api_secret_ciphertext
+    `SELECT api_key_ciphertext, api_secret_ciphertext, environment_confirmed
        FROM public.binance_api_credentials WHERE user_id = $1 AND environment = $2`,
     [userId, environment],
   );
   const parsed = credentialsSchema.safeParse(result.rows[0]);
   if (!parsed.success) {
     throw new BinanceFuturesError(`Save ${environment === 'DEMO' ? 'Demo' : 'Live'} Binance API credentials before using this environment.`, 400);
+  }
+  if (!parsed.data.environment_confirmed) {
+    throw new BinanceFuturesError(
+      `Re-enter the ${environment === 'DEMO' ? 'Demo' : 'Live'} Binance credentials in the matching environment to confirm their endpoint before use.`,
+      409,
+    );
   }
   try {
     return {
@@ -74,6 +81,7 @@ async function signedRequest<T>(
   parameters: Record<string, string>,
   apiKey: string,
   apiSecret: string,
+  transport: typeof fetch = fetch,
 ): Promise<T> {
   const params = new URLSearchParams({
     ...parameters,
@@ -83,7 +91,7 @@ async function signedRequest<T>(
   const signature = createHmac('sha256', apiSecret).update(params.toString()).digest('hex');
   let response: Response;
   try {
-    response = await fetch(`${baseUrl}${path}?${params.toString()}&signature=${signature}`, {
+    response = await transport(`${baseUrl}${path}?${params.toString()}&signature=${signature}`, {
       method,
       headers: { 'X-MBX-APIKEY': apiKey, Accept: 'application/json' },
       cache: 'no-store',
@@ -97,15 +105,18 @@ async function signedRequest<T>(
     const message = typeof body === 'object' && body !== null && 'msg' in body && typeof body.msg === 'string'
       ? body.msg.slice(0, 240)
       : 'Binance rejected the Futures request.';
-    throw new BinanceFuturesError(message, 502);
+    const exchangeCode = typeof body === 'object' && body !== null && 'code' in body && typeof body.code === 'number'
+      ? body.code
+      : undefined;
+    throw new BinanceFuturesError(message, 502, exchangeCode);
   }
   return body as T;
 }
 
-async function publicRequest<T>(baseUrl: string, path: string): Promise<T> {
+async function publicRequest<T>(baseUrl: string, path: string, transport: typeof fetch = fetch): Promise<T> {
   let response: Response;
   try {
-    response = await fetch(`${baseUrl}${path}`, {
+    response = await transport(`${baseUrl}${path}`, {
       cache: 'no-store',
       signal: AbortSignal.timeout(10_000),
     });
@@ -115,6 +126,25 @@ async function publicRequest<T>(baseUrl: string, path: string): Promise<T> {
   const body: unknown = await response.json().catch(() => null);
   if (!response.ok) throw new BinanceFuturesError('Binance Futures market information is unavailable for the selected environment.', 502);
   return body as T;
+}
+
+export type BinanceCredentialPair = { apiKey: string; apiSecret: string };
+
+export function createFixedBinanceDemoClient(
+  credentials: BinanceCredentialPair,
+  transport: typeof fetch = fetch,
+) {
+  const baseUrl = 'https://demo-fapi.binance.com';
+  return {
+    environment: 'DEMO' as const,
+    baseUrl,
+    request: <T>(
+      method: 'GET' | 'POST' | 'DELETE',
+      path: string,
+      parameters: Record<string, string> = {},
+    ) => signedRequest<T>(baseUrl, method, path, parameters, credentials.apiKey, credentials.apiSecret, transport),
+    publicRequest: <T>(path: string) => publicRequest<T>(baseUrl, path, transport),
+  };
 }
 
 export async function createBinanceEnvironmentAdapter(userId: number, environment: TradingEnvironment) {

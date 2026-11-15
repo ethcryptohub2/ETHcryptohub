@@ -920,3 +920,26 @@ html[data-theme='dark'] .admin-diagnostic-item.is-warning .admin-diagnostic-titl
 html[data-theme='dark'] .admin-diagnostic-item.is-error .admin-diagnostic-title span { color:#fca5a5; }
 html[data-theme='dark'] .admin-push-failures h3 { color:#fda4af; }
 html[data-theme='dark'] .scanner-status.is-warning,html[data-theme='dark'] .scanner-status.is-error { border-color:#7f1d1d; background:#450a0a; color:#fecaca; }
+
+.strategy-management h2,.strategy-profile h3 { margin:0; color:var(--text-primary); }
+.strategy-management header .muted { max-width:860px; line-height:1.55; }
+.strategy-table-wrap { overflow-x:auto; border:1px solid var(--surface-border); border-radius:12px; }
+.strategy-table { width:100%; min-width:980px; border-collapse:collapse; color:var(--text-primary); font-size:12px; }
+.strategy-table th,.strategy-table td { padding:12px; border-bottom:1px solid var(--surface-border); text-align:left; white-space:nowrap; }
+.strategy-table th { background:var(--surface-raised); color:var(--text-muted); font:500 10px 'DM Mono',monospace; text-transform:uppercase; }
+.strategy-table tbody tr:last-child td { border-bottom:0; }
+.strategy-profile { padding:18px; border:1px solid var(--surface-border); border-radius:14px; background:var(--surface-raised); scroll-margin-top:90px; }
+.strategy-profile .signal-detail-heading { align-items:center; }
+.strategy-fields { display:grid; grid-template-columns:repeat(auto-fit,minmax(190px,1fr)); gap:12px; }
+.strategy-fields input,.strategy-fields select { min-width:0; }
+.strategy-actions { display:flex; align-items:center; flex-wrap:wrap; gap:14px; }
+.strategy-actions .notification-toggle { display:flex; align-items:center; gap:8px; color:var(--text-primary); }
+.strategy-actions input[type="checkbox"] { width:16px; height:16px; margin:0; accent-color:var(--accent); }
+.strategy-actions button { margin-left:auto; }
+.strategy-note { margin:0; font-size:12px; line-height:1.5; }
+@media (max-width:760px) {
+  .strategy-table-wrap { margin-right:-8px; }
+  .strategy-profile { padding:14px; }
+  .strategy-actions { align-items:stretch; flex-direction:column; }
+  .strategy-actions button { margin-left:0; width:100%; }
+}

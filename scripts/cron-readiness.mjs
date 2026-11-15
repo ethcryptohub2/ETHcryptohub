@@ -31,7 +31,12 @@ export function inspectCronReadiness(env) {
   }
 
   const errors = [];
-  if (env.VERCEL_ENV !== 'preview' && env.SMARTEXIT_DEPLOYMENT_ENV !== 'staging') {
+  const vercelEnvironment = env.VERCEL_ENV?.trim().toLowerCase();
+  const explicitlyStaging = env.SMARTEXIT_DEPLOYMENT_ENV?.trim().toLowerCase() === 'staging';
+  if (
+    vercelEnvironment === 'production' ||
+    (vercelEnvironment !== 'preview' && !explicitlyStaging)
+  ) {
     errors.push('Protection reconciliation may only be enabled for the verified Staging Preview environment.');
   }
   if (env.SMARTEXIT_CRON_TARGET_ENVIRONMENT?.trim().toLowerCase() !== 'staging') {

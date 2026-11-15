@@ -7,6 +7,7 @@ type Environment = 'DEMO' | 'LIVE';
 export function BinanceForm() {
   const [environment, setEnvironment] = useState<Environment>('DEMO');
   const [configured, setConfigured] = useState(false);
+  const [environmentConfirmationRequired, setEnvironmentConfirmationRequired] = useState(false);
   const [apiKey, setApiKey] = useState('');
   const [apiSecret, setApiSecret] = useState('');
   const [message, setMessage] = useState('');
@@ -16,9 +17,12 @@ export function BinanceForm() {
     let active = true;
     void fetch(`/api/binance?environment=${environment}`, { cache: 'no-store' })
       .then(async (response) => {
-        const body = await response.json() as { data?: { configured: boolean }; error?: string };
+        const body = await response.json() as { data?: { configured: boolean; environmentConfirmationRequired?: boolean }; error?: string };
         if (!response.ok || !body.data) throw new Error(body.error ?? 'Could not load Binance settings.');
-        if (active) setConfigured(body.data.configured);
+        if (active) {
+          setConfigured(body.data.configured);
+          setEnvironmentConfirmationRequired(body.data.environmentConfirmationRequired ?? false);
+        }
       })
       .catch((reason: unknown) => {
         if (active) setError(reason instanceof Error ? reason.message : 'Could not load Binance settings.');
@@ -29,6 +33,7 @@ export function BinanceForm() {
   function selectEnvironment(next: Environment) {
     setEnvironment(next);
     setConfigured(false);
+    setEnvironmentConfirmationRequired(false);
     setApiKey('');
     setApiSecret('');
     setMessage('');
@@ -44,8 +49,16 @@ export function BinanceForm() {
       const response = await fetch('/api/binance', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrfBody.data.csrfToken }, body: JSON.stringify({ action, environment, ...(action === 'save' ? { apiKey, apiSecret } : {}) }) });
       const body = await response.json() as { data?: { configured?: boolean; connected?: boolean; environment?: Environment }; error?: string };
       if (!response.ok) throw new Error(body.error ?? 'Binance request failed.');
-      if (action === 'remove') setConfigured(false);
-      if (action === 'save') { setConfigured(true); setApiKey(''); setApiSecret(''); }
+      if (action === 'remove') {
+        setConfigured(false);
+        setEnvironmentConfirmationRequired(false);
+      }
+      if (action === 'save') {
+        setConfigured(true);
+        setEnvironmentConfirmationRequired(false);
+        setApiKey('');
+        setApiSecret('');
+      }
       setMessage(body.data?.connected ? `${environment === 'DEMO' ? 'Demo' : 'Live'} Binance account-read permission verified. No orders were placed.` : action === 'remove' ? `${environment === 'DEMO' ? 'Demo' : 'Live'} credentials removed.` : `${environment === 'DEMO' ? 'Demo' : 'Live'} credentials encrypted and saved.`);
     } catch (reason) { setError(reason instanceof Error ? reason.message : 'Binance request failed.'); }
     finally { setBusy(false); }
@@ -56,7 +69,14 @@ export function BinanceForm() {
       <button type="button" role="tab" aria-selected={environment === 'LIVE'} className={environment === 'LIVE' ? '' : 'button-secondary'} onClick={() => selectEnvironment('LIVE')}>Live API</button>
     </div>
     <p className="mono">{environment === 'DEMO' ? 'DEMO / VIRTUAL FUNDS' : 'LIVE / REAL FUNDS'}</p>
-    <p className="muted">{configured ? 'Credentials are stored; secret values cannot be viewed.' : `No ${environment === 'DEMO' ? 'Demo' : 'Live'} credentials are saved.`} Keep withdrawals disabled on the exchange API key.</p>
+    <p className={environmentConfirmationRequired ? 'scanner-warning' : 'muted'} role={environmentConfirmationRequired ? 'status' : undefined}>
+      {environmentConfirmationRequired
+        ? `A legacy credential exists for ${environment}, but its original environment cannot be verified. Re-enter the matching ${environment === 'DEMO' ? 'Demo' : 'Live'} credential before using it.`
+        : configured
+          ? 'Credentials are stored; secret values cannot be viewed.'
+          : `No ${environment === 'DEMO' ? 'Demo' : 'Live'} credentials are saved.`}
+      {' '}Keep withdrawals disabled on the exchange API key.
+    </p>
     <label>{environment === 'DEMO' ? 'Demo' : 'Live'} Binance API key<input autoComplete="off" value={apiKey} onChange={(e) => setApiKey(e.target.value)} minLength={20} maxLength={128} required /></label>
     <label>{environment === 'DEMO' ? 'Demo' : 'Live'} Binance API secret<input autoComplete="new-password" type="password" value={apiSecret} onChange={(e) => setApiSecret(e.target.value)} minLength={20} maxLength={128} required /></label>
     {message && <p className="success" role="status">{message}</p>}

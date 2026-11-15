@@ -139,18 +139,32 @@ export async function setAutoTradeEnabled(userId: number, environment: TradingEn
 
 export async function activateKillSwitch(userId: number, environment: TradingEnvironment) {
   await query(
-    `INSERT INTO public.user_trading_settings (
-       user_id, demo_auto_trade_enabled, demo_kill_switch_enabled,
-       live_auto_trade_enabled, live_kill_switch_enabled
-     ) VALUES (
-       $1, FALSE, $2 = 'DEMO', FALSE, $2 = 'LIVE'
+    `WITH stop_set AS (
+       INSERT INTO public.user_trading_settings (
+         user_id, demo_auto_trade_enabled, demo_kill_switch_enabled,
+         live_auto_trade_enabled, live_kill_switch_enabled
+       ) VALUES (
+         $1, FALSE, $2 = 'DEMO', FALSE, $2 = 'LIVE'
+       )
+       ON CONFLICT (user_id) DO UPDATE SET
+         demo_auto_trade_enabled = CASE WHEN $2 = 'DEMO' THEN FALSE ELSE user_trading_settings.demo_auto_trade_enabled END,
+         demo_kill_switch_enabled = CASE WHEN $2 = 'DEMO' THEN TRUE ELSE user_trading_settings.demo_kill_switch_enabled END,
+         live_auto_trade_enabled = CASE WHEN $2 = 'LIVE' THEN FALSE ELSE user_trading_settings.live_auto_trade_enabled END,
+         live_kill_switch_enabled = CASE WHEN $2 = 'LIVE' THEN TRUE ELSE user_trading_settings.live_kill_switch_enabled END,
+         updated_at = NOW()
+       RETURNING user_id
      )
-     ON CONFLICT (user_id) DO UPDATE SET
-       demo_auto_trade_enabled = CASE WHEN $2 = 'DEMO' THEN FALSE ELSE user_trading_settings.demo_auto_trade_enabled END,
-       demo_kill_switch_enabled = CASE WHEN $2 = 'DEMO' THEN TRUE ELSE user_trading_settings.demo_kill_switch_enabled END,
-       live_auto_trade_enabled = CASE WHEN $2 = 'LIVE' THEN FALSE ELSE user_trading_settings.live_auto_trade_enabled END,
-       live_kill_switch_enabled = CASE WHEN $2 = 'LIVE' THEN TRUE ELSE user_trading_settings.live_kill_switch_enabled END,
-       updated_at = NOW()`,
+     UPDATE public.trade_executions AS execution
+        SET error_message = CONCAT_WS(
+          '; ',
+          NULLIF(execution.error_message, ''),
+          'Emergency stop activated: new entries blocked; existing exchange protection retained and positions were not blindly closed.'
+        ),
+            updated_at = NOW()
+       FROM stop_set
+      WHERE execution.user_id = stop_set.user_id
+        AND execution.environment = $2
+        AND execution.execution_status IN ('EXECUTING', 'ENTRY_FILLED', 'PROTECTED', 'PROTECTION_FAILED')`,
     [userId, environment],
   );
   return getTradingSettings(userId);

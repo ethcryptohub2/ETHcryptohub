@@ -9,7 +9,12 @@ import { validCsrf } from '../../../lib/http';
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
-type Credentials = { api_key_ciphertext: string; api_secret_ciphertext: string; updated_at: string };
+type Credentials = {
+  api_key_ciphertext: string;
+  api_secret_ciphertext: string;
+  environment_confirmed: boolean;
+  updated_at: string;
+};
 const requestSchema = z.object({
   action: z.enum(['save', 'remove', 'test']),
   environment: z.enum(['DEMO', 'LIVE']),
@@ -19,7 +24,7 @@ const requestSchema = z.object({
 
 async function credentials(userId: number, environment: TradingEnvironment) {
   return query<Credentials>(
-    'SELECT api_key_ciphertext, api_secret_ciphertext, updated_at FROM public.binance_api_credentials WHERE user_id = $1 AND environment = $2',
+    'SELECT api_key_ciphertext, api_secret_ciphertext, environment_confirmed, updated_at FROM public.binance_api_credentials WHERE user_id = $1 AND environment = $2',
     [userId, environment],
   );
 }
@@ -33,7 +38,8 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({
       data: {
         environment: requested,
-        configured: Boolean(result.rows[0]),
+        configured: result.rows[0]?.environment_confirmed === true,
+        environmentConfirmationRequired: Boolean(result.rows[0] && !result.rows[0].environment_confirmed),
         updatedAt: result.rows[0]?.updated_at ?? null,
       },
     }, { headers: { 'Cache-Control': 'no-store' } });
@@ -69,11 +75,15 @@ export async function POST(request: NextRequest) {
       const apiKeyCiphertext = encryptCredential(apiKey.trim());
       const apiSecretCiphertext = encryptCredential(apiSecret.trim());
       await query(
-        `INSERT INTO public.binance_api_credentials (user_id, environment, api_key_ciphertext, api_secret_ciphertext, updated_at)
-         VALUES ($1, $2, $3, $4, NOW())
+        `INSERT INTO public.binance_api_credentials (
+           user_id, environment, api_key_ciphertext, api_secret_ciphertext,
+           environment_confirmed, updated_at
+         )
+         VALUES ($1, $2, $3, $4, TRUE, NOW())
          ON CONFLICT (user_id, environment) DO UPDATE SET
            api_key_ciphertext = EXCLUDED.api_key_ciphertext,
            api_secret_ciphertext = EXCLUDED.api_secret_ciphertext,
+           environment_confirmed = TRUE,
            updated_at = NOW()`,
         [user.id, environment, apiKeyCiphertext, apiSecretCiphertext],
       );

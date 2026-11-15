@@ -11,7 +11,11 @@
     "start": "next start",
     "typecheck": "tsc --noEmit",
     "lint": "eslint app lib",
-    "validate:ui-preview": "node scripts/validate-ui-preview-env.mjs"
+    "test:exchanges": "node --test lib/exchanges/*.test.mjs lib/*.test.mjs scripts/*.test.mjs",
+    "validate:migrations": "node scripts/validate-migrations.mjs",
+    "validate:deployment-env": "node scripts/validate-deployment-env.mjs",
+    "validate:ui-preview": "node scripts/validate-ui-preview-env.mjs",
+    "validate:staging-readiness": "node scripts/staging-readiness.mjs"
   },
   "dependencies": {
     "@supabase/ssr": "^0.12.7",

@@ -91,6 +91,7 @@ const adminLinks: NavigationLink[] = [
   { href: '/admin#admin-signal-management', label: 'Signal management', icon: 'activity' },
   { href: '/admin#admin-news', label: 'News management', icon: 'news' },
   { href: '/admin#admin-subscriptions', label: 'Subscriptions', icon: 'subscriptions' },
+  { href: '/admin/exchanges', label: 'Exchange control', icon: 'exchange' },
   { href: '/admin#admin-users', label: 'User management', icon: 'users' },
   { href: '/admin#system-diagnostics', label: 'System health', icon: 'system' },
 ];

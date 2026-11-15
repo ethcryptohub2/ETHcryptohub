@@ -39,10 +39,13 @@ function deploymentOrigin(env: AuthEnvironment): string {
     : env.VERCEL_ENV === 'production'
       ? env.VERCEL_PROJECT_PRODUCTION_URL?.trim()
       : '';
+  const stagingPreviewOrigin = env.VERCEL_ENV === 'preview'
+    ? env.SMARTEXIT_STAGING_PREVIEW_URL?.trim()
+    : '';
   const configuredOrigin = env.APP_URL?.trim();
-  const value = deploymentHost
+  const value = stagingPreviewOrigin || (deploymentHost
     ? (deploymentHost.startsWith('http') ? deploymentHost : `https://${deploymentHost}`)
-    : configuredOrigin || 'http://localhost:3000';
+    : configuredOrigin || 'http://localhost:3000');
 
   let url: URL;
   try {
@@ -64,7 +67,33 @@ function deploymentOrigin(env: AuthEnvironment): string {
 
   if (env.VERCEL_ENV === 'preview') {
     const productionHost = env.VERCEL_PROJECT_PRODUCTION_URL?.trim().replace(/^https?:\/\//i, '').replace(/\/.*$/, '');
-    if (!deploymentHost || (productionHost && url.host.toLowerCase() === productionHost.toLowerCase())) {
+    const branchHost = env.VERCEL_BRANCH_URL?.trim();
+    let branchOrigin = '';
+    if (branchHost) {
+      try {
+        const branchUrl = new URL(
+          /^https?:\/\//i.test(branchHost) ? branchHost : `https://${branchHost}`,
+        );
+        if (
+          branchUrl.protocol === 'https:' &&
+          !branchUrl.username &&
+          !branchUrl.password &&
+          (branchUrl.pathname === '/' || branchUrl.pathname === '') &&
+          !branchUrl.search &&
+          !branchUrl.hash
+        ) {
+          branchOrigin = branchUrl.origin;
+        }
+      } catch {
+        branchOrigin = '';
+      }
+    }
+    const stablePreviewMismatch = stagingPreviewOrigin && branchOrigin !== url.origin;
+    if (stablePreviewMismatch) {
+      throw new Error('SMARTEXIT_STAGING_PREVIEW_URL must match the VERCEL_BRANCH_URL origin.');
+    }
+    if ((!stagingPreviewOrigin && !deploymentHost) ||
+      (productionHost && url.host.toLowerCase() === productionHost.toLowerCase())) {
       throw new Error('Preview authentication callbacks must use a distinct Vercel Preview origin.');
     }
   }

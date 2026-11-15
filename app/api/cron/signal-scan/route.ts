@@ -16,6 +16,9 @@ function isAuthorized(request: NextRequest) {
 }
 
 export async function GET(request: NextRequest) {
+  if (process.env.VERCEL_ENV === 'preview') {
+    return NextResponse.json({ error: 'Scheduled jobs are disabled in Preview.' }, { status: 503 });
+  }
   if (!isAuthorized(request)) {
     return NextResponse.json({ error: 'Scheduled scan authorization failed.' }, { status: 401 });
   }
