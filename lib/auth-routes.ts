@@ -8,6 +8,9 @@ import { EmailDeliveryError, sendPasswordResetCode, sendVerificationCode } from 
 import { guardedPost, jsonError } from './http';
 
 const emailSchema = z.string().trim().email().max(255);
+const passwordResetNotice =
+  'A reset code will arrive only if the address is eligible and the email provider accepts delivery. If no code arrives, verify the address or try again later.';
+
 function requiredAuthSecret() {
   const secret = process.env.AUTH_SECRET ?? '';
   if (secret.length < 32) throw new Error('AUTH_SECRET must contain at least 32 characters.');
@@ -57,14 +60,30 @@ async function issueCode(userId: number, email: string) {
 
 async function issuePasswordResetCode(userId: number, email: string) {
   const code = String(randomInt(0, 1_000_000)).padStart(6, '0');
+  const codeHash = otpHash(userId, code);
   await query(
     `INSERT INTO public.auth_password_reset_codes (user_id, code_hash, expires_at, attempts, locked_until)
      VALUES ($1, $2, EXTRACT(EPOCH FROM NOW() + INTERVAL '10 minutes')::bigint, 0, NULL)
      ON CONFLICT (user_id) DO UPDATE SET code_hash = EXCLUDED.code_hash,
        expires_at = EXCLUDED.expires_at, attempts = 0, locked_until = NULL, created_at = NOW()`,
-    [userId, otpHash(userId, code)],
+    [userId, codeHash],
   );
-  await sendPasswordResetCode(email, code);
+  try {
+    await sendPasswordResetCode(email, code);
+  } catch (error) {
+    try {
+      await query(
+        'DELETE FROM public.auth_password_reset_codes WHERE user_id = $1 AND code_hash = $2',
+        [userId, codeHash],
+      );
+    } catch (cleanupError) {
+      console.error(
+        'Password reset code could not be invalidated after email delivery failed:',
+        cleanupError instanceof Error ? cleanupError.name : 'UnknownError',
+      );
+    }
+    throw error;
+  }
 }
 
 export async function authRoute(action: string, request: NextRequest) {
@@ -212,7 +231,7 @@ export async function authRoute(action: string, request: NextRequest) {
         await issuePasswordResetCode(user.id, email);
       }
       return NextResponse.json({
-        data: { notice: 'If an active verified account exists for this address, a reset code will be sent.' },
+        data: { notice: passwordResetNotice },
       }, { headers: { 'Cache-Control': 'no-store' } });
     }
 
@@ -313,7 +332,7 @@ export async function authRoute(action: string, request: NextRequest) {
       if (action === 'password-reset-request') {
         console.error('Password reset email delivery failed:', error.message);
         return NextResponse.json({
-          data: { notice: 'If an active verified account exists for this address, a reset code will be sent.' },
+          data: { notice: passwordResetNotice },
         }, { headers: { 'Cache-Control': 'no-store' } });
       }
       const signupFailed = action === 'signup';

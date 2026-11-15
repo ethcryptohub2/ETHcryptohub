@@ -10,6 +10,10 @@ type MailTransportFailure = Error & {
   responseCode?: number;
 };
 
+export function smtpAcceptedRecipient(accepted: readonly string[], email: string) {
+  return accepted.some((recipient) => recipient.toLowerCase() === email.toLowerCase());
+}
+
 export function verificationLink(email: string, code: string) {
   const configuredOrigin = process.env.APP_URL?.trim();
   const productionHost = process.env.VERCEL_PROJECT_PRODUCTION_URL?.trim();
@@ -69,15 +73,19 @@ async function sendEmail(email: string, subject: string, text: string, html: str
         greetingTimeout: 10_000,
         socketTimeout: 10_000,
       });
-      await transporter.sendMail({
+      const delivery = await transporter.sendMail({
         from: { name: 'ETHcryptohub', address: gmailUser },
         to: email,
         subject,
         text,
         html,
       });
+      if (!smtpAcceptedRecipient(delivery.accepted, email)) {
+        throw new EmailDeliveryError('Gmail SMTP did not accept the recipient address.');
+      }
       return;
     } catch (error) {
+      if (error instanceof EmailDeliveryError) throw error;
       const failure = error instanceof Error ? error as MailTransportFailure : null;
       console.error('Gmail authentication email delivery failed:', {
         errorName: error instanceof Error ? error.name : 'UnknownError',

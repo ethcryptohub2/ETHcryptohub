@@ -90,7 +90,7 @@ export function AuthForm({
       } else if (mode === 'reset') {
         setNotice('Password reset. You can now sign in with your new password.');
       } else {
-        setNotice(result.data?.notice ?? 'If an account exists for this address, a reset code will be sent.');
+        setNotice(result.data?.notice ?? 'A reset code will arrive only if the address is eligible and the email provider accepts delivery. If no code arrives, verify the address or try again later.');
       }
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : 'Request could not be completed.');
@@ -111,7 +111,7 @@ export function AuthForm({
       <h1>{title}</h1>
       <p className="muted">{mode === 'verify' || mode === 'reset'
         ? 'Enter the six-digit code sent to your email.'
-        : mode === 'forgot' ? 'We will send a reset code if an active verified account exists.'
+        : mode === 'forgot' ? 'A reset code is available only for eligible accounts when the email provider accepts delivery.'
           : 'Secure access to your trading intelligence terminal.'}</p>
       {emailVerified && <p className="success">Email verified. Sign in to continue.</p>}
       {error && <p role="alert" className="error">{error}</p>}
