@@ -1,5 +1,6 @@
 import { AuthError, requireUser } from '../../../../../lib/auth';
 import { BinanceFuturesError, getFuturesBalance } from '../../../../../lib/binance-futures';
+import { assertExchangeFoundationReady } from '../../../../../lib/exchanges/schema';
 import { getTradingSettings } from '../../../../../lib/trading-settings';
 
 export const runtime = 'nodejs';
@@ -8,6 +9,7 @@ export const dynamic = 'force-dynamic';
 export async function GET() {
   try {
     const user = await requireUser();
+    await assertExchangeFoundationReady();
     const settings = await getTradingSettings(user.id);
     const data = await getFuturesBalance(user.id, settings.active_environment);
     return Response.json({ data }, { headers: { 'Cache-Control': 'no-store' } });
