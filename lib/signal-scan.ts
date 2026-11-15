@@ -20,6 +20,10 @@ const SYMBOL_BATCH_SIZE = 10;
 const SYMBOL_SYNC_INTERVAL_MS = 15 * 60_000;
 const markets = new BinanceFuturesMarketsService();
 
+export type SignalScanOptions = {
+  executeAutomaticTrades?: boolean;
+};
+
 export class SignalScanError extends Error {
   constructor(message: string) {
     super(message);
@@ -27,7 +31,10 @@ export class SignalScanError extends Error {
   }
 }
 
-export async function runSignalScan(timeframeOverride?: typeof timeframes[number]) {
+export async function runSignalScan(
+  timeframeOverride?: typeof timeframes[number],
+  options: SignalScanOptions = {},
+) {
   const syncState = await getScannerSyncState();
   const lastAttempt = syncState?.last_attempt_at ? Date.parse(syncState.last_attempt_at) : 0;
   if (!lastAttempt || Date.now() - lastAttempt >= SYMBOL_SYNC_INTERVAL_MS) {
@@ -69,7 +76,9 @@ export async function runSignalScan(timeframeOverride?: typeof timeframes[number
   await saveScannerCandidates(result.candidates);
   const persisted = await persistSignalScan(result.candidates, settings);
   await processSignalLifecycle(marketSnapshot);
-  await processNewAutomaticTrades(persisted.createdSignalIds);
+  if (options.executeAutomaticTrades !== false) {
+    await processNewAutomaticTrades(persisted.createdSignalIds);
+  }
   await flushSignalNotifications();
   return {
     timeframe,

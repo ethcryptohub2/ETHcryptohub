@@ -91,7 +91,10 @@ export async function POST(request: NextRequest) {
       action.action === 'sync_now' || action.action === 'scan_now' ? 'sync' : 'write',
     );
     if (action.action === 'scan_now') {
-      return NextResponse.json({ data: await runSignalScan('15m') }, { headers: { 'Cache-Control': 'no-store' } });
+      return NextResponse.json(
+        { data: await runSignalScan('15m', { executeAutomaticTrades: false }) },
+        { headers: { 'Cache-Control': 'no-store' } },
+      );
     }
     if (action.action === 'sync_now') {
       const result = await syncBinanceScannerUniverse(admin.id);
