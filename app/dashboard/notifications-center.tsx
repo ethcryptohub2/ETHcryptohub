@@ -62,7 +62,7 @@ export function NotificationsCenter() {
   const router = useRouter();
   const [notifications, setNotifications] = useState<NotificationItem[]>([]);
   const [unreadCount, setUnreadCount] = useState(0);
-  const [serverNow, setServerNow] = useState(new Date().toISOString());
+  const [serverNow, setServerNow] = useState<string | null>(null);
   const [error, setError] = useState('');
   const [toast, setToast] = useState<NotificationItem | null>(null);
   const [loaded, setLoaded] = useState(false);
@@ -88,6 +88,10 @@ export function NotificationsCenter() {
         throw new Error(preferenceBody.error ?? 'Notification preferences are unavailable.');
       }
       preferences.current = preferenceBody.data;
+    }
+
+    if (!Number.isFinite(Date.parse(notificationBody.data.serverNow))) {
+      throw new Error('Notification synchronization time is unavailable.');
     }
 
     const current = notificationBody.data.notifications;
@@ -217,7 +221,9 @@ export function NotificationsCenter() {
       <div><p className="mono">LIVE ALERTS</p><h2><svg className="notification-bell" viewBox="0 0 24 24" aria-hidden="true"><path d="M18 9a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4" /></svg> Notification Center <span className="notification-count">{unreadCount}</span></h2></div>
       <button type="button" className="button-secondary" disabled={!unreadCount} onClick={() => void markAllRead()}>Mark All as Read</button>
     </div>
-    <p className="muted">Server-saved signal events · synchronized at {new Date(serverNow).toLocaleTimeString()}</p>
+    <p className="muted">Server-saved signal events · {serverNow
+      ? `synchronized at ${new Date(serverNow).toLocaleTimeString()}`
+      : loaded ? 'not synchronized' : 'synchronizing…'}</p>
     {error && <p className="error" role="alert">{error}</p>}
     {!loaded && <p className="muted">Loading notifications…</p>}
     {loaded && notifications.length === 0 && <p className="notification-empty">No signal notifications yet. Your history will appear here.</p>}
@@ -238,7 +244,9 @@ export function NotificationsCenter() {
         <div className="notification-item-bottom">
           <span className="muted">{notification.status.replaceAll('_', ' ')}</span>
           {['ACTIVE', 'TP1_HIT', 'TP2_HIT'].includes(notification.status)
-            ? <SignalCountdown expiresAt={notification.expires_at} serverNow={serverNow} status={notification.status} />
+            ? serverNow
+              ? <SignalCountdown expiresAt={notification.expires_at} serverNow={serverNow} status={notification.status} />
+              : <span className="signal-countdown" aria-label="Waiting for server time">—</span>
             : <span className="signal-countdown is-expired">{notification.status.replaceAll('_', ' ')}</span>}
           <Link href={`/signals/${notification.signal_id}`} onClick={(event) => {
             if (!notification.read_at) {

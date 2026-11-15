@@ -328,6 +328,7 @@ export async function authRoute(action: string, request: NextRequest) {
     return jsonError('Not found.', 404);
   } catch (error) {
     if (error instanceof ZodError) return jsonError('Please check the submitted information.', 422);
+    if (error instanceof SyntaxError) return jsonError('Invalid request body.', 400);
     if (error instanceof EmailDeliveryError) {
       if (action === 'password-reset-request') {
         console.error('Password reset email delivery failed:', error.message);
