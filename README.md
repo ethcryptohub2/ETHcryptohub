@@ -36,6 +36,12 @@ npm.cmd run lint
 npm.cmd --prefix smartexit run test
 ```
 
+## Local authentication E2E tests
+
+On Windows, run `npm.cmd run setup:test-auth` from a local terminal to enter the dedicated Admin and User test-account emails and passwords. Passwords are hidden during entry and stored in Windows Credential Manager; the setup also accepts the existing Vercel Staging Preview Shareable Link so protected Preview access stays local. These values are not written to repository files or test output.
+
+Run `npm.cmd run test:auth:e2e` for both accounts, or use `npm.cmd run test:admin:e2e` and `npm.cmd run test:user:e2e` for a single role. Tests target the `functional-staging` Preview and do not create accounts or change passwords, roles, settings, or trading data. Normal login bookkeeping (rate limits, sessions, and `last_login`) will occur.
+
 ## Deployment
 
 See [DEPLOYMENT.md](./DEPLOYMENT.md) for Supabase migration and Vercel environment setup. A successful local build does not mean the production site is deployed: database migrations and private Vercel environment variables must be configured before production authentication and email delivery will work.

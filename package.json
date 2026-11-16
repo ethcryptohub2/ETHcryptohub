@@ -12,6 +12,10 @@
     "typecheck": "tsc --noEmit",
     "lint": "eslint app lib",
     "test:exchanges": "node --test lib/exchanges/*.test.mjs lib/*.test.mjs scripts/*.test.mjs",
+    "setup:test-auth": "powershell.exe -NoProfile -ExecutionPolicy RemoteSigned -File scripts\\auth-e2e.ps1 -Mode setup",
+    "test:auth:e2e": "powershell.exe -NoProfile -ExecutionPolicy RemoteSigned -File scripts\\auth-e2e.ps1 -Mode run -Suite auth",
+    "test:admin:e2e": "powershell.exe -NoProfile -ExecutionPolicy RemoteSigned -File scripts\\auth-e2e.ps1 -Mode run -Suite admin",
+    "test:user:e2e": "powershell.exe -NoProfile -ExecutionPolicy RemoteSigned -File scripts\\auth-e2e.ps1 -Mode run -Suite user",
     "validate:migrations": "node scripts/validate-migrations.mjs",
     "validate:deployment-env": "node scripts/validate-deployment-env.mjs",
     "validate:ui-preview": "node scripts/validate-ui-preview-env.mjs",
@@ -31,6 +35,7 @@
     "zod": "^4.6.7"
   },
   "devDependencies": {
+    "@playwright/test": "^1.65.1",
     "@types/node": "^26.6.6",
     "@types/pg": "^8.23.1",
     "@types/react": "^19.3.0",
