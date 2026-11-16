@@ -12,6 +12,10 @@ import {
   saveExchangeCredentials,
 } from '../../../../../lib/exchanges/credentials';
 import { BybitDemoError, createBybitDemoAdapter } from '../../../../../lib/exchanges/bybit-demo';
+import {
+  isBybitDemoOrderSubmissionEnabled,
+  requiresBybitDemoOrderSubmission,
+} from '../../../../../lib/exchanges/demo-order-approval';
 import { assertExchangeFoundationReady } from '../../../../../lib/exchanges/schema';
 
 export const runtime = 'nodejs';
@@ -130,7 +134,14 @@ export async function GET() {
       ),
     ]);
     return Response.json({
-      data: { exchange: 'BYBIT', environment: 'DEMO', credentialStatus, emergencyStop: stopped, events: events.rows },
+      data: {
+        exchange: 'BYBIT',
+        environment: 'DEMO',
+        credentialStatus,
+        emergencyStop: stopped,
+        orderSubmissionEnabled: isBybitDemoOrderSubmissionEnabled(),
+        events: events.rows,
+      },
     }, { headers: { 'Cache-Control': 'no-store' } });
   } catch (error) {
     const status = error instanceof AuthError ? error.status : 503;
@@ -155,9 +166,15 @@ export async function POST(request: NextRequest) {
     const parsed = requestSchema.safeParse(body);
     if (!parsed.success) return Response.json({ error: 'Invalid Bybit Demo testing request.' }, { status: 422 });
     const input = parsed.data;
-    if (input.action !== 'emergencyStop') await assertLabRateLimit(admin.id);
     action = input.action;
     eventSymbol = 'symbol' in input ? input.symbol ?? null : null;
+    if (input.action !== 'emergencyStop') await assertLabRateLimit(admin.id);
+    if (requiresBybitDemoOrderSubmission(input.action) && !isBybitDemoOrderSubmissionEnabled()) {
+      throw new BybitDemoError(
+        'Bybit Demo order actions are disabled until separately authorized and validated.',
+        403,
+      );
+    }
 
     if (input.action === 'saveCredentials') {
       await saveExchangeCredentials(admin.id, 'BYBIT', 'DEMO', {

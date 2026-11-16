@@ -58,6 +58,17 @@ test('Preview fails closed on unknown or Production database identity', () => {
   assert.ok(unknown.errors.some((error) => error.includes('database target')));
 });
 
+test('Preview rejects enabled Bybit Demo order submission', () => {
+  const report = validateDeploymentEnvironment({
+    ...validPreview,
+    SMARTEXIT_BYBIT_DEMO_ORDER_SUBMISSION_ENABLED: 'true',
+  }, demoSource);
+  assert.equal(report.valid, false);
+  assert.equal(report.checks.executionGatesDisabled, false);
+  assert.ok(report.errors.some((error) =>
+    error.includes('SMARTEXIT_BYBIT_DEMO_ORDER_SUBMISSION_ENABLED')));
+});
+
 test('Preview fails closed on Production key reuse and enabled trading gates', () => {
   const reusedKey = '2'.repeat(64);
   const reusedFingerprint = createHash('sha256').update(Buffer.from(reusedKey, 'hex')).digest('hex');

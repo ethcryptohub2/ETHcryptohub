@@ -11,6 +11,7 @@ type LabState = {
     updatedAt: string | null;
   };
   emergencyStop: boolean;
+  orderSubmissionEnabled: boolean;
   events: Array<{
     id: string;
     event_type: string;
@@ -156,8 +157,12 @@ export function BybitDemoTestingLab() {
     </article>
 
     <article className="card stack">
-      <p className="mono">DEMO ORDER AND PROTECTION TESTS · EXPLICIT CONFIRMATION REQUIRED</p>
-      <p className="muted">A market/limit request can create an order on the selected Bybit Demo account. Confirm each operation and independently inspect Bybit before continuing. Live orders are not available in this lab.</p>
+      <p className="mono">DEMO ORDER AND PROTECTION TESTS · {state?.orderSubmissionEnabled ? 'SERVER GATE ENABLED' : 'DISABLED'}</p>
+      <p className="muted">
+        {state?.orderSubmissionEnabled
+          ? 'A market/limit request can create an order on the selected Bybit Demo account and still requires explicit confirmation.'
+          : 'Exchange-mutating actions are blocked by a server-side feature gate until a separate Demo account approval. Read-only Demo checks remain available. Live orders are not available in this lab.'}
+      </p>
       <div className="notification-control-grid">
         <label>Limit price<input inputMode="decimal" value={price} maxLength={30} onChange={(event) => setPrice(event.target.value)} /></label>
         <label>Leverage<input type="number" min="1" max="125" step="1" value={leverage} onChange={(event) => setLeverage(event.target.value)} /></label>
@@ -167,14 +172,14 @@ export function BybitDemoTestingLab() {
         <label>Client order ID to reconcile<input value={clientOrderId} maxLength={36} onChange={(event) => setClientOrderId(event.target.value)} /></label>
       </div>
       <div className="links">
-        <button type="button" disabled={busy || !state?.credentialStatus.configured || state.emergencyStop} onClick={() => void perform({ action: 'marketOrder', symbol, quantity, side: 'BUY', confirmDemoOrder: true }, `Place a LONG (BUY) ${quantity} ${symbol} market order on Bybit DEMO only?`)}>Test LONG market order</button>
-        <button type="button" disabled={busy || !state?.credentialStatus.configured || state.emergencyStop} onClick={() => void perform({ action: 'marketOrder', symbol, quantity, side: 'SELL', confirmDemoOrder: true }, `Place a SHORT (SELL) ${quantity} ${symbol} market order on Bybit DEMO only?`)}>Test SHORT market order</button>
-        <button type="button" className="button-secondary" disabled={busy || !state?.credentialStatus.configured || state.emergencyStop || !price} onClick={() => void perform({ action: 'limitOrder', symbol, quantity, price, side: 'BUY', confirmDemoOrder: true }, `Place a BUY limit order on Bybit DEMO at ${price}?`)}>Test limit order</button>
-        <button type="button" className="button-secondary" disabled={busy || !state?.credentialStatus.configured || state.emergencyStop} onClick={() => void perform({ action: 'leverage', symbol, leverage: Number(leverage) }, `Set Bybit DEMO ${symbol} leverage to ${leverage}x?`)}>Set leverage</button>
-        <button type="button" className="button-secondary" disabled={busy || !state?.credentialStatus.configured || state.emergencyStop || !stopLoss || !takeProfit} onClick={() => void perform({ action: 'protection', symbol, stopLoss, takeProfit, confirmDemoOrder: true }, `Set both Bybit DEMO ${symbol} position TP and SL to ${takeProfit} / ${stopLoss}?`)}>Set position TP/SL</button>
-        <button type="button" className="button-secondary" disabled={busy || !state?.credentialStatus.configured || !orderId} onClick={() => void perform({ action: 'cancel', symbol, orderId, confirmDemoOrder: true }, `Cancel Bybit DEMO order ${orderId}?`)}>Cancel order</button>
+        <button type="button" disabled={busy || !state?.orderSubmissionEnabled || !state?.credentialStatus.configured || state.emergencyStop} onClick={() => void perform({ action: 'marketOrder', symbol, quantity, side: 'BUY', confirmDemoOrder: true }, `Place a LONG (BUY) ${quantity} ${symbol} market order on Bybit DEMO only?`)}>Test LONG market order</button>
+        <button type="button" disabled={busy || !state?.orderSubmissionEnabled || !state?.credentialStatus.configured || state.emergencyStop} onClick={() => void perform({ action: 'marketOrder', symbol, quantity, side: 'SELL', confirmDemoOrder: true }, `Place a SHORT (SELL) ${quantity} ${symbol} market order on Bybit DEMO only?`)}>Test SHORT market order</button>
+        <button type="button" className="button-secondary" disabled={busy || !state?.orderSubmissionEnabled || !state?.credentialStatus.configured || state.emergencyStop || !price} onClick={() => void perform({ action: 'limitOrder', symbol, quantity, price, side: 'BUY', confirmDemoOrder: true }, `Place a BUY limit order on Bybit DEMO at ${price}?`)}>Test limit order</button>
+        <button type="button" className="button-secondary" disabled={busy || !state?.orderSubmissionEnabled || !state?.credentialStatus.configured || state.emergencyStop} onClick={() => void perform({ action: 'leverage', symbol, leverage: Number(leverage) }, `Set Bybit DEMO ${symbol} leverage to ${leverage}x?`)}>Set leverage</button>
+        <button type="button" className="button-secondary" disabled={busy || !state?.orderSubmissionEnabled || !state?.credentialStatus.configured || state.emergencyStop || !stopLoss || !takeProfit} onClick={() => void perform({ action: 'protection', symbol, stopLoss, takeProfit, confirmDemoOrder: true }, `Set both Bybit DEMO ${symbol} position TP and SL to ${takeProfit} / ${stopLoss}?`)}>Set position TP/SL</button>
+        <button type="button" className="button-secondary" disabled={busy || !state?.orderSubmissionEnabled || !state?.credentialStatus.configured || !orderId} onClick={() => void perform({ action: 'cancel', symbol, orderId, confirmDemoOrder: true }, `Cancel Bybit DEMO order ${orderId}?`)}>Cancel order</button>
         <button type="button" className="button-secondary" disabled={busy || !state?.credentialStatus.configured || !clientOrderId} onClick={() => void perform({ action: 'reconcile', symbol, clientOrderId })}>Reconcile client order ID</button>
-        <button type="button" className="button-secondary" disabled={busy || !state?.credentialStatus.configured} onClick={() => void perform({ action: 'close', symbol, confirmDemoOrder: true }, `Close the full open Bybit DEMO ${symbol} position with a reduce-only market order?`)}>Close full position</button>
+        <button type="button" className="button-secondary" disabled={busy || !state?.orderSubmissionEnabled || !state?.credentialStatus.configured} onClick={() => void perform({ action: 'close', symbol, confirmDemoOrder: true }, `Close the full open Bybit DEMO ${symbol} position with a reduce-only market order?`)}>Close full position</button>
       </div>
       <div className="links">
         <strong className="mono">{state?.emergencyStop ? 'DEMO EMERGENCY STOP ACTIVE' : 'DEMO EMERGENCY STOP OFF'}</strong>

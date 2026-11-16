@@ -50,6 +50,7 @@ test('UI Preview rejects Production, wrong project or branch, pull requests, and
     { ...validEnvironment, VERCEL_GIT_PULL_REQUEST_ID: '42' },
     { ...validEnvironment, BINANCE_FUTURES_TRADING_ENABLED: 'true' },
     { ...validEnvironment, BINANCE_DEMO_REMOTE_TESTS_AUTHORIZED: 'true' },
+    { ...validEnvironment, SMARTEXIT_BYBIT_DEMO_ORDER_SUBMISSION_ENABLED: 'true' },
     { ...validEnvironment, SMARTEXIT_CRON_RECONCILIATION_ENABLED: 'true' },
     { ...validEnvironment, DATABASE_URL: 'postgresql://not-a-real-credential' },
     { ...validEnvironment, NEXT_PUBLIC_SUPABASE_URL: 'https://production.supabase.co' },

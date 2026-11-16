@@ -95,6 +95,7 @@ export function inspectStagingReadiness(env = {}, ownerConfirmations = {}) {
     'BINANCE_FUTURES_DEMO_TRADING_ENABLED',
     'BINANCE_FUTURES_DEMO_VERIFIED',
     'BINANCE_FUTURES_LIVE_TRADING_APPROVED',
+    'SMARTEXIT_BYBIT_DEMO_ORDER_SUBMISSION_ENABLED',
   ];
   const gatesDisabled = gates.every((name) =>
     env[name] === undefined || env[name].trim() === '' || env[name].trim().toLowerCase() === 'false',
