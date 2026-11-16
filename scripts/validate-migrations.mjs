@@ -1,8 +1,10 @@
+import { spawnSync } from 'node:child_process';
 import { readdir } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 export const EXPECTED_MIGRATIONS = [
+  '202611070003_news_platform.sql',
   '202611100001_live_futures_trading.sql',
   '202611100002_binance_demo_environments.sql',
   '202611100003_multi_exchange_foundation.sql',
@@ -17,6 +19,75 @@ export const EXPECTED_MIGRATIONS = [
 export const EXPECTED_VERIFICATION_FILES = EXPECTED_MIGRATIONS.map((name) => name);
 
 const migrationPattern = /^(\d{12})_.+\.sql$/;
+const localDatabaseVersions = EXPECTED_MIGRATIONS.map((name) => name.slice(0, 12));
+
+export function queryLocalMigrationStatus(run = spawnSync) {
+  const expectedVersions = localDatabaseVersions.map((version) => `'${version}'`).join(', ');
+  const sql = [
+    'BEGIN READ ONLY;',
+    `SELECT COALESCE(json_agg(version::text ORDER BY version::text), '[]'::json)::text`,
+    'FROM supabase_migrations.schema_migrations',
+    `WHERE version::text IN (${expectedVersions});`,
+    'COMMIT;',
+  ].join(' ');
+  const result = run('psql', [
+    '-X',
+    '-q',
+    '-A',
+    '-t',
+    '--no-password',
+    '--set=ON_ERROR_STOP=1',
+    '--host=127.0.0.1',
+    '--port=54322',
+    '--username=postgres',
+    '--dbname=postgres',
+    '--command',
+    sql,
+  ], {
+    encoding: 'utf8',
+    timeout: 5000,
+    windowsHide: true,
+    env: {
+      PATH: process.env.PATH ?? '',
+      ...(process.env.SystemRoot ? { SystemRoot: process.env.SystemRoot } : {}),
+      PGPASSFILE: process.platform === 'win32' ? 'NUL' : '/dev/null',
+    },
+  });
+
+  if (result.error || result.status !== 0 || typeof result.stdout !== 'string') {
+    return {
+      status: 'UNKNOWN',
+      appliedVersions: [],
+      missingVersions: localDatabaseVersions,
+      message: 'Local database status is UNKNOWN; the localhost-only query did not succeed.',
+    };
+  }
+
+  try {
+    const output = result.stdout.trim().split(/\r?\n/).filter(Boolean).pop() ?? '[]';
+    const appliedVersions = JSON.parse(output);
+    if (!Array.isArray(appliedVersions) || !appliedVersions.every((version) => typeof version === 'string')) {
+      throw new Error('Unexpected migration version result.');
+    }
+    const applied = new Set(appliedVersions);
+    const missingVersions = localDatabaseVersions.filter((version) => !applied.has(version));
+    return {
+      status: missingVersions.length === 0 ? 'APPLIED' : 'MISSING',
+      appliedVersions: localDatabaseVersions.filter((version) => applied.has(version)),
+      missingVersions,
+      message: missingVersions.length === 0
+        ? 'Local database migration status: all expected migrations are applied.'
+        : `Local database migration status: ${missingVersions.length} expected migration(s) are missing.`,
+    };
+  } catch {
+    return {
+      status: 'UNKNOWN',
+      appliedVersions: [],
+      missingVersions: localDatabaseVersions,
+      message: 'Local database status is UNKNOWN; the localhost-only query returned an invalid result.',
+    };
+  }
+}
 
 export async function validateMigrations(directory, verificationDirectory = path.resolve(directory, '..', 'verification')) {
   const entries = (await readdir(directory, { withFileTypes: true }))
@@ -71,11 +142,17 @@ export async function validateMigrations(directory, verificationDirectory = path
   };
 }
 
-function printReport(report) {
+function printReport(report, localStatus = null) {
   console.log(`Migration files: ${report.valid ? 'VALID' : 'INVALID'}`);
-  console.log(report.migrationStatusMessage);
+  console.log(localStatus?.message ?? report.migrationStatusMessage);
   for (const name of report.expected) {
-    console.log(`${report.files.includes(name) ? 'FOUND' : 'MISSING'} ${name} (database status: UNKNOWN)`);
+    const version = name.slice(0, 12);
+    const status = localStatus
+      ? localStatus.status === 'UNKNOWN'
+        ? 'UNKNOWN'
+        : localStatus.appliedVersions.includes(version) ? 'APPLIED' : 'MISSING'
+      : 'UNKNOWN';
+    console.log(`${report.files.includes(name) ? 'FOUND' : 'MISSING'} ${name} (database status: ${status})`);
   }
   for (const name of EXPECTED_VERIFICATION_FILES) {
     console.log(`${report.verificationFiles.includes(name) ? 'FOUND' : 'MISSING'} verification/${name} (read-only; never applied by migration tooling)`);
@@ -94,8 +171,9 @@ if (invokedPath === fileURLToPath(import.meta.url)) {
   const directory = path.resolve(process.cwd(), 'supabase', 'migrations');
   try {
     const report = await validateMigrations(directory);
-    printReport(report);
-    if (!report.valid) process.exitCode = 1;
+    const localStatus = process.argv.includes('--verify-local-db') ? queryLocalMigrationStatus() : null;
+    printReport(report, localStatus);
+    if (!report.valid || (localStatus && localStatus.status !== 'APPLIED')) process.exitCode = 1;
   } catch {
     console.error('Migration validation failed: migration directory could not be inspected.');
     process.exitCode = 1;

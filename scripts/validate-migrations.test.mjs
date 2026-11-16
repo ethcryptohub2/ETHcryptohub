@@ -6,6 +6,7 @@ import test from 'node:test';
 import {
   EXPECTED_MIGRATIONS,
   EXPECTED_VERIFICATION_FILES,
+  queryLocalMigrationStatus,
   validateMigrations,
 } from './validate-migrations.mjs';
 
@@ -62,6 +63,54 @@ test('password recovery migration requires its matching verification SQL', async
   });
 });
 
+test('news platform migration requires its matching RLS verification SQL', async () => {
+  await withDirectory(async (directory, verificationDirectory) => {
+    await writeExpectedFiles(directory, verificationDirectory);
+    await rm(path.join(verificationDirectory, '202611070003_news_platform.sql'));
+
+    const report = await validateMigrations(directory, verificationDirectory);
+
+    assert.deepEqual(report.missingVerificationFiles, ['202611070003_news_platform.sql']);
+  });
+});
+
+test('local database verification is read-only and restricted to localhost', () => {
+  let command;
+  let args;
+  let options;
+  const result = queryLocalMigrationStatus((spawnCommand, spawnArgs, spawnOptions) => {
+    command = spawnCommand;
+    args = spawnArgs;
+    options = spawnOptions;
+    return {
+      status: 0,
+      stdout: `${JSON.stringify(EXPECTED_MIGRATIONS.map((name) => name.slice(0, 12)))}\n`,
+    };
+  });
+
+  assert.equal(command, 'psql');
+  assert.ok(args.includes('--host=127.0.0.1'));
+  assert.ok(args.includes('--no-password'));
+  assert.match(args.at(-1), /BEGIN READ ONLY/);
+  assert.match(args.at(-1), /COMMIT/);
+  assert.doesNotMatch(args.at(-1), /\b(?:INSERT|UPDATE|DELETE|ALTER|DROP)\b/i);
+  assert.equal(options.timeout, 5000);
+  assert.equal(options.env.PGPASSFILE, process.platform === 'win32' ? 'NUL' : '/dev/null');
+  assert.equal(result.status, 'APPLIED');
+  assert.deepEqual(result.missingVersions, []);
+});
+
+test('local database verification reports missing versions and unavailable databases safely', () => {
+  const missing = queryLocalMigrationStatus(() => ({ status: 0, stdout: '[]\n' }));
+  assert.equal(missing.status, 'MISSING');
+  assert.deepEqual(missing.appliedVersions, []);
+  assert.equal(missing.missingVersions.length, EXPECTED_MIGRATIONS.length);
+
+  const unavailable = queryLocalMigrationStatus(() => ({ status: 2, stdout: '', stderr: 'not exposed' }));
+  assert.equal(unavailable.status, 'UNKNOWN');
+  assert.match(unavailable.message, /localhost-only/);
+});
+
 test('migration validator rejects duplicate versions and malformed migration names', async () => {
   await withDirectory(async (directory, verificationDirectory) => {
     await writeExpectedFiles(directory, verificationDirectory);
@@ -76,14 +125,14 @@ test('migration validator rejects duplicate versions and malformed migration nam
 
 test('migration validator requires the expected versioned dependency sequence', async () => {
   await withDirectory(async (directory, verificationDirectory) => {
-    const incorrectlyVersioned = EXPECTED_MIGRATIONS.map((name, index) =>
-      index === 1 ? name.replace('202611100002', '202611100000') : name,
+    const incorrectlyVersioned = EXPECTED_MIGRATIONS.map((name) =>
+      name.startsWith('202611100002_') ? name.replace('202611100002', '202611100000') : name,
     );
     for (const name of incorrectlyVersioned) await writeFile(path.join(directory, name), '');
     for (const name of EXPECTED_VERIFICATION_FILES) await writeFile(path.join(verificationDirectory, name), '-- read only');
     const report = await validateMigrations(directory, verificationDirectory);
     assert.equal(report.valid, false);
-    assert.ok(report.missing.includes(EXPECTED_MIGRATIONS[1]));
+    assert.ok(report.missing.includes('202611100002_binance_demo_environments.sql'));
   });
 });
 
