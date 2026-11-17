@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
 import type { StoredScalpingSignal } from '../../lib/high-risk-scalping-types';
 import { SCALPING_TIMEFRAMES } from '../../lib/high-risk-scalping-types';
+import { formatSignalStatusText } from '../../lib/high-risk-scalping-status';
 import { ScannerTabs } from './scanner-tabs';
 
 type Data = {
@@ -128,17 +129,20 @@ export function HighRiskScalping({
     return <article className={`scanner-signal-card ${signal.side === 'LONG' ? 'is-long' : 'is-short'}`} key={signal.id}>
       <div className="scanner-signal-header">
         <div><p className="mono">HIGH RISK · {signal.timeframe}</p><h3>{signal.symbol} · {signal.side}</h3></div>
-        <strong className="scanner-signal-badge">{signal.score}/100</strong>
+        <div className="scanner-card-meta">
+          <div className="scanner-card-score"><span>STATUS · {formatSignalStatusText(signal.lifecycleStatus)}</span><small>Generated {new Date(signal.generatedAt).toLocaleString()}</small></div>
+          <strong className="scanner-signal-badge">{signal.score}/100</strong>
+        </div>
       </div>
       <p className="error">HIGH RISK · Informational research only. No orders are placed; a score does not guarantee results.</p>
       <div className="scanner-price-grid">
         <div className="scanner-price-cell"><span>Entry reference</span><strong>{formatPrice(signal.entryPrice)}</strong><small>{formatPrice(signal.entryZoneLow)} – {formatPrice(signal.entryZoneHigh)}</small></div>
         <div className="scanner-price-cell is-stop"><span>Invalidation / stop reference</span><strong>{formatPrice(signal.stop)}</strong></div>
-        <div className="scanner-price-cell"><span>Targets · 1R / 1.5R</span><strong>{formatPrice(signal.tp1)} / {formatPrice(signal.tp2)}</strong></div>
+        <div className="scanner-price-cell"><span>Targets · TP1 1R / TP2 1.5R</span><strong>{formatPrice(signal.tp1)} / {formatPrice(signal.tp2)}</strong><small>TP3 is not configured.</small></div>
       </div>
       <p className="muted">RSI {signal.context.rsi.toFixed(1)} · Relative volume {signal.context.relativeVolume.toFixed(2)}× · ADX {signal.context.adx.toFixed(1)} · BTC {signal.context.btcDirection}</p>
       {entered
-        ? <p className="success">Marked entered by you · generated {new Date(signal.generatedAt).toLocaleString()}. This record stays in your entered list after countdown expiry.</p>
+        ? <p className="success">Marked entered by you. This record stays in your entered list after countdown expiry.</p>
         : <div className="links"><span className="muted">Entry window {countdown(signal.entryExpiresAt, now)} · signal expiry {new Date(signal.expiresAt).toLocaleTimeString()}</span>
           <button type="button" disabled={busy !== '' || Date.parse(signal.entryExpiresAt) <= now} onClick={() => void markEntered(signal.id)}>
             {busy === signal.id ? 'Saving…' : 'Mark as entered'}
@@ -154,6 +158,7 @@ export function HighRiskScalping({
       <p className="mono">SEPARATE STRATEGY · SERVERLESS BEST-EFFORT SCANS</p>
       <h1>High-Risk Scalping</h1>
       <p className="muted">Independent short-timeframe research. A five-minute scheduled scan can be delayed, so 1m/3m opportunities may be missed; this is not a real-time feed.</p>
+      <p className="scanner-research-target" role="note">High-Risk research target: 95% win rate · unverified objective, not an achieved result.</p>
     </section>
     <section className="card stack">
       <div className="links">
@@ -174,7 +179,7 @@ export function HighRiskScalping({
       {data.entered.length > 0 && <section className="stack scalping-signal-section"><h2>Marked entered</h2>{data.entered.map((signal) => signalCard(signal, true))}</section>}
       <details className="card stack"><summary>Scalping history · {data.history.length}</summary>
         {data.history.length
-          ? data.history.map((signal) => <p key={signal.id}>{signal.symbol} {signal.side} · {signal.timeframe} · {signal.lifecycleStatus} · {new Date(signal.generatedAt).toLocaleString()}</p>)
+            ? data.history.map((signal) => <p key={signal.id}>{signal.symbol} {signal.side} · {signal.timeframe} · {formatSignalStatusText(signal.lifecycleStatus)} · {new Date(signal.generatedAt).toLocaleString()}</p>)
           : <p className="muted">No closed scalping signals yet.</p>}
       </details>
     </>}
