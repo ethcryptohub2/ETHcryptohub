@@ -8,11 +8,14 @@ export const EXPECTED_MIGRATIONS = [
   '202611100001_live_futures_trading.sql',
   '202611100002_binance_demo_environments.sql',
   '202611100003_multi_exchange_foundation.sql',
+  '202611100004_exchange_execution_defaults_disabled.sql',
   '202611110001_strategy_profiles.sql',
   '202611110002_binance_protection_lifecycle.sql',
   '202611110003_binance_credential_environment_confirmation.sql',
   '202611110004_admin_binance_demo_testing.sql',
   '202611110005_admin_binance_demo_rpc_grant.sql',
+  '202611110006_multi_exchange_execution_defaults_disabled.sql',
+  '202611110007_admin_demo_exchange_neutral.sql',
   '202611140001_password_recovery.sql',
 ];
 

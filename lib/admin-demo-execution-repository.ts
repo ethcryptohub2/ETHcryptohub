@@ -603,6 +603,130 @@ export function createAdminDemoExecutionRepository(db: AdminDemoQuery) {
     };
   }
 
+  async function renewReconciliationAuthorization(
+    adminUserId: number,
+    sessionId: string,
+    authorizationId: string,
+    expiresInSeconds: number,
+  ) {
+    if (
+      !Number.isSafeInteger(adminUserId) || adminUserId <= 0 ||
+      !sessionIdPattern.test(sessionId) || !sessionIdPattern.test(authorizationId) ||
+      !Number.isInteger(expiresInSeconds) || expiresInSeconds < 30 || expiresInSeconds > 900
+    ) throw new Error('Admin Demo reconciliation authorization request is invalid.');
+
+    const result = await db<{
+      id: string;
+      admin_user_id: number;
+      session_id: string;
+      test_account_id: string;
+      expires_at: string;
+    }>(
+      `WITH owned_session AS MATERIALIZED (
+         SELECT s.id, s.admin_user_id, s.test_account_id
+           FROM public.admin_demo_test_sessions s
+           JOIN public.admin_binance_demo_test_accounts a
+             ON a.id = s.test_account_id AND a.admin_user_id = s.admin_user_id
+          WHERE s.id = $1 AND s.admin_user_id = $2 AND s.environment = 'DEMO'
+            AND s.session_status IN ('RUNNING', 'RECONCILIATION_REQUIRED')
+            AND a.exchange = 'BINANCE' AND a.environment = 'DEMO'
+            AND a.owner_confirmed_at IS NOT NULL AND a.revoked_at IS NULL
+          FOR UPDATE OF s, a
+       ), recoverable_execution AS MATERIALIZED (
+         SELECT e.id, e.authorization_id, e.session_id, e.admin_user_id
+           FROM public.admin_demo_test_executions e
+           JOIN owned_session s
+             ON s.id = e.session_id AND s.admin_user_id = e.admin_user_id
+          WHERE e.execution_status IN (
+            'ENTRY_SUBMITTING', 'ENTRY_UNKNOWN', 'ENTRY_FILLED',
+            'PROTECTED', 'RECONCILIATION_REQUIRED'
+          )
+          FOR UPDATE OF e
+       ), revoked AS (
+         UPDATE public.admin_demo_test_authorizations a
+            SET revoked_at = NOW()
+          WHERE a.id = $3 AND a.session_id = $1 AND a.admin_user_id = $2
+            AND a.exchange = 'BINANCE' AND a.environment = 'DEMO'
+            AND a.revoked_at IS NULL AND a.expires_at <= NOW()
+            AND a.consumed_at IS NOT NULL
+            AND EXISTS (
+              SELECT 1 FROM recoverable_execution e
+               WHERE e.authorization_id = a.id
+            )
+          RETURNING a.id, a.session_id, a.admin_user_id
+       ), created AS (
+         INSERT INTO public.admin_demo_test_authorizations (
+           session_id, admin_user_id, exchange, environment,
+           permitted_actions, expires_at, consumed_at
+         )
+         SELECT s.id, s.admin_user_id, 'BINANCE', 'DEMO',
+                ARRAY['RECONCILE']::TEXT[], NOW() + ($4 * INTERVAL '1 second'), NOW()
+           FROM owned_session s
+          WHERE EXISTS (SELECT 1 FROM revoked)
+         RETURNING id, admin_user_id, session_id, expires_at
+       ), rebound AS (
+         UPDATE public.admin_demo_test_executions e
+            SET authorization_id = c.id, updated_at = NOW()
+           FROM recoverable_execution old, created c
+          WHERE e.id = old.id AND e.authorization_id = old.authorization_id
+            AND old.authorization_id = $3
+          RETURNING e.session_id, e.admin_user_id
+       ), session_updated AS (
+         UPDATE public.admin_demo_test_sessions s
+            SET authorization_expires_at = c.expires_at
+           FROM created c, rebound r
+          WHERE s.id = c.session_id AND s.admin_user_id = c.admin_user_id
+          RETURNING s.id
+       ), old_audit AS (
+         INSERT INTO public.admin_demo_test_events (
+           session_id, authorization_id, admin_user_id, event_type, event_status, safe_details
+         )
+         SELECT r.session_id, r.id, r.admin_user_id,
+                'AUTHORIZATION_REVOKED', 'SUCCEEDED',
+                '{"reason":"EXPIRED_RECONCILIATION_GRANT_REPLACED"}'::JSONB
+           FROM revoked r
+          WHERE EXISTS (SELECT 1 FROM session_updated)
+         RETURNING id
+       ), new_audit AS (
+         INSERT INTO public.admin_demo_test_events (
+           session_id, authorization_id, admin_user_id, event_type, event_status, safe_details
+         )
+         SELECT c.session_id, c.id, c.admin_user_id,
+                'AUTHORIZATION_CREATED', 'SUCCEEDED',
+                jsonb_build_object(
+                  'exchange', 'BINANCE',
+                  'environment', 'DEMO',
+                  'expiresAt', c.expires_at,
+                  'permittedActions', ARRAY['RECONCILE']
+                )
+           FROM created c
+          WHERE EXISTS (SELECT 1 FROM session_updated)
+         RETURNING id
+       )
+       SELECT c.id::TEXT, c.admin_user_id, c.session_id::TEXT,
+              s.test_account_id::TEXT, c.expires_at
+         FROM created c
+         JOIN owned_session s ON s.id = c.session_id
+        WHERE EXISTS (SELECT 1 FROM rebound)
+          AND EXISTS (SELECT 1 FROM old_audit)
+          AND EXISTS (SELECT 1 FROM new_audit)`,
+      [sessionId, adminUserId, authorizationId, expiresInSeconds],
+    );
+    const row = requiredRow(result.rows, 'Admin Demo execution is not eligible for reconciliation authorization renewal.');
+    return {
+      id: row.id,
+      adminUserId: row.admin_user_id,
+      sessionId: row.session_id,
+      testAccountId: row.test_account_id,
+      exchange: 'BINANCE' as const,
+      environment: 'DEMO' as const,
+      status: 'ACTIVE' as const,
+      permittedActions: ['RECONCILE'] as const,
+      expiresAt: row.expires_at,
+      consumedAt: new Date().toISOString(),
+    };
+  }
+
   async function revokeAuthorization(adminUserId: number, sessionId: string, authorizationId: string) {
     if (!Number.isSafeInteger(adminUserId) || adminUserId <= 0 ||
         !sessionIdPattern.test(sessionId) || !sessionIdPattern.test(authorizationId)) {
@@ -685,6 +809,7 @@ export function createAdminDemoExecutionRepository(db: AdminDemoQuery) {
     getExecution,
     createSession,
     createAuthorization,
+    renewReconciliationAuthorization,
     revokeAuthorization,
     getSessionHistory,
     appendAudit,

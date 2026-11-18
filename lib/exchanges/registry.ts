@@ -76,7 +76,7 @@ export const EXCHANGE_REGISTRY: Record<ExchangeId, ExchangeDefinition> = {
     id: 'OKX',
     name: 'OKX',
     environments: ['DEMO', 'LIVE'],
-    baseUrls: { DEMO: 'https://www.okx.com', LIVE: 'https://www.okx.com' },
+    baseUrls: { DEMO: 'https://openapi.okx.com', LIVE: 'https://openapi.okx.com' },
     requiredCredentialFields: ['apiKey', 'apiSecret', 'passphrase'],
     capabilities: noUnverifiedTradingCapabilities,
     customerTradingReady: false,

@@ -2,7 +2,7 @@
   "name": "ethcryptohub",
   "private": true,
   "engines": {
-    "node": ">=22.11.0 <25"
+    "node": "24.x"
   },
   "scripts": {
     "dev": "next dev",

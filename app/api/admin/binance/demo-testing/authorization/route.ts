@@ -10,6 +10,12 @@ export const dynamic = 'force-dynamic';
 
 const schema = z.discriminatedUnion('action', [
   z.object({ action: z.literal('create'), sessionId: z.string().regex(/^[1-9]\d*$/), expiresInSeconds: z.number().int().min(30).max(900).optional() }).strict(),
+  z.object({
+    action: z.literal('renewReconciliation'),
+    sessionId: z.string().regex(/^[1-9]\d*$/),
+    authorizationId: z.string().regex(/^[1-9]\d*$/),
+    expiresInSeconds: z.number().int().min(30).max(900).optional(),
+  }).strict(),
   z.object({ action: z.literal('revoke'), sessionId: z.string().regex(/^[1-9]\d*$/), authorizationId: z.string().regex(/^[1-9]\d*$/) }).strict(),
 ]);
 
@@ -23,6 +29,16 @@ export async function POST(request: NextRequest) {
     if (parsed.data.action === 'create') {
       return noStoreJson({
         data: await service.createAuthorization(admin, parsed.data.sessionId, parsed.data.expiresInSeconds),
+      }, 201);
+    }
+    if (parsed.data.action === 'renewReconciliation') {
+      return noStoreJson({
+        data: await service.renewReconciliationAuthorization(
+          admin,
+          parsed.data.sessionId,
+          parsed.data.authorizationId,
+          parsed.data.expiresInSeconds,
+        ),
       }, 201);
     }
     return noStoreJson({

@@ -19,7 +19,7 @@ import {
   type ExecutionScope,
   type LifecycleExecution,
 } from './execution-lifecycle';
-import { isApprovedAdminDemoStagingTarget } from './admin-demo-staging-policy';
+import { isAdminDemoExecutionRequestApproved } from './admin-demo-staging-policy';
 import type { User } from './auth';
 import { query } from './db';
 
@@ -64,6 +64,12 @@ export interface AdminDemoServiceRepository {
     testAccountId: string;
     expiresAt: string;
   }>;
+  renewReconciliationAuthorization(
+    adminUserId: number,
+    sessionId: string,
+    authorizationId: string,
+    expiresInSeconds: number,
+  ): Promise<{ id: string; testAccountId: string; expiresAt: string }>;
   revokeAuthorization(adminUserId: number, sessionId: string, authorizationId: string): Promise<boolean>;
   getSessionHistory(adminUserId: number, sessionId: string): Promise<unknown[]>;
   getExecution(scope: ExecutionScope): Promise<AdminDemoExecutionRecord | null>;
@@ -249,6 +255,39 @@ export function createAdminDemoExecutionService(dependencies: AdminDemoServiceDe
       }
       return dependencies.repository.createAuthorization(actor.id, session.id, expiresInSeconds);
     },
+    async renewReconciliationAuthorization(
+      actor: AdminDemoActor,
+      sessionId: string,
+      authorizationId: string,
+      expiresInSeconds = 600,
+    ) {
+      const session = await getOwnedSession(actor, sessionId);
+      if (!['RUNNING', 'RECONCILIATION_REQUIRED'].includes(session.status)) {
+        throw new Error('A reconciliation-only authorization can only be renewed for an active Demo session.');
+      }
+      if (!/^[1-9]\d*$/.test(authorizationId)) {
+        throw new Error('Admin Demo authorization identifier is invalid.');
+      }
+      if (!Number.isInteger(expiresInSeconds) || expiresInSeconds < 30 || expiresInSeconds > 900) {
+        throw new Error('Admin Demo recovery authorization expiry must be between 30 and 900 seconds.');
+      }
+      const scope = scopeFromSession(actor as AdminDemoActor & { role: 'admin' }, session, authorizationId);
+      const execution = await dependencies.repository.getExecution(scope);
+      if (
+        !execution ||
+        execution.authorization_id !== authorizationId ||
+        !['ENTRY_SUBMITTING', 'ENTRY_UNKNOWN', 'ENTRY_FILLED', 'PROTECTED', 'RECONCILIATION_REQUIRED']
+          .includes(execution.execution_status)
+      ) {
+        throw new Error('Only the expired authorization for a recoverable Demo execution can be renewed.');
+      }
+      return dependencies.repository.renewReconciliationAuthorization(
+        actor.id,
+        session.id,
+        authorizationId,
+        expiresInSeconds,
+      );
+    },
     async revokeAuthorization(actor: AdminDemoActor, sessionId: string, authorizationId: string) {
       const session = await getOwnedSession(actor, sessionId);
       if (!/^[1-9]\d*$/.test(authorizationId)) throw new Error('Admin Demo authorization identifier is invalid.');
@@ -412,15 +451,9 @@ export async function createProductionAdminDemoExecutionService(
       createAdminBinanceDemoExecutionPort(credentials, records, transport),
     transport: options.transport,
     async assertExecutionEnabled(_actor, confirmation) {
-      if (
-        process.env.BINANCE_DEMO_REMOTE_TESTS_AUTHORIZED !== 'true' ||
-        confirmation !== 'RUN_BINANCE_DEMO_LIFECYCLE' ||
-        !isApprovedAdminDemoStagingTarget(process.env) ||
-        process.env.BINANCE_FUTURES_TRADING_ENABLED === 'true' ||
-        process.env.BINANCE_FUTURES_DEMO_TRADING_ENABLED === 'true' ||
-        process.env.BINANCE_FUTURES_DEMO_VERIFIED === 'true' ||
-        process.env.BINANCE_FUTURES_LIVE_TRADING_APPROVED === 'true'
-      ) throw new Error('Admin Demo execution is blocked until Staging and the separate remote-test approval are verified.');
+      if (!isAdminDemoExecutionRequestApproved(process.env, confirmation)) {
+        throw new Error('Admin Demo execution requires the approved Staging target, disabled persistent trading gates, no persistent remote-test flag, and explicit operator confirmation.');
+      }
     },
   });
 }

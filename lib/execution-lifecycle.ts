@@ -75,6 +75,7 @@ export interface ExecutionEnvironmentPolicy {
 }
 
 export interface ExchangeExecutionPort {
+  readonly supportsResidualClose?: boolean;
   assertEntryPreconditions?(scope: ExecutionScope, execution: LifecycleExecution): Promise<void>;
   submitEntry?(scope: ExecutionScope, request: EntryRequest): Promise<EntryOrderResult>;
   lookupEntry?(scope: ExecutionScope, symbol: string, clientOrderId: string): Promise<EntryOrderResult | null>;
@@ -394,7 +395,11 @@ export function createExecutionLifecycle(dependencies: ExecutionLifecycleDepende
         return 'CLOSED';
       }
 
-      if (!amountMatches(position.amount, execution.direction, execution.quantity)) {
+      const reducedPosition = dependencies.exchange.supportsResidualClose === true &&
+        Math.sign(amount) === (execution.direction === 'LONG' ? 1 : -1) &&
+        Math.abs(amount) > 0 && Math.abs(amount) < Number(execution.quantity);
+      if (!amountMatches(position.amount, execution.direction, execution.quantity) &&
+          !(reducedPosition && (targets.tp3Reached || !active))) {
         await dependencies.executions.markUncertain(scope, 'Position direction or quantity differs from the execution record; protection was retained.');
         await dependencies.protections.markProtectionFailed(scope, 'Position direction or quantity differs from the execution record.');
         await dependencies.events.publish({ type: 'RECONCILIATION_UNCERTAIN', scope });

@@ -40,7 +40,7 @@ CREATE TABLE IF NOT EXISTS public.user_exchange_preferences (
 );
 
 INSERT INTO public.user_exchange_preferences (user_id, active_exchange, active_environment, updated_at)
-SELECT user_id, 'BINANCE', active_environment, updated_at
+SELECT user_id, 'BINANCE', 'DEMO', updated_at
   FROM public.user_trading_settings
 ON CONFLICT (user_id) DO NOTHING;
 
@@ -71,7 +71,7 @@ INSERT INTO public.user_exchange_trading_settings (
     emergency_stop_enabled, updated_at
 )
 SELECT user_id, 'BINANCE', 'DEMO', order_size_mode, fixed_notional_usdt,
-       risk_percentage, default_leverage, demo_execution_mode, demo_auto_trade_enabled,
+       risk_percentage, default_leverage, 'CONFIRM', FALSE,
        demo_kill_switch_enabled, updated_at
   FROM public.user_trading_settings
 ON CONFLICT (user_id, exchange, environment) DO NOTHING;
@@ -82,7 +82,7 @@ INSERT INTO public.user_exchange_trading_settings (
     emergency_stop_enabled, updated_at
 )
 SELECT user_id, 'BINANCE', 'LIVE', order_size_mode, fixed_notional_usdt,
-       risk_percentage, default_leverage, live_execution_mode, live_auto_trade_enabled,
+       risk_percentage, default_leverage, 'CONFIRM', FALSE,
        live_kill_switch_enabled, updated_at
   FROM public.user_trading_settings
 ON CONFLICT (user_id, exchange, environment) DO NOTHING;
@@ -107,7 +107,7 @@ CREATE TABLE IF NOT EXISTS public.exchange_provider_settings (
 
 INSERT INTO public.exchange_provider_settings (exchange, customer_enabled, demo_enabled, adapter_version)
 VALUES
-    ('BINANCE', TRUE, TRUE, 'binance-futures-v1'),
+    ('BINANCE', FALSE, FALSE, 'binance-futures-v1'),
     ('BYBIT', FALSE, FALSE, 'unverified'),
     ('OKX', FALSE, FALSE, 'unverified'),
     ('BITGET', FALSE, FALSE, 'unverified'),

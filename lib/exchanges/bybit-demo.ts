@@ -121,10 +121,50 @@ function isStepMultiple(value: string, step: string) {
   return divisor > 0n && decimalInteger(value, scale) % divisor === 0n;
 }
 
-type BybitDemoAdapter = Omit<ExchangeAdapter, 'closePosition'> & {
+type BybitLimitOrderInput = {
+  symbol: string;
+  side: ExchangeOrderSide;
+  quantity: string;
+  price: string;
+  clientOrderId: string;
+  reduceOnly?: boolean;
+  initialProtection?: { stopLoss: string; takeProfit: string };
+};
+
+type BybitDemoAdapter = Omit<ExchangeAdapter, 'closePosition' | 'placeLimitOrder'> & {
+  bindMutationGuard(guard: () => Promise<void>): void;
+  placeLimitOrder(input: BybitLimitOrderInput): Promise<ExchangeOrder>;
   getClosedPnl(symbol: string, limit?: number): Promise<Record<string, unknown>[]>;
   setPositionProtection(symbol: string, stopLoss: string, takeProfit: string): Promise<void>;
+  getPositionDetails(symbol: string): Promise<BybitDemoPositionDetails[]>;
+  getRealtimeTrailingStops(symbol: string): Promise<BybitDemoTrailingStop[]>;
+  setPositionLifecycleProtection(
+    symbol: string,
+    protection: { stopLoss: string; takeProfit: string; trailingStop: string; activePrice: string },
+  ): Promise<void>;
+  clearPositionProtection(symbol: string): Promise<void>;
   closePosition(symbol: string, clientOrderId?: string): Promise<ExchangeOrder>;
+};
+
+export type BybitDemoPositionDetails = {
+  symbol: string;
+  positionIdx: number;
+  side: 'Buy' | 'Sell' | '';
+  size: string;
+  avgPrice: string;
+  stopLoss: string;
+  takeProfit: string;
+  trailingStop: string;
+  tpslMode?: string;
+};
+
+export type BybitDemoTrailingStop = {
+  symbol: string;
+  orderId: string;
+  positionIdx: number | null;
+  stopOrderType: 'TrailingStop';
+  triggerPrice: string | null;
+  tpslMode?: string;
 };
 
 function signedQuery(params: Record<string, string | boolean>) {
@@ -148,6 +188,7 @@ export function signBybitDemoRequest(
 }
 
 export function createBybitDemoAdapter(credentials: ExchangeCredentials): BybitDemoAdapter {
+  let mutationGuard: () => Promise<void> = async () => {};
   if (!credentials.apiKey.trim() || !credentials.apiSecret.trim()) {
     throw new BybitDemoError('Bybit Demo API credentials are required.', 422);
   }
@@ -178,12 +219,16 @@ export function createBybitDemoAdapter(credentials: ExchangeCredentials): BybitD
     }
 
     let response: Response;
+    // Last asynchronous check before a mutating HTTP request, after all reads.
+    // Keep it outside transport recovery: a denied mutation was never submitted.
+    if (method === 'POST') await mutationGuard();
     try {
       response = await fetch(requestTarget, {
         method,
         headers,
         ...(method === 'POST' ? { body } : {}),
         cache: 'no-store',
+        redirect: 'error',
         signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
       });
     } catch (error) {
@@ -320,7 +365,7 @@ export function createBybitDemoAdapter(credentials: ExchangeCredentials): BybitD
     assertSymbol(symbol);
     const rows = await list('/v5/position/list', { category: 'linear', symbol });
     const activeRows = rows.filter((row) => Number(row.size) > 0);
-    if (activeRows.some((row) => Number(row.positionIdx) !== 0)) {
+    if (rows.length !== 1 || rows.some((row) => row.symbol !== symbol || Number(row.positionIdx) !== 0)) {
       throw new BybitDemoError('Bybit account is in hedge mode; this adapter requires one-way mode and will not submit an order.', 409);
     }
     return activeRows[0] ?? null;
@@ -329,7 +374,7 @@ export function createBybitDemoAdapter(credentials: ExchangeCredentials): BybitD
   async function assertOneWayMode(symbol: string) {
     assertSymbol(symbol);
     const rows = await list('/v5/position/list', { category: 'linear', symbol });
-    if (rows.some((row) => Number(row.positionIdx) !== 0)) {
+    if (rows.length !== 1 || rows.some((row) => row.symbol !== symbol || Number(row.positionIdx) !== 0)) {
       throw new BybitDemoError('Bybit account is in hedge mode; this adapter requires one-way mode and will not submit an order.', 409);
     }
   }
@@ -379,6 +424,7 @@ export function createBybitDemoAdapter(credentials: ExchangeCredentials): BybitD
   }
 
   return {
+    bindMutationGuard(guard: () => Promise<void>) { mutationGuard = guard; },
     exchange: 'BYBIT' as const,
     environment: 'DEMO' as ExchangeEnvironment,
 
@@ -557,20 +603,26 @@ export function createBybitDemoAdapter(credentials: ExchangeCredentials): BybitD
       });
     },
 
-    async placeLimitOrder(input: {
-      symbol: string;
-      side: ExchangeOrderSide;
-      quantity: string;
-      price: string;
-      clientOrderId: string;
-      reduceOnly?: boolean;
-    }): Promise<ExchangeOrder> {
+    async placeLimitOrder(input: BybitLimitOrderInput): Promise<ExchangeOrder> {
       assertSymbol(input.symbol);
       assertPositiveDecimal(input.quantity, 'Quantity');
       assertPositiveDecimal(input.price, 'Price');
       if (!/^[A-Za-z0-9_-]{1,36}$/.test(input.clientOrderId)) throw new BybitDemoError('Invalid client order ID.', 422);
       await assertOneWayMode(input.symbol);
       await validateOrderFilters(input.symbol, input.quantity, input.price);
+      if (input.initialProtection) {
+        if (input.reduceOnly) throw new BybitDemoError('Reduce-only orders cannot attach entry protection.', 422);
+        assertPositiveDecimal(input.initialProtection.stopLoss, 'Initial stop loss');
+        assertPositiveDecimal(input.initialProtection.takeProfit, 'Initial take profit');
+        await validateOrderFilters(input.symbol, input.quantity, input.initialProtection.stopLoss);
+        await validateOrderFilters(input.symbol, input.quantity, input.initialProtection.takeProfit);
+        const stop = Number(input.initialProtection.stopLoss);
+        const target = Number(input.initialProtection.takeProfit);
+        const entry = Number(input.price);
+        if (input.side === 'BUY' ? !(stop < entry && entry < target) : !(target < entry && entry < stop)) {
+          throw new BybitDemoError('Initial protection is not ordered around the entry.', 422);
+        }
+      }
       return submitOrder(input.symbol, input.clientOrderId, {
         category: 'linear',
         symbol: input.symbol,
@@ -581,6 +633,15 @@ export function createBybitDemoAdapter(credentials: ExchangeCredentials): BybitD
         timeInForce: 'GTC',
         positionIdx: '0',
         orderLinkId: input.clientOrderId,
+        ...(input.initialProtection ? {
+          stopLoss: input.initialProtection.stopLoss,
+          takeProfit: input.initialProtection.takeProfit,
+          tpslMode: 'Full',
+          slOrderType: 'Market',
+          tpOrderType: 'Market',
+          slTriggerBy: 'MarkPrice',
+          tpTriggerBy: 'MarkPrice',
+        } : {}),
         ...(input.reduceOnly ? { reduceOnly: true } : {}),
       }, {
         symbol: input.symbol,
@@ -624,6 +685,127 @@ export function createBybitDemoAdapter(credentials: ExchangeCredentials): BybitD
       ) {
         throw new BybitDemoError('Bybit did not confirm the requested position protection.', 502);
       }
+    },
+
+    async getPositionDetails(symbol: string): Promise<BybitDemoPositionDetails[]> {
+      assertSymbol(symbol);
+      const rows = await list('/v5/position/list', { category: 'linear', symbol });
+      return rows.map((row) => {
+        const positionIdx = Number(row.positionIdx);
+        const side = row.side;
+        const size = row.size;
+        const avgPrice = row.avgPrice;
+        if (
+          !Number.isInteger(positionIdx) ||
+          !['Buy', 'Sell', ''].includes(String(side)) ||
+          typeof size !== 'string' ||
+          !/^\d+(?:\.\d+)?$/.test(size) ||
+          typeof avgPrice !== 'string'
+        ) {
+          throw new BybitDemoError('Bybit returned invalid position details.', 502);
+        }
+        return {
+          symbol: String(row.symbol ?? ''),
+          positionIdx,
+          side: side as BybitDemoPositionDetails['side'],
+          size,
+          avgPrice,
+          stopLoss: String(row.stopLoss ?? '0'),
+          takeProfit: String(row.takeProfit ?? '0'),
+          trailingStop: String(row.trailingStop ?? '0'),
+          ...(typeof row.tpslMode === 'string' ? { tpslMode: row.tpslMode } : {}),
+        };
+      });
+    },
+
+    async getRealtimeTrailingStops(symbol: string): Promise<BybitDemoTrailingStop[]> {
+      assertSymbol(symbol);
+      const rows = await list('/v5/order/realtime', {
+        category: 'linear',
+        symbol,
+        orderFilter: 'StopOrder',
+        openOnly: '0',
+        limit: '50',
+      });
+      return rows.flatMap((row) => {
+        if (row.stopOrderType !== 'TrailingStop') return [];
+        const indexValue = row.positionIdx;
+        const positionIdx = typeof indexValue === 'number' || typeof indexValue === 'string'
+          ? Number(indexValue)
+          : Number.NaN;
+        return [{
+          symbol: typeof row.symbol === 'string' ? row.symbol : '',
+          orderId: typeof row.orderId === 'string' ? row.orderId : '',
+          positionIdx: Number.isInteger(positionIdx) ? positionIdx : null,
+          stopOrderType: 'TrailingStop' as const,
+          triggerPrice: typeof row.triggerPrice === 'string' ? row.triggerPrice : null,
+          ...(typeof row.tpslMode === 'string' ? { tpslMode: row.tpslMode } : {}),
+        }];
+      });
+    },
+
+    async setPositionLifecycleProtection(
+      symbol: string,
+      protection: { stopLoss: string; takeProfit: string; trailingStop: string; activePrice: string },
+    ) {
+      assertSymbol(symbol);
+      assertPositiveDecimal(protection.stopLoss, 'Stop-loss trigger');
+      assertPositiveDecimal(protection.takeProfit, 'Take-profit trigger');
+      assertPositiveDecimal(protection.trailingStop, 'Trailing-stop distance');
+      assertPositiveDecimal(protection.activePrice, 'Trailing-stop activation price');
+      const instrumentRows = await list(
+        '/v5/market/instruments-info',
+        { category: 'linear', symbol, limit: '1' },
+        false,
+      );
+      const instrument = instrumentSchema.safeParse(instrumentRows[0]);
+      if (!instrument.success || instrument.data.status !== 'Trading') {
+        throw new BybitDemoError('Bybit symbol is not an active linear contract.', 422);
+      }
+      const tickSize = instrument.data.priceFilter.tickSize;
+      if (
+        !isStepMultiple(protection.stopLoss, tickSize) ||
+        !isStepMultiple(protection.takeProfit, tickSize) ||
+        !isStepMultiple(protection.trailingStop, tickSize) ||
+        !isStepMultiple(protection.activePrice, tickSize)
+      ) {
+        throw new BybitDemoError('Protection prices do not satisfy the Bybit tick size.', 422);
+      }
+      const position = await getPositionRow(symbol);
+      if (!position || Number(position.positionIdx) !== 0) {
+        throw new BybitDemoError('A one-way Bybit Demo position is required for protection.', 409);
+      }
+      await request('POST', '/v5/position/trading-stop', {
+        category: 'linear',
+        symbol,
+        tpslMode: 'Full',
+        positionIdx: '0',
+        stopLoss: protection.stopLoss,
+        takeProfit: protection.takeProfit,
+        trailingStop: protection.trailingStop,
+        activePrice: protection.activePrice,
+        slTriggerBy: 'MarkPrice',
+        tpTriggerBy: 'MarkPrice',
+      }, true);
+    },
+
+    async clearPositionProtection(symbol: string) {
+      assertSymbol(symbol);
+      const rows = await list('/v5/position/list', { category: 'linear', symbol });
+      if (rows.length !== 1 || rows.some((row) =>
+        row.symbol !== symbol || Number(row.positionIdx) !== 0 ||
+        typeof row.size !== 'string' || !/^0(?:\.0+)?$/.test(row.size))) {
+        throw new BybitDemoError('Protection removal requires an independently confirmed flat one-way position.', 409);
+      }
+      await request('POST', '/v5/position/trading-stop', {
+        category: 'linear',
+        symbol,
+        tpslMode: 'Full',
+        positionIdx: '0',
+        stopLoss: '0',
+        takeProfit: '0',
+        trailingStop: '0',
+      }, true);
     },
 
     async setPositionStopLoss(symbol: string, triggerPrice: string) {

@@ -1,8 +1,9 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
+import { fileURLToPath } from 'node:url';
 import {
   EXPECTED_MIGRATIONS,
   EXPECTED_VERIFICATION_FILES,
@@ -134,6 +135,46 @@ test('migration validator requires the expected versioned dependency sequence', 
     assert.equal(report.valid, false);
     assert.ok(report.missing.includes('202611100002_binance_demo_environments.sql'));
   });
+});
+
+test('multi-exchange safety migrations run after their data backfills', async () => {
+  const foundation = EXPECTED_MIGRATIONS.indexOf('202611100003_multi_exchange_foundation.sql');
+  const exchangeSafety = EXPECTED_MIGRATIONS.indexOf('202611100004_exchange_execution_defaults_disabled.sql');
+  const strategies = EXPECTED_MIGRATIONS.indexOf('202611110001_strategy_profiles.sql');
+  const adminGrant = EXPECTED_MIGRATIONS.indexOf('202611110005_admin_binance_demo_rpc_grant.sql');
+  const finalSafety = EXPECTED_MIGRATIONS.indexOf('202611110006_multi_exchange_execution_defaults_disabled.sql');
+  assert.ok(foundation >= 0 && foundation < exchangeSafety && exchangeSafety < strategies);
+  assert.ok(adminGrant >= 0 && adminGrant < finalSafety);
+
+  const migrationDirectory = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', 'supabase', 'migrations');
+  const exchangeSafetySql = await readFile(
+    path.join(migrationDirectory, '202611100004_exchange_execution_defaults_disabled.sql'),
+    'utf8',
+  );
+  const foundationSql = await readFile(
+    path.join(migrationDirectory, '202611100003_multi_exchange_foundation.sql'),
+    'utf8',
+  );
+  const finalSafetySql = await readFile(
+    path.join(migrationDirectory, '202611110006_multi_exchange_execution_defaults_disabled.sql'),
+    'utf8',
+  );
+  assert.match(foundationSql, /SELECT user_id, 'BINANCE', 'DEMO', order_size_mode/i);
+  assert.match(foundationSql, /risk_percentage, default_leverage, 'CONFIRM', FALSE/i);
+  assert.match(foundationSql, /SELECT user_id, 'BINANCE', 'LIVE', order_size_mode/i);
+  assert.match(foundationSql, /'BINANCE', FALSE, FALSE, 'binance-futures-v1'/i);
+  assert.doesNotMatch(foundationSql, /demo_auto_trade_enabled|live_auto_trade_enabled/);
+  assert.match(exchangeSafetySql, /customer_enabled\s*=\s*FALSE/i);
+  assert.match(exchangeSafetySql, /demo_enabled\s*=\s*FALSE/i);
+  assert.match(exchangeSafetySql, /testnet_enabled\s*=\s*FALSE/i);
+  assert.match(exchangeSafetySql, /live_enabled\s*=\s*FALSE/i);
+  assert.match(exchangeSafetySql, /auto_trade_enabled\s*=\s*FALSE/i);
+  assert.match(exchangeSafetySql, /execution_mode\s*=\s*'CONFIRM'/i);
+  assert.match(finalSafetySql, /enabled\s*=\s*FALSE/i);
+  assert.match(finalSafetySql, /auto_execution_enabled\s*=\s*FALSE/i);
+  assert.match(finalSafetySql, /demo_auto_trade_enabled\s*=\s*FALSE/i);
+  assert.match(finalSafetySql, /live_auto_trade_enabled\s*=\s*FALSE/i);
+  assert.doesNotMatch(`${exchangeSafetySql}\n${finalSafetySql}`, /\b(?:INSERT|UPDATE|DELETE)\s+[^;]*credential/i);
 });
 
 test('verification SQL in the migration directory is rejected', async () => {

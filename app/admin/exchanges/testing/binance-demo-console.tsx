@@ -165,6 +165,22 @@ export function BinanceDemoConsole() {
     } finally { setBusy(false); }
   }
 
+  async function renewReconciliationAuthorization() {
+    setBusy(true); setError(''); setMessage(''); setPreflight(null);
+    try {
+      const renewed = await postJson<{ id: string; expiresAt: string }>(
+        '/api/admin/binance/demo-testing/authorization',
+        { action: 'renewReconciliation', sessionId, authorizationId, expiresInSeconds: 600 },
+      );
+      setAuthorizationId(renewed.id);
+      setMessage(
+        `Reconciliation-only authorization ${renewed.id} expires ${new Date(renewed.expiresAt).toLocaleString()}. It cannot start a new test.`,
+      );
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : 'Reconciliation authorization renewal failed.');
+    } finally { setBusy(false); }
+  }
+
   async function runPreflight() {
     setBusy(true); setError(''); setMessage(''); setPreflight(null);
     try {
@@ -294,6 +310,16 @@ export function BinanceDemoConsole() {
         </label>
         <div className="links">
           <button type="button" className="button-secondary" disabled={busy || !sessionId} onClick={() => void createAuthorization()}>Create 10-minute authorization</button>
+          <button
+            type="button"
+            className="button-secondary"
+            disabled={busy || !sessionId || !authorizationId || ![
+              'ENTRY_SUBMITTING', 'ENTRY_UNKNOWN', 'ENTRY_FILLED', 'PROTECTED', 'RECONCILIATION_REQUIRED',
+            ].includes(executionStatus)}
+            onClick={() => void renewReconciliationAuthorization()}
+          >
+            Renew expired authorization for reconciliation only
+          </button>
         </div>
         <label>Authorization ID
           <input value={authorizationId} onChange={(event) => { setAuthorizationId(event.target.value); setPreflight(null); }} inputMode="numeric" />
@@ -330,7 +356,7 @@ export function BinanceDemoConsole() {
           <span className="muted"> {session.symbol ?? 'No symbol'} {session.direction ?? ''} · {new Date(session.created_at).toLocaleString()}</span>
         </li>)}</ul>
         : <p className="muted">No isolated Admin Binance Demo sessions are recorded.</p>}
-      <p className="muted">Controls make no exchange request unless explicitly invoked. Execution remains disabled unless the server confirms the approved Staging target, the temporary authorization, dedicated credentials, fixed Demo endpoint, and the explicit remote-test approval gate.</p>
+      <p className="muted">Controls make no exchange request unless explicitly invoked. Starting a test requires the approved Staging target, owner-confirmed dedicated credentials, the single-use temporary session authorization, the fixed Demo endpoint, and explicit operator confirmation. A persistent remote-test environment flag is rejected.</p>
     </> : <p className={error ? 'error' : 'muted'} role={error ? 'alert' : 'status'}>{error || 'Loading Admin Demo status…'}</p>}
     {message && <p className="success" role="status">{message}</p>}
     {error && state && <p className="error" role="alert">{error}</p>}
