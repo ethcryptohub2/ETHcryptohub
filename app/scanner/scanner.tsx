@@ -9,6 +9,7 @@ import type {
   MarketScannerResponse,
 } from '../../smartexit/apps/api/src/services/market-scanner';
 import { recommendedMaxAgeSeconds } from '../../smartexit/apps/api/src/services/market-scanner';
+import { savedScannerCandidate } from '../../lib/scanner-snapshot';
 import { SignalCountdown } from '../countdown';
 
 type SignalMetadata = {
@@ -48,10 +49,12 @@ function StandardSignals({
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
   const [lastCheckedAt, setLastCheckedAt] = useState<number | null>(null);
+  const [freshnessNow, setFreshnessNow] = useState(0);
   const requestInFlight = useRef(false);
   const [timeframe, setTimeframe] = useState<ScannerCandidate['timeframe']>('15m');
   const [rankFilter, setRankFilter] = useState<'ALL' | ScannerCandidate['marketRank'][number]>('ALL');
   const load = useCallback(async () => {
+    setFreshnessNow(Date.now());
     if (requestInFlight.current) return;
     requestInFlight.current = true;
     setLoading(true);
@@ -80,7 +83,12 @@ function StandardSignals({
       setSignalMetadata(body.signalMetadata ?? null);
       setNotificationWarning(body.notificationWarning ?? '');
       setLastCheckedAt(Date.now());
+      setFreshnessNow(Date.now());
     } catch (reason) {
+      // A failed refresh must not leave previously actionable results on screen.
+      setData(null);
+      setSignalMetadata(null);
+      setNotificationWarning('');
       setError(reason instanceof Error ? reason.message : 'Live scanner data is unavailable.');
     } finally {
       requestInFlight.current = false;
@@ -93,16 +101,27 @@ function StandardSignals({
     };
     const initial = window.setTimeout(refreshWhenVisible, 0);
     const timer = window.setInterval(refreshWhenVisible, AUTO_REFRESH_INTERVAL_MS);
+    // Age the displayed cache even while a request is slow or never completes.
+    const freshnessTimer = window.setInterval(() => {
+      if (document.visibilityState === 'visible') setFreshnessNow(Date.now());
+    }, 1000);
     document.addEventListener('visibilitychange', refreshWhenVisible);
     window.addEventListener('focus', refreshWhenVisible);
     return () => {
       window.clearTimeout(initial);
       window.clearInterval(timer);
+      window.clearInterval(freshnessTimer);
       document.removeEventListener('visibilitychange', refreshWhenVisible);
       window.removeEventListener('focus', refreshWhenVisible);
     };
   }, [load]);
-  const candidates = (data?.candidates ?? []).filter(
+  const agedCandidates = (data?.candidates ?? []).map((candidate) => savedScannerCandidate(
+    candidate,
+    candidate.scannedAt ?? '',
+    data?.configuration.maxAgeSeconds ?? recommendedMaxAgeSeconds(timeframe),
+    freshnessNow,
+  ));
+  const candidates = agedCandidates.filter(
     (item) => rankFilter === 'ALL' || item.marketRank.includes(rankFilter),
   );
   const ready = candidates.filter((item) => item.status === 'READY' && item.setup);
@@ -111,9 +130,11 @@ function StandardSignals({
   const longSignals = ready.filter((item) => item.side === 'LONG').length;
   const shortSignals = ready.filter((item) => item.side === 'SHORT').length;
   const hasCandidates = (data?.candidates.length ?? 0) > 0;
-  const degraded = data?.status === 'DEGRADED' && hasCandidates;
-  const statusLabel = !data ? 'Connecting' : data.status === 'LIVE' ? 'Recent cached results' : hasCandidates ? 'Partial data' : 'Awaiting scan';
-  const healthLabel = data ? hasCandidates ? (data.status === 'LIVE' ? 'RECENT CACHE' : data.status) : 'WAITING' : '—';
+  const degraded = hasCandidates && (data?.status === 'DEGRADED' || agedCandidates.some(
+    (candidate) => candidate.status === 'STALE' || candidate.status === 'DATA_UNAVAILABLE',
+  ));
+  const statusLabel = !data ? (error ? 'Results unavailable' : 'Connecting') : !hasCandidates ? 'Awaiting scan' : degraded ? 'Partial data' : 'Recent cached results';
+  const healthLabel = data ? hasCandidates ? (degraded ? 'DEGRADED' : 'RECENT CACHE') : 'WAITING' : '—';
   return <main className="shell">
     <ScannerTabs active={activeTab} onChange={onTabChange} />
     <header className="topbar"><Link className="brand" href="/">ETHCRYPTOHUB</Link><nav className="links"><Link href="/scanner/successful">Successful Signals</Link><Link href="/scanner/history">Signal History</Link><Link href="/scanner/performance">Performance</Link><Link href="/dashboard">Dashboard</Link><Link href="/settings">Settings</Link>{isAdmin && <Link href="/admin">Admin</Link>}<button className="scanner-refresh" onClick={() => void load()} disabled={loading}><span aria-hidden="true">{loading ? '↻' : '⟳'}</span> {loading ? 'Loading…' : 'Refresh results'}</button></nav></header>
@@ -151,7 +172,7 @@ function StandardSignals({
             <div className="scanner-card-score"><span>SETUP SCORE</span><strong>{item.score.value === null ? '—' : `${item.score.value}`}<small>/100</small></strong><small>{item.scannedAt ? `Scanned ${new Date(item.scannedAt).toLocaleString()}` : 'Scan pending'}</small></div>
           </div>
         </div>
-        {signalMetadata?.signals[item.symbol] && <div className="scanner-expiry-row">
+        {item.status === 'READY' && signalMetadata?.signals[item.symbol] && <div className="scanner-expiry-row">
           <span>Signal validity · generated {new Date(signalMetadata.signals[item.symbol]!.generatedAt).toLocaleTimeString()}</span>
           <SignalCountdown expiresAt={signalMetadata.signals[item.symbol]!.expiresAt} serverNow={signalMetadata.serverNow} status={signalMetadata.signals[item.symbol]!.status} />
         </div>}

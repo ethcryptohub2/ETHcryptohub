@@ -11,6 +11,7 @@ Fixes:
 - Do not restore previously STALE/DATA_UNAVAILABLE setups merely because a row was recently saved.
 - Withhold cached price/change and entry targets when stale; keep old scan date visible.
 - Identify recent rows as cached, label price as price-at-scan, and explain that reloading is not market-data refresh.
+- Revalidate displayed candidates locally while visible, including during stalled refreshes, and clear previous data/metadata after request failure. A clock-advance test covers expiry without a new response.
 - Pair-discovery diagnostics warn after30minutes and explicitly do not certify scan freshness.
 
 This fixes misleading presentation and freshness validation, not the absent producer runs. Fresh market results require a separately authorized bounded scan/recovery review; `runSignalScan` also persists signals/processes lifecycle and notifications, so it is not a read-only request and was not invoked. No CRON, autonomous trading or fabricated prices/signals are introduced.
@@ -41,4 +42,4 @@ Apply one reviewed file at a time under later explicit approval and run its matc
 
 ## Acceptance limits
 
-Seven new regression checks cover stale/invalid/future saved data, non-resurrection, sync freshness and actual CSRF helper behavior (same-origin valid token, cross-origin/protocol rejection, missing/mismatched token rejection). Full suite currently310tests passes. These are mock/local checks, not a claim that non-admin browser isolation, email delivery, session expiry or all Admin Demo APIs work against the unmigrated database. Authorized non-admin test account/mailbox testing is planned after deployment. Exchange order execution, credential submission and preflight that needs real credentials remain excluded.
+Eight new regression checks cover stale/invalid/future saved data, client clock expiry, non-resurrection, sync freshness and actual CSRF helper behavior (same-origin valid token, cross-origin/protocol rejection, missing/mismatched token rejection). Full suite currently311tests passes. These are mock/local checks, not a claim that email delivery, session expiry or all Admin Demo APIs work against the unmigrated database. Browser acceptance on the first fix Preview confirmed admin/non-admin login, admin logout, Admin page/API rejection for the non-admin, forged-user-ID isolation for settings, and all five responsive warning widths. Password recovery returns unavailable with its required table absent. Positions are empty, so that cross-user test has limited coverage. Successful signup/verification delivery still needs a separately identified unused authorized test email. Exchange order execution, credential submission and preflight that needs real credentials remain excluded.
