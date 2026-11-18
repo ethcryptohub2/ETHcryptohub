@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { AuthError } from '../../../lib/auth';
 import { marketScannerQuerySchema } from '../../../smartexit/apps/api/src/schemas';
 import type { MarketScannerCandidate } from '../../../smartexit/apps/api/src/services/market-scanner';
+import { savedScannerCandidate } from '../../../lib/scanner-snapshot';
 import {
   defaultNotificationSystemSettings,
   getPersistedSignalMetadata,
@@ -45,24 +46,8 @@ export async function GET(request: NextRequest) {
     }
     const snapshotRows = await getScannerCandidateSnapshots(parsed.data.timeframe, enabledSymbols);
     const now = Date.now();
-    const candidates: MarketScannerCandidate[] = snapshotRows.map(({ candidate_json: saved, scanned_at }) => {
-      const ageMs = now - Date.parse(scanned_at);
-      const candidate = {
-        ...saved,
-        scannedAt: new Date(scanned_at).toISOString(),
-      };
-      if (ageMs > parsed.data.maxAgeSeconds * 1000 && candidate.status !== 'DATA_UNAVAILABLE') {
-        return {
-          ...candidate,
-          status: 'STALE' as const,
-          side: 'WAIT' as const,
-          setup: null,
-          rationale: 'WAIT: the background scan is stale or no live Binance ticker is available.',
-          warnings: [...candidate.warnings, 'Fresh background scan and live Binance ticker data are required.'],
-        };
-      }
-      return candidate;
-    });
+    const candidates: MarketScannerCandidate[] = snapshotRows.map(({ candidate_json: saved, scanned_at }) =>
+      savedScannerCandidate(saved, scanned_at, parsed.data.maxAgeSeconds, now));
     const staleStatuses = new Set(['EXPIRED', 'ENTRY_INVALIDATED', 'STOP_LOSS_HIT', 'TP3_HIT', 'MISSED', 'AMBIGUOUS']);
     let signalMap: Record<string, Awaited<ReturnType<typeof getPersistedSignalMetadata>>[string] | null> = {};
     if (candidates.length && !notificationWarning) {

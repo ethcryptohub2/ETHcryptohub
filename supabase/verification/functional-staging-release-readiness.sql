@@ -5,9 +5,11 @@
 -- PRE-MIGRATION BASELINE: expected remote boundary is 202611100002.
 BEGIN READ ONLY;
 
-SELECT version
+-- MCP-applied migrations may use application-time versions and keep the
+-- filename prefix in name. An empty version-only filter is not a clean ledger.
+SELECT version, name
   FROM supabase_migrations.schema_migrations
- WHERE version::TEXT IN (
+ WHERE COALESCE(substring(name FROM '^([0-9]{12})'), version::TEXT) IN (
        '202611070003', '202611100001', '202611100002', '202611100003', '202611100004',
        '202611110001', '202611110002', '202611110003', '202611110004',
        '202611110005', '202611110006', '202611110007', '202611140001'

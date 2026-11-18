@@ -112,8 +112,8 @@ function StandardSignals({
   const shortSignals = ready.filter((item) => item.side === 'SHORT').length;
   const hasCandidates = (data?.candidates.length ?? 0) > 0;
   const degraded = data?.status === 'DEGRADED' && hasCandidates;
-  const statusLabel = !data ? 'Connecting' : data.status === 'LIVE' ? 'Live data' : hasCandidates ? 'Partial data' : 'Awaiting scan';
-  const healthLabel = data ? hasCandidates ? data.status : 'WAITING' : '—';
+  const statusLabel = !data ? 'Connecting' : data.status === 'LIVE' ? 'Recent cached results' : hasCandidates ? 'Partial data' : 'Awaiting scan';
+  const healthLabel = data ? hasCandidates ? (data.status === 'LIVE' ? 'RECENT CACHE' : data.status) : 'WAITING' : '—';
   return <main className="shell">
     <ScannerTabs active={activeTab} onChange={onTabChange} />
     <header className="topbar"><Link className="brand" href="/">ETHCRYPTOHUB</Link><nav className="links"><Link href="/scanner/successful">Successful Signals</Link><Link href="/scanner/history">Signal History</Link><Link href="/scanner/performance">Performance</Link><Link href="/dashboard">Dashboard</Link><Link href="/settings">Settings</Link>{isAdmin && <Link href="/admin">Admin</Link>}<button className="scanner-refresh" onClick={() => void load()} disabled={loading}><span aria-hidden="true">{loading ? '↻' : '⟳'}</span> {loading ? 'Loading…' : 'Refresh results'}</button></nav></header>
@@ -128,15 +128,15 @@ function StandardSignals({
       <article className="scanner-stat-card"><span className="scanner-stat-label">Market health</span><strong className={`scanner-health-value ${degraded ? 'is-warning' : ''}`}>{healthLabel}</strong><span className="scanner-stat-foot">{data ? `Updated ${new Date(data.updatedAt).toLocaleTimeString()}` : 'Waiting for first scan'}</span></article>
     </section>
     <section className="card stack scanner-panel">
-      <div className="scanner-panel-header"><div><p className="mono">MARKET OPPORTUNITIES</p><h2>Signal watchlist</h2><p className="muted">Signals are research references only; no orders are placed.</p><p className="scanner-research-target" role="note">Standard research target: 95% win rate · unverified objective, not an achieved result.</p><p className="muted" role="status">Auto-refresh every 30 seconds · {lastCheckedAt ? `Last checked ${new Date(lastCheckedAt).toLocaleTimeString()}` : 'Checking for updates…'}</p></div>
+      <div className="scanner-panel-header"><div><p className="mono">MARKET OPPORTUNITIES</p><h2>Signal watchlist</h2><p className="muted">Signals are research references only; no orders are placed.</p><p className="scanner-research-target" role="note">Standard research target: 95% win rate · unverified objective, not an achieved result.</p><p className="muted" role="status">Reload saved results every 30 seconds · {lastCheckedAt ? `Last checked ${new Date(lastCheckedAt).toLocaleTimeString()}` : 'Checking for updates…'}</p></div>
         <div className="scanner-controls">
           <label>Timeframe<select value={timeframe} onChange={(event) => setTimeframe(event.target.value as ScannerCandidate['timeframe'])}><option value="5m">5 minutes</option><option value="15m">15 minutes</option><option value="1h">1 hour</option><option value="4h">4 hours</option></select></label>
           <label>Market universe<select value={rankFilter} onChange={(event) => setRankFilter(event.target.value as typeof rankFilter)}><option value="ALL">All enabled pairs</option><option value="TOP_VOLUME">Top volume</option><option value="TOP_GAINER">Top gainers</option><option value="TOP_LOSER">Top losers</option></select></label>
         </div>
       </div>
-      {error && <div role="alert" className="error"><strong>Live scanner data unavailable</strong><br />{error}</div>}
+      {error && <div role="alert" className="error"><strong>Saved scanner results unavailable</strong><br />{error}</div>}
       {notificationWarning && <p role="status" className="scanner-warning">{notificationWarning}</p>}
-      {degraded && <p role="status" className="scanner-warning"><strong>Partial market data</strong><span>{stale} stale and {unavailable} unavailable pairs. Treat this scan as incomplete and refresh before relying on its indicators.</span></p>}
+      {degraded && <p role="status" className="scanner-warning"><strong>Partial market data</strong><span>{stale} stale and {unavailable} unavailable pairs. Reloading saved results does not fetch new market data. A separately authorized scan is required; stale prices and entry targets are withheld.</span></p>}
       {!error && loading && !data && <p className="muted">Loading the latest scheduled Binance scan results…</p>}
       {data && candidates.length === 0 && <p className="scanner-empty"><strong>No scan results yet</strong><span>Background scans refresh a bounded batch of Binance pairs on a rotating timeframe. After syncing the coin universe, an administrator can run an immediate 15-minute scan from Scanner Management.</span>{isAdmin && <Link href="/admin#scanner-management">Open coin management</Link>}</p>}
       {data && ready.length === 0 && candidates.length > 0 && <p className="scanner-empty"><strong>No actionable setups right now</strong><span>Try another timeframe or market list. These indicators are informational and do not execute trades.</span></p>}
@@ -147,8 +147,8 @@ function StandardSignals({
             <div><h3>{item.symbol.replace(/USDT$/, '')}<span> / USDT</span></h3><p>{item.marketRank.map((rank) => rank.replace('TOP_', '').replace('_', ' ')).join(' · ')}</p></div>
           </div>
           <div className="scanner-card-meta">
-            <span className={`scanner-signal-badge ${item.status === 'READY' ? item.side === 'LONG' ? 'is-long' : 'is-short' : 'is-wait'}`}><span aria-hidden="true">{item.status === 'READY' ? item.side === 'LONG' ? '↗' : '↘' : '•'}</span>{item.status === 'READY' ? item.side : item.status === 'STALE' || item.status === 'DATA_UNAVAILABLE' ? 'NO DATA' : 'WAIT'}</span>
-            <div className="scanner-card-score"><span>SETUP SCORE</span><strong>{item.score.value === null ? '—' : `${item.score.value}`}<small>/100</small></strong><small>{item.scannedAt ? `Scanned ${new Date(item.scannedAt).toLocaleTimeString()}` : 'Scan pending'}</small></div>
+            <span className={`scanner-signal-badge ${item.status === 'READY' ? item.side === 'LONG' ? 'is-long' : 'is-short' : 'is-wait'}`}><span aria-hidden="true">{item.status === 'READY' ? item.side === 'LONG' ? '↗' : '↘' : '•'}</span>{item.status === 'READY' ? item.side : item.status === 'STALE' || item.status === 'DATA_UNAVAILABLE' ? (item.status === 'STALE' ? 'STALE CACHE' : 'NO DATA') : 'WAIT'}</span>
+            <div className="scanner-card-score"><span>SETUP SCORE</span><strong>{item.score.value === null ? '—' : `${item.score.value}`}<small>/100</small></strong><small>{item.scannedAt ? `Scanned ${new Date(item.scannedAt).toLocaleString()}` : 'Scan pending'}</small></div>
           </div>
         </div>
         {signalMetadata?.signals[item.symbol] && <div className="scanner-expiry-row">
@@ -156,7 +156,7 @@ function StandardSignals({
           <SignalCountdown expiresAt={signalMetadata.signals[item.symbol]!.expiresAt} serverNow={signalMetadata.serverNow} status={signalMetadata.signals[item.symbol]!.status} />
         </div>}
         <div className="scanner-price-grid">
-          <div className="scanner-price-cell"><span>Current price</span><strong>{item.price === null ? '—' : formatPrice(item.price)}</strong><small className={`scanner-change ${item.priceChangePercent24h !== null && item.priceChangePercent24h < 0 ? 'is-negative' : ''}`}>{item.priceChangePercent24h === null ? '24h change unavailable' : `${item.priceChangePercent24h >= 0 ? '+' : ''}${item.priceChangePercent24h.toFixed(2)}% today`}</small></div>
+          <div className="scanner-price-cell"><span>Price at scan</span><strong>{item.price === null ? '—' : formatPrice(item.price)}</strong><small className={`scanner-change ${item.priceChangePercent24h !== null && item.priceChangePercent24h < 0 ? 'is-negative' : ''}`}>{item.priceChangePercent24h === null ? '24h change unavailable' : `${item.priceChangePercent24h >= 0 ? '+' : ''}${item.priceChangePercent24h.toFixed(2)}% at scan`}</small></div>
           <div className="scanner-price-cell is-entry"><span>Planned entry</span><strong>{item.setup ? formatPrice(item.setup.entryPrice) : '—'}</strong><small>{item.setup ? 'Reference entry price' : 'No confirmed setup'}</small></div>
           <div className="scanner-price-cell is-stop"><span>Stop loss</span><strong>{item.setup ? formatPrice(item.setup.initialStop) : '—'}</strong><small>{item.setup ? 'Initial reference stop' : 'Available when ready'}</small></div>
         </div>

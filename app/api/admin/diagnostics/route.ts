@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { AuthError, requireAdmin } from '../../../../lib/auth';
 import { isDatabaseConfigured, query } from '../../../../lib/db';
 import { getScannerSyncState, consumeScannerAdminRateLimit } from '../../../../lib/scanner-coins';
+import { scannerSyncIsRecent } from '../../../../lib/scanner-snapshot';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -123,8 +124,9 @@ async function checkScanner(): Promise<DiagnosticCheck> {
     return {
       id: 'scanner',
       label: 'Scanner sync',
-      status: 'ok',
+      status: scannerSyncIsRecent(state.last_success_at) ? 'ok' : 'warning',
       detail: `Last successful sync: ${new Date(state.last_success_at).toLocaleString('en-US', { timeZone: 'UTC' })} UTC.`,
+      recommendation: 'Pair discovery status does not establish fresh scan results. Review snapshot timestamps; no automatic recovery is performed.',
     };
   } catch (error) {
     console.error('Admin diagnostic scanner check failed:', error instanceof Error ? error.message : 'Unknown error');
