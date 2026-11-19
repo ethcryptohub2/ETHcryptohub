@@ -2,10 +2,21 @@ import { createHash } from 'node:crypto';
 import type { MarketObservation } from './contracts';
 
 const keys = ['symbol', 'source', 'eventTime', 'receivedAt', 'volumeIntervalMs', 'price', 'bid', 'ask', 'quoteVolume',
-  'buyQuoteVolume', 'sellQuoteVolume', 'bidDepth', 'askDepth', 'openInterest', 'fundingRate', 'fresh', 'sequenceValid', 'feedEpoch'] as const;
+  'buyQuoteVolume', 'sellQuoteVolume', 'bidDepth', 'askDepth', 'openInterest', 'fundingRate', 'fresh', 'sequenceValid', 'feedEpoch', 'requiredInputTimes'] as const;
 const symbolPattern = /^[\p{L}\p{N}_]{2,40}$/u;
 const hash = (value: unknown) => createHash('sha256').update(JSON.stringify(value)).digest('hex');
 const time = (value: number) => Number.isSafeInteger(value) && value > 0;
+/** Optional for legacy local samples, mandatory at the importer boundary. */
+export function validRequiredInputTimes(value: MarketObservation, maximumAgeMs = 5000) {
+  const times = value.requiredInputTimes;
+  if (!times || typeof times !== 'object' || Object.keys(times).sort().join(',') !== 'depth,ticker,trade') return false;
+  const values = [times.ticker, times.trade, times.depth];
+  return values.every(at => Number.isSafeInteger(at) && at > 0 && at <= value.receivedAt && value.receivedAt-at <= maximumAgeMs) && Math.max(...values) === value.eventTime;
+}
+function requiredInputsFreshAt(value: MarketObservation, now: number, maximumAgeMs: number) {
+  return validRequiredInputTimes(value, maximumAgeMs) && Number.isSafeInteger(now) && now >= value.receivedAt &&
+    now - Math.min(...Object.values(value.requiredInputTimes!)) <= maximumAgeMs;
+}
 function symbols(values: readonly string[], maximum: number) {
   if (!values.length || values.length > maximum || new Set(values).size !== values.length ||
       values.some(value => typeof value !== 'string' || !symbolPattern.test(value) || value !== value.toUpperCase())) {
@@ -13,7 +24,7 @@ function symbols(values: readonly string[], maximum: number) {
   }
   return [...values].sort();
 }
-function observation(raw: MarketObservation, now: number, maxAgeMs: number): MarketObservation {
+export function validatePublicMarketObservation(raw: MarketObservation, now: number, maxAgeMs = 5000): MarketObservation {
   if (!raw || typeof raw !== 'object' || Object.keys(raw).some(key => !(keys as readonly string[]).includes(key)) ||
       raw.source !== 'BINANCE_USDM' || !symbolPattern.test(raw.symbol) || raw.symbol !== raw.symbol.toUpperCase() ||
       !time(raw.eventTime) || !time(raw.receivedAt) || raw.eventTime > raw.receivedAt || raw.receivedAt > now ||
@@ -24,11 +35,14 @@ function observation(raw: MarketObservation, now: number, maxAgeMs: number): Mar
       Math.abs(raw.quoteVolume - raw.buyQuoteVolume - raw.sellQuoteVolume) > Math.max(1e-8, raw.quoteVolume * 1e-10) ||
       (raw.volumeIntervalMs !== undefined && (!Number.isFinite(raw.volumeIntervalMs) || raw.volumeIntervalMs <= 0 || raw.volumeIntervalMs > maxAgeMs)) ||
       (raw.openInterest !== undefined && (!Number.isFinite(raw.openInterest) || raw.openInterest < 0)) ||
-      (raw.fundingRate !== undefined && !Number.isFinite(raw.fundingRate))) {
+      (raw.fundingRate !== undefined && !Number.isFinite(raw.fundingRate)) ||
+      (raw.requiredInputTimes !== undefined && !validRequiredInputTimes(raw, maxAgeMs))) {
     throw new Error('Invalid or stale public market observation.');
   }
   // Stable field order makes duplicate hashes independent of JSON key ordering.
-  return Object.fromEntries(keys.filter(key => raw[key] !== undefined).map(key => [key, raw[key]])) as unknown as MarketObservation;
+  const result = structuredClone(Object.fromEntries(keys.filter(key => raw[key] !== undefined).map(key => [key, raw[key]]))) as unknown as MarketObservation;
+  if (result.requiredInputTimes) result.requiredInputTimes = { ticker: result.requiredInputTimes.ticker, trade: result.requiredInputTimes.trade, depth: result.requiredInputTimes.depth };
+  return result;
 }
 
 /** Pure, bounded read-model foundation. No database, network, route or worker activation. */
@@ -48,7 +62,7 @@ export class PublicMarketProjection {
   }
   ingest(raw: MarketObservation, now: number): 'APPLIED' | 'DUPLICATE' | 'SUPERSEDED' {
     if (!time(now)) throw new Error('Invalid projection clock.');
-    const next = observation(raw, now, this.maxAgeMs);
+    const next = validatePublicMarketObservation(raw, now, this.maxAgeMs);
     if (!this.selected.includes(next.symbol)) throw new Error('Observation is outside selected coverage.');
     const previous = this.latest.get(next.symbol);
     if (previous) {
@@ -78,7 +92,7 @@ export class PublicMarketProjection {
       // Old snapshots remain old after restart. Validation uses their own receipt
       // time, while the website view always recomputes age against its clock.
       if (result.latest.has(raw.symbol) || raw.receivedAt > now) throw new Error('Invalid projection checkpoint.');
-      const next = observation(raw, raw.receivedAt, result.maxAgeMs);
+      const next = validatePublicMarketObservation(raw, raw.receivedAt, result.maxAgeMs);
       if (!result.selected.includes(next.symbol)) throw new Error('Invalid projection checkpoint.');
       result.latest.set(next.symbol, next);
     }
@@ -91,18 +105,22 @@ export class PublicMarketProjection {
       const row = this.latest.get(symbol);
       const ageMs = row ? now - row.eventTime : null;
       const recent = row !== undefined && now >= row.receivedAt && ageMs! >= 0 && ageMs! <= this.maxAgeMs;
+      const verified = row !== undefined && requiredInputsFreshAt(row, now, this.maxAgeMs);
+      const legacyRecent = recent && row?.requiredInputTimes === undefined;
+      const oldestRequiredInputAt = row?.requiredInputTimes ? Math.min(...Object.values(row.requiredInputTimes)) : null;
       // eventTime is the newest participating input, not the oldest. Recency
       // cannot extend the original worker's required-input freshness proof.
-      return { symbol, state: !row ? 'UNAVAILABLE' as const : recent ? 'RECENT_OBSERVATION' as const : 'STALE' as const,
-        price: recent ? row!.price : null, ageMs, feedEpoch: row?.feedEpoch ?? null,
-        freshnessVerified: false as const, requiredInputFreshness: 'UNKNOWN_AFTER_RECEIPT' as const };
+      return { symbol, state: !row ? 'UNAVAILABLE' as const : verified ? 'FRESH_OBSERVATION' as const : legacyRecent ? 'RECENT_OBSERVATION' as const : 'STALE' as const,
+        price: verified || legacyRecent ? row!.price : null, ageMs, feedEpoch: row?.feedEpoch ?? null,
+        freshnessVerified: verified, oldestRequiredInputAt, validUntil: oldestRequiredInputAt === null ? null : oldestRequiredInputAt+this.maxAgeMs,
+        requiredInputFreshness: verified ? 'VERIFIED_ALL_REQUIRED_INPUTS' as const : 'UNVERIFIED_OR_EXPIRED' as const };
     });
     const times = [...this.latest.values()].map(row => row.receivedAt);
     return { market: { source: 'Validated Binance USD-M public observations', enabledSymbols: this.universe.length,
       snapshotSymbols: this.latest.size, latestSnapshotAt: times.length ? new Date(Math.max(...times)).toISOString() : null,
       continuousFeedVerified: false as const },
       tickerCoverage: { state: 'NOT_PROJECTED' as const, reason: 'Selected observations do not establish all-universe ticker coverage.' },
-      selectedCoverage: { total: rows.length, recent: rows.filter(row => row.state === 'RECENT_OBSERVATION').length,
+      selectedCoverage: { total: rows.length, fresh: rows.filter(row => row.state === 'FRESH_OBSERVATION').length, recent: rows.filter(row => row.state === 'RECENT_OBSERVATION').length,
         stale: rows.filter(row => row.state === 'STALE').length, unavailable: rows.filter(row => row.state === 'UNAVAILABLE').length },
       rows, candidates: [], executionEnabled: false as const };
   }

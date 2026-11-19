@@ -69,7 +69,7 @@ export async function activateApprovedWorker(env = process.env, args = process.a
     try {await epochHandle.writeFile(JSON.stringify({run:epoch}));await epochHandle.sync();}finally{await epochHandle.close();}
     await fs.rename(epochTemp,epochPath);
     if(stopped)throw new Error('Worker startup cancelled.');
-    journal=await openObservationJournal(directory);
+    journal=await openObservationJournal(directory,{runId:epoch});
     if(stopped)throw new Error('Worker startup cancelled.');
     worker=new PublicMarketWorker({
       fetch:runtime.fetch,

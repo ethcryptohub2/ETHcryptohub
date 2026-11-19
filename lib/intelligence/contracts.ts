@@ -20,6 +20,8 @@ export interface MarketObservation {
   sequenceValid: boolean;
   /** Changes when continuity is lost. Consumers must discard prior per-symbol history. */
   feedEpoch?: number;
+  /** Exchange timestamps of every required input; newest eventTime alone is insufficient. */
+  requiredInputTimes?: { ticker: number; trade: number; depth: number };
 }
 
 export type ResearchClassification = 'WATCH' | 'READY_FOR_RESEARCH' | 'REJECTED';

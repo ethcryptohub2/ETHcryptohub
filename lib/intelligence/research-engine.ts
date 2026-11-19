@@ -79,10 +79,16 @@ export const RESEARCH_POLICIES = Object.freeze({
 });
 
 const finite = (value: number) => Number.isFinite(value);
+function validRequiredInputTimes(value: MarketObservation) {
+  const times = value.requiredInputTimes;
+  return !!times && Object.keys(times).sort().join(',') === 'depth,ticker,trade' &&
+    Object.values(times).every(at => Number.isSafeInteger(at) && at > 0 && at <= value.receivedAt && value.receivedAt-at <= 5000) &&
+    Math.max(...Object.values(times)) === value.eventTime;
+}
 const observationFields = new Set([
   'symbol', 'source', 'eventTime', 'receivedAt', 'price', 'bid', 'ask', 'quoteVolume',
   'buyQuoteVolume', 'sellQuoteVolume', 'bidDepth', 'askDepth', 'openInterest', 'fundingRate',
-  'fresh', 'sequenceValid', 'feedEpoch', 'volumeIntervalMs',
+  'fresh', 'sequenceValid', 'feedEpoch', 'volumeIntervalMs', 'requiredInputTimes',
 ]);
 function validObservation(value: MarketObservation) {
   return Object.keys(value).every((key) => observationFields.has(key)) &&
@@ -95,7 +101,8 @@ function validObservation(value: MarketObservation) {
     (value.openInterest === undefined || (finite(value.openInterest) && value.openInterest >= 0)) &&
     (value.fundingRate === undefined || finite(value.fundingRate)) &&
     (value.volumeIntervalMs === undefined || (finite(value.volumeIntervalMs) && value.volumeIntervalMs > 0 && value.volumeIntervalMs <= 60_000)) &&
-    (value.feedEpoch === undefined || (Number.isSafeInteger(value.feedEpoch) && value.feedEpoch >= 0));
+    (value.feedEpoch === undefined || (Number.isSafeInteger(value.feedEpoch) && value.feedEpoch >= 0)) &&
+    (value.requiredInputTimes === undefined || validRequiredInputTimes(value));
 }
 function ema(values: number[], period: number) {
   if (values.length < period) return null;
@@ -156,7 +163,8 @@ export class ResearchEngine {
     const shapeValid = validObservation(observation);
     const invalid = invalidClock || !shapeValid || !observation.fresh || !observation.sequenceValid ||
       observation.eventTime > now || observation.receivedAt > now || observation.receivedAt < observation.eventTime ||
-      now - observation.eventTime > this.maxAgeMs || now - observation.receivedAt > this.maxAgeMs;
+      now - observation.eventTime > this.maxAgeMs || now - observation.receivedAt > this.maxAgeMs ||
+      (observation.requiredInputTimes !== undefined && now-Math.min(...Object.values(observation.requiredInputTimes)) > this.maxAgeMs);
     const epoch = observation.feedEpoch ?? 0;
     const oldEpoch = this.epochs.get(observation.symbol);
     if (!invalid && oldEpoch !== undefined && oldEpoch !== epoch) {
