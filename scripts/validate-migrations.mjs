@@ -28,9 +28,12 @@ export function queryLocalMigrationStatus(run = spawnSync) {
   const expectedVersions = localDatabaseVersions.map((version) => `'${version}'`).join(', ');
   const sql = [
     'BEGIN READ ONLY;',
-    `SELECT COALESCE(json_agg(version::text ORDER BY version::text), '[]'::json)::text`,
-    'FROM supabase_migrations.schema_migrations',
-    `WHERE version::text IN (${expectedVersions});`,
+    // MCP may assign a 14-digit application-time version and retain the
+    // reviewed filename prefix in name. Normalize without repairing the ledger.
+    `SELECT COALESCE(json_agg(DISTINCT migration_version ORDER BY migration_version), '[]'::json)::text`,
+    'FROM (SELECT COALESCE(substring(name FROM \'^([0-9]{12})_\'), version::text) AS migration_version',
+    'FROM supabase_migrations.schema_migrations) AS normalized',
+    `WHERE migration_version IN (${expectedVersions});`,
     'COMMIT;',
   ].join(' ');
   const result = run('psql', [

@@ -6,17 +6,23 @@ CREATE SCHEMA IF NOT EXISTS smartexit_private;
 REVOKE ALL ON SCHEMA smartexit_private FROM PUBLIC, anon, authenticated;
 
 CREATE TABLE smartexit_private.paper_account_states (
-  tenant_user_id BIGINT PRIMARY KEY REFERENCES public.users(id),
-  revision BIGINT NOT NULL CHECK (revision >= 0),
-  state JSONB NOT NULL CHECK (jsonb_typeof(state) = 'object'),
+  tenant_user_id BIGINT PRIMARY KEY REFERENCES public.users(id)
+    CHECK (tenant_user_id BETWEEN 1 AND 9007199254740991),
+  revision BIGINT NOT NULL CHECK (revision BETWEEN 1 AND 9007199254740991),
+  state JSONB NOT NULL CHECK (jsonb_typeof(state) = 'object')
+    CHECK (octet_length(state::text) <= 4194304)
+    CHECK (state ? 'version' AND state->'version' = '1'::jsonb),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
   CHECK (state ? 'tenantId' AND jsonb_typeof(state->'tenantId') = 'number'
+    AND state->>'tenantId' ~ '^[1-9][0-9]*$'
     AND (state->>'tenantId')::BIGINT = tenant_user_id),
   CHECK (state ? 'revision' AND jsonb_typeof(state->'revision') = 'number'
+    AND state->>'revision' ~ '^[1-9][0-9]*$'
     AND (state->>'revision')::BIGINT = revision)
 );
--- Atomic repository requirement: SELECT ... FOR UPDATE per tenant, validate
--- the authenticated actor, then compare revision and update in one transaction.
+-- The unwired PostgresPaperJournal uses a transaction-scoped advisory lock for
+-- absent-row creation, SELECT ... FOR UPDATE, then revision-checked writes.
+-- Actor identity must be verified by the server before creating the adapter.
 -- No credential fields are permitted in the state contract.
 
 CREATE TABLE smartexit_private.research_decisions (

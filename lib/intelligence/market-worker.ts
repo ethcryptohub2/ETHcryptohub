@@ -53,6 +53,11 @@ export class PublicMarketWorker {
   private failedSinkSymbols = new Set<string>();
   private lifecycle = 0;
   private synchronization = 0;
+  private lastCycleAt: number | null = null;
+  private lastCycleDurationMs = 0;
+  private lastSinkAt: number | null = null;
+  private maxSinkDurationMs = 0;
+  private processedFrames = 0;
   private failures = { malformedFrames:0, disconnects:0, sinkFailures:0, snapshotFailures:0, restRateLimits:0, backpressure:0 };
   constructor(deps: WorkerDependencies, trackedSymbols: string[]) { this.deps=deps;this.trackedSymbols=[...trackedSymbols];this.queue=deps.makeQueue(); subscriptionPlan(trackedSymbols); }
   private async get(path: string, weight: number) {
@@ -146,10 +151,11 @@ export class PublicMarketWorker {
   async cycle() {
     if (!this.running||!this.feed||this.processing) return;
     const lifecycle=this.lifecycle;
+    const cycleStarted=this.deps.now();
     this.processing=true;
     try {
       for (const c of this.connections) if (this.deps.now()-c.openedAt>=MAX_CONNECTION_MS || (!c.live&&this.deps.now()-c.openedAt>15_000) || (c.live&&this.deps.now()-c.lastMessageAt>60_000)) this.disconnect(c);
-      for (const frame of this.queue.drain(128)) this.feed.ingest(frame.payload,frame.receivedAt);
+      for (const frame of this.queue.drain(128)) { this.feed.ingest(frame.payload,frame.receivedAt); this.processedFrames++; }
       for (const symbol of this.trackedSymbols) if (this.feed.needsTradeRestart(symbol)) { this.feed.reset(symbol,'TRADE_WINDOW_RESTART_REQUIRED',this.deps.now()); this.snapshotsAt.delete(symbol); }
       if (!this.connections.every(c=>c.live)) return;
       const now=this.deps.now();
@@ -166,15 +172,18 @@ export class PublicMarketWorker {
         if(!this.running||lifecycle!==this.lifecycle)return;
         const observation=this.feed.takeObservation(symbol,this.deps.now());
         if (observation) {
-          try { await this.deps.sink(observation); this.failedSinkSymbols.delete(symbol); }
+          const sinkStarted=this.deps.now();
+          try { await this.deps.sink(observation); this.failedSinkSymbols.delete(symbol); this.lastSinkAt=this.deps.now(); }
           catch { this.failedSinkSymbols.add(symbol); this.failures.sinkFailures++; this.feed.reset(symbol,'SINK_WRITE_FAILED',this.deps.now()); this.snapshotsAt.delete(symbol); }
+          finally { this.maxSinkDurationMs=Math.max(this.maxSinkDurationMs,this.deps.now()-sinkStarted); }
         }
       }
-    } finally { this.processing=false; }
+    } finally { this.lastCycleDurationMs=this.deps.now()-cycleStarted;this.lastCycleAt=this.deps.now();this.processing=false; }
   }
   health() {
     const now=this.deps.now();
-    return { running:this.running, sinkHealthy:this.failedSinkSymbols.size===0, failedSinkSymbols:[...this.failedSinkSymbols], discoveredSymbols:this.feed?.symbols.length??0, trackedSymbols:this.trackedSymbols.length, queueSize:this.queue.size, queueDropped:this.queue.dropped, connections:this.connections.map(c=>({connected:c.live,reconnectAttempts:c.attempt})), failures:{...this.failures}, symbols:this.trackedSymbols.map(symbol=>this.feed?.health(symbol,now)??{symbol,status:'UNAVAILABLE',reason:'WORKER_NOT_STARTED'}) };
+    const symbols=this.trackedSymbols.map(symbol=>this.feed?.health(symbol,now)??{symbol,status:'UNAVAILABLE',reason:'WORKER_NOT_STARTED'});
+    return { running:this.running, sinkHealthy:this.failedSinkSymbols.size===0, failedSinkSymbols:[...this.failedSinkSymbols], discoveredSymbols:this.feed?.symbols.length??0, trackedSymbols:this.trackedSymbols.length, tickerCoverage:this.feed?.tickerCoverage(now)??{total:0,fresh:0,stale:0,unseen:0,maxFreshLagMs:null}, researchCoverage:{selected:symbols.length,fresh:symbols.filter(s=>s.status==='FRESH').length}, queueSize:this.queue.size, queueBytes:this.queue.byteSize, queueOldestAgeMs:this.queue.oldestAgeMs(now), queueDropped:this.queue.dropped, processedFrames:this.processedFrames, lastCycleAt:this.lastCycleAt, lastCycleDurationMs:this.lastCycleDurationMs, lastSinkAt:this.lastSinkAt,maxSinkDurationMs:this.maxSinkDurationMs, connections:this.connections.map(c=>({connected:c.live,reconnectAttempts:c.attempt,lastMessageAgeMs:Math.max(0,now-c.lastMessageAt)})), failures:{...this.failures}, symbols };
   }
   stop() {
     this.running=false;

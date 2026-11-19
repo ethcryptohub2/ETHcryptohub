@@ -112,6 +112,22 @@ test('local database verification reports missing versions and unavailable datab
   assert.match(unavailable.message, /localhost-only/);
 });
 
+test('localhost ledger query normalizes MCP filename identities without changing history', () => {
+  const result = queryLocalMigrationStatus((command, args) => {
+    assert.equal(command, 'psql');
+    const sql = args.at(-1);
+    assert.match(sql, /substring\(name FROM '\^\(\[0-9\]\{12\}\)_'\)/);
+    assert.match(sql, /COALESCE\(substring/);
+    assert.match(sql, /version::text/);
+    assert.match(sql, /WHERE migration_version IN/);
+    assert.doesNotMatch(sql, /\b(?:INSERT|UPDATE|DELETE|ALTER|DROP)\b/i);
+    return { status: 0, stdout: '["202611100002"]\n' };
+  });
+  assert.equal(result.status, 'MISSING');
+  assert.deepEqual(result.appliedVersions, ['202611100002']);
+  assert.ok(result.missingVersions.includes('202611100003'));
+});
+
 test('migration validator rejects duplicate versions and malformed migration names', async () => {
   await withDirectory(async (directory, verificationDirectory) => {
     await writeExpectedFiles(directory, verificationDirectory);

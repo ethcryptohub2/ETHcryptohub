@@ -42,6 +42,17 @@ export class BinanceMarketFeed {
     for (const symbol of symbols) { this.states.set(symbol, blank()); this.epochs.set(symbol, epochSeed); }
   }
   metrics() { return { ...this.counters }; }
+  /** Ticker coverage is independent of trade/book readiness; never equate the two. */
+  tickerCoverage(now: number) {
+    let fresh=0, stale=0, unseen=0; let maxFreshLagMs=0;
+    for (const state of this.states.values()) {
+      if (!state.tickerTime) { unseen++; continue; }
+      const lag=now-state.tickerTime;
+      if (lag>=0 && lag<=this.freshnessMs && now>=state.tickerReceived) { fresh++; maxFreshLagMs=Math.max(maxFreshLagMs,lag); }
+      else stale++;
+    }
+    return { total:this.symbols.length, fresh, stale, unseen, maxFreshLagMs:fresh?maxFreshLagMs:null };
+  }
   private advanceEpoch(symbol: string) {
     const next=(this.epochs.get(symbol)??this.epochSeed)+1;
     if(next>=this.epochSeed+1_000_000) { this.states.set(symbol,blank()); throw new Error('FEED_EPOCH_CAPACITY_EXCEEDED'); }
@@ -177,4 +188,6 @@ export class BoundedMarketQueue {
   drain(limit = 128) { if (!Number.isInteger(limit) || limit < 1 || limit > 10000) throw new Error('INVALID_DRAIN_LIMIT'); const items=this.frames.splice(0,limit); this.bytes-=items.reduce((n,x)=>n+x.bytes,0); return items; }
   clear() { this.frames=[]; this.bytes=0; }
   get size() { return this.frames.length; }
+  get byteSize() { return this.bytes; }
+  oldestAgeMs(now: number) { return this.frames.length ? Math.max(0,now-this.frames[0].receivedAt) : 0; }
 }

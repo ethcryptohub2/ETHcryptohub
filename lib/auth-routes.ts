@@ -49,14 +49,26 @@ async function consumeRateLimit(bucket: string, limit: number, windowSeconds: nu
 
 async function issueCode(userId: number, email: string) {
   const code = String(randomInt(0, 1_000_000)).padStart(6, '0');
+  const codeHash = otpHash(userId, code);
   await query(
     `INSERT INTO public.email_verification_codes (user_id, code_hash, expires_at, attempts, locked_until)
      VALUES ($1, $2, EXTRACT(EPOCH FROM NOW() + INTERVAL '10 minutes')::bigint, 0, NULL)
      ON CONFLICT (user_id) DO UPDATE SET code_hash = EXCLUDED.code_hash,
        expires_at = EXCLUDED.expires_at, attempts = 0, locked_until = NULL, created_at = NOW()`,
-    [userId, otpHash(userId, code)],
+    [userId, codeHash],
   );
-  await sendVerificationCode(email, code);
+  try {
+    await sendVerificationCode(email, code);
+  } catch (error) {
+    // A failed delivery must not leave a valid undelivered code. Match the hash
+    // so a concurrent resend's newer code cannot be deleted by this cleanup.
+    try {
+      await query('DELETE FROM public.email_verification_codes WHERE user_id = $1 AND code_hash = $2', [userId, codeHash]);
+    } catch (cleanupError) {
+      console.error('Verification code cleanup failed:', cleanupError instanceof Error ? cleanupError.name : 'UnknownError');
+    }
+    throw error;
+  }
 }
 
 async function issuePasswordResetCode(userId: number, email: string) {
@@ -160,7 +172,7 @@ export async function authRoute(action: string, request: NextRequest) {
         }
         const codeMatches = row.code_hash.startsWith('$2')
           ? await bcrypt.compare(body.code, row.code_hash)
-          : row.code_hash === otpHash(user.id, body.code);
+          : safeEqual(row.code_hash, otpHash(user.id, body.code));
         if (!codeMatches) {
           const attempts = Number(row.attempts) + 1;
           await client.query(
@@ -327,7 +339,7 @@ export async function authRoute(action: string, request: NextRequest) {
     }
 
     if (action === 'me') {
-      return NextResponse.json({ data: await currentUser() });
+      return NextResponse.json({ data: await currentUser() }, { headers: { 'Cache-Control': 'no-store' } });
     }
 
     return jsonError('Not found.', 404);

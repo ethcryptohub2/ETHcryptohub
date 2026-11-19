@@ -1,0 +1,5 @@
+# No secrets. This template deliberately cannot activate a worker as supplied.
+SMARTEXIT_DEPLOYMENT_ENV=staging
+SMARTEXIT_MARKET_WORKER_APPROVAL=NOT_APPROVED
+SMARTEXIT_MARKET_SYMBOLS=
+SMARTEXIT_MARKET_OUTPUT_DIRECTORY=/var/lib/smartexit-market

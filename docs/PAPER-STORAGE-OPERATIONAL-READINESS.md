@@ -1,0 +1,21 @@
+# Paper storage operational readiness
+
+`lib/intelligence/postgres-paper-journal.ts` implements an unwired PostgreSQL `PaperJournal` adapter. It never constructs a pool, reads environment secrets, imports the application database or enables a route. Remote paper POST remains hard-disabled. No SQL was executed to validate this foundation.
+
+The adapter binds one verified numeric server actor at construction and rejects any other tenant before acquiring a connection. Every row read/write is parameterized by that tenant; unknown/mismatched revision or tenant data is rejected. It uses one checked-out connection for BEGIN, transaction-local lock/statement timeouts, transaction-scoped advisory lock, row lock and compare-and-set write. The advisory lock covers two simultaneous initializers when a row does not yet exist; row locks alone do not cover that case. Read-modify-write callbacks are synchronous and rollback on rejection. A duplicate acknowledgement may keep the exact unchanged revision/state; mutated states must advance exactly one revision. A credential-free bounded payload is validated before writing.
+
+Commit response loss is ambiguous: the database may already have committed. The connection is discarded, the callback is never automatically replayed, and the caller must reconcile using the original intent/fill idempotency key. The existing tenant service persists those identities and acknowledgements. Do not generate replacement IDs on retry. A normal read after restart can recover durable state, but this does not make read-then-submit safe without the journal transaction.
+
+Eight offline tests use a serialized transaction double: concurrent first creation, populated tenant separation, restart reading, idempotent no-write acknowledgements, CAS conflicts, unauthorized tenant calls before connection, corrupt/credential-bearing states, callback failure, nested corruption, rejected asynchronous callbacks and actual TenantPaperService reservation/fill commit-loss retries. A strict nested state schema validates account/config/policy/order/fill/audit fields and rejects unknown metadata; repeated fill recovery preserves fees, quantity and revision. These verify code boundaries, not a deployed PostgreSQL lock manager or RLS. No claimed remote readiness follows from mocked success.
+
+The SQL draft remains outside migrations. It now constrains JavaScript-safe positive integer identities/revisions, rejects fractional JSON identities/revisions, requires version 1 and bounds stored JSON text to 4MiB. PostgreSQL JSONB text may include spacing beyond JSON.stringify size, so the server constraint remains authoritative. A rejected oversized payload must fail closed; no automatic pruning of idempotency history is permitted.
+
+## Remaining activation prerequisites
+
+1. A verified restorable Staging backup and separate approval for the exact private-schema SQL draft.
+2. Review a dedicated private-schema role and pool permissions. Browser/Public/anon/authenticated remain denied, RLS remains enabled and forced with no policies; no grants were added. A bypass-RLS role still requires the adapter's application identity checks. Custom app numeric users are not Supabase auth.uid identities.
+3. Authorized local disposable PostgreSQL or approved Staging fixtures to verify actual advisory/row-lock behavior, rollback, pool disconnects, transaction-pool compatibility and RLS/role grants. Do not use real customer rows or change passwords for this test.
+4. Wire only through a server repository that derives actor identity from the verified session; never instantiate from JSON tenantId. Review pool exhaustion and statement/lock timeout budgets under expected load.
+5. Before remote paper enablement, test actual restart retry and commit ambiguity with original IDs; approve durable backups, retention and recovery. Keep exchange orders, credentials and Live/Demo execution out of this subsystem.
+
+Lock design follows [PostgreSQL explicit locking](https://www.postgresql.org/docs/current/explicit-locking.html): transaction locks release at transaction end; session locks must not be substituted in a transaction-pooled connection. Supabase's current changelog was checked for this work; no Supabase client or CLI version was changed.

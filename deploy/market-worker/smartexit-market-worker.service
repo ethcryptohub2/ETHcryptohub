@@ -1,0 +1,34 @@
+# PREPARED ONLY. Do not install/start without separate Staging worker approval.
+[Unit]
+Description=SmartExit Staging public market worker
+After=network-online.target
+Wants=network-online.target
+ConditionPathExists=/etc/smartexit/worker-activation-approved
+StartLimitIntervalSec=300
+StartLimitBurst=3
+
+[Service]
+Type=simple
+User=smartexit-market
+Group=smartexit-market
+WorkingDirectory=/opt/smartexit
+EnvironmentFile=/etc/smartexit/market-worker.conf
+ExecStart=/usr/bin/node --max-old-space-size=512 /opt/smartexit/scripts/market-intelligence-worker.mjs --activate-approved-worker
+Restart=on-failure
+RestartSec=30
+TimeoutStopSec=30
+KillSignal=SIGTERM
+UMask=0077
+StateDirectory=smartexit-market
+ReadWritePaths=/var/lib/smartexit-market
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+NoNewPrivileges=true
+CapabilityBoundingSet=
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+MemoryMax=768M
+TasksMax=32
+StandardOutput=journal
+StandardError=journal
+# No [Install] target: boot activation is deliberately not bundled.
