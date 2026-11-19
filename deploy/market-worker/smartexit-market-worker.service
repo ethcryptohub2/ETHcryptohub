@@ -13,7 +13,7 @@ User=smartexit-market
 Group=smartexit-market
 WorkingDirectory=/opt/smartexit
 EnvironmentFile=/etc/smartexit/market-worker.conf
-ExecStart=/usr/bin/node --max-old-space-size=512 /opt/smartexit/scripts/market-intelligence-worker.mjs --activate-approved-worker
+ExecStart=/usr/bin/env -i PATH=/usr/bin:/bin SMARTEXIT_DEPLOYMENT_ENV=${SMARTEXIT_DEPLOYMENT_ENV} SMARTEXIT_MARKET_WORKER_APPROVAL=${SMARTEXIT_MARKET_WORKER_APPROVAL} SMARTEXIT_MARKET_SYMBOLS=${SMARTEXIT_MARKET_SYMBOLS} SMARTEXIT_MARKET_OUTPUT_DIRECTORY=${SMARTEXIT_MARKET_OUTPUT_DIRECTORY} /usr/bin/node --max-old-space-size=512 /opt/smartexit/scripts/market-intelligence-worker.mjs --activate-approved-worker
 Restart=on-failure
 RestartSec=30
 TimeoutStopSec=30

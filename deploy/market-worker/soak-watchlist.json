@@ -1,0 +1,26 @@
+{
+  "version": 1,
+  "status": "PROPOSED_NOT_ACTIVATED",
+  "venue": "BINANCE_USDM",
+  "quoteAsset": "USDT",
+  "contractType": "PERPETUAL",
+  "symbols": [
+    "BTCUSDT", "ETHUSDT", "BNBUSDT", "SOLUSDT", "XRPUSDT",
+    "DOGEUSDT", "ADAUSDT", "AVAXUSDT", "LINKUSDT", "DOTUSDT",
+    "LTCUSDT", "BCHUSDT", "TRXUSDT", "TONUSDT", "SUIUSDT",
+    "NEARUSDT", "APTUSDT", "ARBUSDT", "OPUSDT", "INJUSDT"
+  ],
+  "qualification": {
+    "currentMetricsVerified": false,
+    "requiresFreshExchangeInfoTradingStatus": true,
+    "minimumQuoteVolume24hUSDT": 20000000,
+    "maximumMedianSpreadBps": 10,
+    "minimumMedianTop20DepthPerSideUSDT": 250000,
+    "minimum24hRangePct": 0.5,
+    "maximum24hRangePct": 20,
+    "spreadAndDepthSampleMinutes": 5,
+    "onFailure": "STOP_AND_REVIEW_LIST_NO_AUTOMATIC_SUBSTITUTION"
+  },
+  "allUniverseTicker": "DISCOVERED_ELIGIBLE_ACTIVE_STABLECOIN_PERPETUALS_SEPARATE_FROM_SELECTED_DEPTH_AND_TRADES",
+  "note": "Research/load candidates, not current liquidity rankings or trading advice. Qualification is a proposed future authorized public read-only measurement; no market probe or worker activation occurred."
+}
