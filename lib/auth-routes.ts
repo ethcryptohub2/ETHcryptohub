@@ -6,6 +6,7 @@ import { createSession, currentUser, safeEqual } from './auth';
 import { query } from './db';
 import { EmailDeliveryError, sendPasswordResetCode, sendVerificationCode } from './email';
 import { guardedPost, jsonError } from './http';
+import { assertPasswordRecoveryReady, PasswordRecoveryUnavailableError } from './auth-recovery-readiness';
 
 const emailSchema = z.string().trim().email().max(255);
 const passwordResetNotice =
@@ -222,6 +223,9 @@ export async function authRoute(action: string, request: NextRequest) {
           { status: 429, headers: { 'Cache-Control': 'no-store', 'Retry-After': '900' } },
         );
       }
+      // Preserve rate limits, then check availability before account lookup so
+      // missing schema cannot distinguish known and unknown addresses.
+      await assertPasswordRecoveryReady((sql) => query<{ ready: boolean }>(sql));
       const lookup = await query<{ id: number; is_email_verified: number; is_active: number }>(
         'SELECT id, is_email_verified, is_active FROM public.users WHERE email = $1 LIMIT 1',
         [email],
@@ -255,6 +259,7 @@ export async function authRoute(action: string, request: NextRequest) {
           { status: 429, headers: { 'Cache-Control': 'no-store', 'Retry-After': '900' } },
         );
       }
+      await assertPasswordRecoveryReady((sql) => query<{ ready: boolean }>(sql));
       const lookup = await query<{ id: number; is_email_verified: number; is_active: number }>(
         'SELECT id, is_email_verified, is_active FROM public.users WHERE email = $1 LIMIT 1',
         [email],
@@ -327,6 +332,11 @@ export async function authRoute(action: string, request: NextRequest) {
 
     return jsonError('Not found.', 404);
   } catch (error) {
+    if (error instanceof PasswordRecoveryUnavailableError) {
+      return NextResponse.json({ error: error.message, code: 'PASSWORD_RECOVERY_UNAVAILABLE' }, {
+        status: 503, headers: { 'Cache-Control': 'no-store' },
+      });
+    }
     if (error instanceof ZodError) return jsonError('Please check the submitted information.', 422);
     if (error instanceof SyntaxError) return jsonError('Invalid request body.', 400);
     if (error instanceof EmailDeliveryError) {

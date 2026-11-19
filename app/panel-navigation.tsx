@@ -77,6 +77,7 @@ function getHashSnapshot() {
 const userLinks: NavigationLink[] = [
   { href: '/dashboard', label: 'Overview', icon: 'overview' },
   { href: '/scanner', label: 'Live signals', icon: 'scanner' },
+  { href: '/intelligence', label: 'Research workspace', icon: 'activity' },
   { href: '/scanner/history', label: 'Signal history', icon: 'history' },
   { href: '/scanner/performance', label: 'Performance', icon: 'performance' },
   { href: '/positions', label: 'Open positions', icon: 'positions' },
@@ -87,6 +88,7 @@ const userLinks: NavigationLink[] = [
 
 const adminLinks: NavigationLink[] = [
   { href: '/admin', label: 'Admin overview', icon: 'overview' },
+  { href: '/admin/intelligence', label: 'Feed & paper readiness', icon: 'system' },
   { href: '/admin#scanner-management', label: 'Scanner management', icon: 'scanner' },
   { href: '/admin#admin-signal-management', label: 'Signal management', icon: 'activity' },
   { href: '/admin#admin-news', label: 'News management', icon: 'news' },
@@ -129,6 +131,7 @@ export function PanelNavigation() {
   );
   const hash = useSyncExternalStore(subscribeToHash, getHashSnapshot, () => '');
   const isPanelPage = pathname.startsWith('/dashboard') ||
+    pathname.startsWith('/intelligence') ||
     pathname.startsWith('/scanner') ||
     pathname.startsWith('/signals') ||
     pathname.startsWith('/positions') ||
