@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { AuthError, requireAdmin } from '../../../../lib/auth';
 import { validCsrf } from '../../../../lib/http';
+import { createAdminReadLimiter } from '../../../../lib/admin-read-rate-limit';
 import {
   adjustPremiumAccess,
   consumeSubscriptionAdminLimit,
@@ -14,6 +15,7 @@ import {
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
+const allowRead = createAdminReadLimiter();
 
 const emailSchema = z.string().email().max(255);
 const postSchema = z.discriminatedUnion('action', [
@@ -68,7 +70,11 @@ function failure(error: unknown, fallback: string) {
 export async function GET(request: NextRequest) {
   try {
     const admin = await requireAdmin();
-    await consumeSubscriptionAdminLimit(admin.id, 'read');
+    if (!allowRead(admin.id)) {
+      return NextResponse.json({ error: 'Too many subscription administration requests. Wait a minute and retry.' }, {
+        status: 429, headers: { 'Cache-Control': 'no-store' },
+      });
+    }
     const params = request.nextUrl.searchParams;
     const parsed = z.object({
       search: z.string().trim().max(255).default(''),

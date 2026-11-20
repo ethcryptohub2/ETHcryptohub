@@ -69,6 +69,20 @@ test('Preview rejects enabled Bybit Demo order submission', () => {
     error.includes('SMARTEXIT_BYBIT_DEMO_ORDER_SUBMISSION_ENABLED')));
 });
 
+test('Preview rejects opt-in Demo services and public provider traffic for this release', () => {
+  for (const gate of [
+    'SMARTEXIT_ADMIN_DEMO_REMOTE_SERVICE_ENABLED',
+    'SMARTEXIT_ADMIN_BINANCE_DEMO_LAB_ENABLED',
+    'SMARTEXIT_ADMIN_BYBIT_DEMO_LAB_ENABLED',
+    'SMARTEXIT_ADMIN_SCANNER_REFRESH_ENABLED',
+    'SMARTEXIT_PUBLIC_REST_SNAPSHOT_ENABLED',
+  ]) {
+    const report = validateDeploymentEnvironment({ ...validPreview, [gate]: 'true' }, demoSource);
+    assert.equal(report.valid, false);
+    assert.ok(report.errors.includes(`Staging remote service gates must remain unset or false: ${gate}.`));
+  }
+});
+
 test('Preview fails closed on Production key reuse and enabled trading gates', () => {
   const reusedKey = '2'.repeat(64);
   const reusedFingerprint = createHash('sha256').update(Buffer.from(reusedKey, 'hex')).digest('hex');

@@ -9,13 +9,14 @@ import type {
   MarketScannerResponse,
 } from '../../smartexit/apps/api/src/services/market-scanner';
 import { recommendedMaxAgeSeconds } from '../../smartexit/apps/api/src/services/market-scanner';
-import { savedScannerCandidate } from '../../lib/scanner-snapshot';
+import { applyScannerSignalValidity, savedScannerCandidate } from '../../lib/scanner-snapshot';
 import { SignalCountdown } from '../countdown';
 
 type SignalMetadata = {
   signals: Record<string, { id: string; generatedAt: string; expiresAt: string; status: string } | null>;
   serverNow: string;
 };
+type SignalClock = { serverNow: string; receivedAt: number };
 
 const AUTO_REFRESH_INTERVAL_MS = 30_000;
 
@@ -43,20 +44,24 @@ function StandardSignals({
   activeTab: 'standard' | 'scalping';
   onTabChange: (tab: 'standard' | 'scalping') => void;
 }) {
-  const [data, setData] = useState<MarketScannerResponse | null>(null);
+  const [savedData, setData] = useState<MarketScannerResponse | null>(null);
   const [signalMetadata, setSignalMetadata] = useState<SignalMetadata | null>(null);
+  const [signalClock, setSignalClock] = useState<SignalClock | null>(null);
   const [notificationWarning, setNotificationWarning] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
   const [lastCheckedAt, setLastCheckedAt] = useState<number | null>(null);
   const [freshnessNow, setFreshnessNow] = useState(0);
-  const requestInFlight = useRef(false);
+  const requestInFlight = useRef<AbortController | null>(null);
   const [timeframe, setTimeframe] = useState<ScannerCandidate['timeframe']>('15m');
+  const data = savedData?.timeframe === timeframe ? savedData : null;
   const [rankFilter, setRankFilter] = useState<'ALL' | ScannerCandidate['marketRank'][number]>('ALL');
   const load = useCallback(async () => {
-    setFreshnessNow(Date.now());
+    setFreshnessNow(performance.now());
     if (requestInFlight.current) return;
-    requestInFlight.current = true;
+    const controller = new AbortController();
+    requestInFlight.current = controller;
+    const requestedAt = performance.now();
     setLoading(true);
     setError('');
     try {
@@ -71,28 +76,38 @@ function StandardSignals({
         minimumScore: '60',
         quoteAsset: 'USDT',
       });
-      const response = await fetch(`/api/scanner?${params}`, { credentials: 'same-origin', cache: 'no-store' });
+      const response = await fetch(`/api/scanner?${params}`, { credentials: 'same-origin', cache: 'no-store', signal: controller.signal });
       const body = await response.json() as {
         data?: MarketScannerResponse;
         error?: string;
         signalMetadata?: SignalMetadata;
         notificationWarning?: string;
       };
+      if (controller.signal.aborted) return;
       if (!response.ok || !body.data) throw new Error(body.error ?? `Scanner request failed (${response.status}).`);
+      const receivedAt = performance.now();
+      const serverNow = new Date(
+        body.signalMetadata ? Date.parse(body.signalMetadata.serverNow) + receivedAt - requestedAt : Date.now(),
+      ).toISOString();
       setData(body.data);
-      setSignalMetadata(body.signalMetadata ?? null);
+      setSignalMetadata(body.signalMetadata ? { ...body.signalMetadata, serverNow } : null);
+      setSignalClock({ serverNow, receivedAt });
       setNotificationWarning(body.notificationWarning ?? '');
       setLastCheckedAt(Date.now());
-      setFreshnessNow(Date.now());
+      setFreshnessNow(receivedAt);
     } catch (reason) {
+      if (controller.signal.aborted) return;
       // A failed refresh must not leave previously actionable results on screen.
       setData(null);
       setSignalMetadata(null);
+      setSignalClock(null);
       setNotificationWarning('');
       setError(reason instanceof Error ? reason.message : 'Live scanner data is unavailable.');
     } finally {
-      requestInFlight.current = false;
-      setLoading(false);
+      if (requestInFlight.current === controller) {
+        requestInFlight.current = null;
+        setLoading(false);
+      }
     }
   }, [timeframe]);
   useEffect(() => {
@@ -103,11 +118,13 @@ function StandardSignals({
     const timer = window.setInterval(refreshWhenVisible, AUTO_REFRESH_INTERVAL_MS);
     // Age the displayed cache even while a request is slow or never completes.
     const freshnessTimer = window.setInterval(() => {
-      if (document.visibilityState === 'visible') setFreshnessNow(Date.now());
+      if (document.visibilityState === 'visible') setFreshnessNow(performance.now());
     }, 1000);
     document.addEventListener('visibilitychange', refreshWhenVisible);
     window.addEventListener('focus', refreshWhenVisible);
     return () => {
+      requestInFlight.current?.abort();
+      requestInFlight.current = null;
       window.clearTimeout(initial);
       window.clearInterval(timer);
       window.clearInterval(freshnessTimer);
@@ -115,11 +132,13 @@ function StandardSignals({
       window.removeEventListener('focus', refreshWhenVisible);
     };
   }, [load]);
-  const agedCandidates = (data?.candidates ?? []).map((candidate) => savedScannerCandidate(
-    candidate,
-    candidate.scannedAt ?? '',
-    data?.configuration.maxAgeSeconds ?? recommendedMaxAgeSeconds(timeframe),
-    freshnessNow,
+  const signalNow = signalClock
+    ? Date.parse(signalClock.serverNow) + Math.max(0, freshnessNow - signalClock.receivedAt)
+    : 0;
+  const agedCandidates = (data?.candidates ?? []).map((candidate) => applyScannerSignalValidity(
+    savedScannerCandidate(candidate, candidate.scannedAt ?? '', data?.configuration.maxAgeSeconds ?? recommendedMaxAgeSeconds(timeframe), signalNow),
+    signalMetadata?.signals[candidate.symbol],
+    signalNow,
   ));
   const candidates = agedCandidates.filter(
     (item) => rankFilter === 'ALL' || item.marketRank.includes(rankFilter),
@@ -139,14 +158,14 @@ function StandardSignals({
     <ScannerTabs active={activeTab} onChange={onTabChange} />
     <header className="topbar"><Link className="brand" href="/">ETHCRYPTOHUB</Link><nav className="links"><Link href="/scanner/successful">Successful Signals</Link><Link href="/scanner/history">Signal History</Link><Link href="/scanner/performance">Performance</Link><Link href="/dashboard">Dashboard</Link><Link href="/settings">Settings</Link>{isAdmin && <Link href="/admin">Admin</Link>}<button className="scanner-refresh" onClick={() => void load()} disabled={loading}><span aria-hidden="true">{loading ? '↻' : '⟳'}</span> {loading ? 'Loading…' : 'Refresh results'}</button></nav></header>
     <section className="hero scanner-hero">
-      <div className="scanner-eyebrow"><span className={`scanner-live-dot ${degraded ? 'is-warning' : ''}`} />PUBLIC PERPETUAL FUTURES <span className="scanner-eyebrow-divider">/</span> {data ? `${data.exchange} · ${data.market}` : 'LIVE MARKET DATA'}</div>
+      <div className="scanner-eyebrow"><span className={`scanner-live-dot ${degraded ? 'is-warning' : ''}`} />PUBLIC PERPETUAL FUTURES <span className="scanner-eyebrow-divider">/</span> {data ? `${data.exchange} · ${data.market}` : 'SAVED SCANNER RESULTS'}</div>
       <div className="scanner-heading-row"><div><h1>Market scanner</h1><p className="muted">High-conviction technical setups with transparent market context.</p></div><div className={`scanner-status ${degraded ? 'is-warning' : ''}`}>{statusLabel}</div></div>
     </section>
     <section className="scanner-overview" aria-label="Scanner summary">
       <article className="scanner-stat-card scanner-stat-primary"><span className="scanner-stat-label">Actionable setups</span><strong>{data ? ready.length : '—'}</strong><span className="scanner-stat-foot">{loading ? 'Refreshing saved results…' : 'Fresh, rule-qualified candidates'}</span></article>
-      <article className="scanner-stat-card"><span className="scanner-stat-label">Pairs with results</span><strong>{data ? candidates.length : '—'}</strong><span className="scanner-stat-foot">{rankFilter === 'ALL' ? 'Enabled pairs with scheduled scan results' : rankFilter.replace('TOP_', 'Top ').toLowerCase()}</span></article>
+      <article className="scanner-stat-card"><span className="scanner-stat-label">Pairs with results</span><strong>{data ? candidates.length : '—'}</strong><span className="scanner-stat-foot">{rankFilter === 'ALL' ? 'Enabled pairs with saved scan results' : rankFilter.replace('TOP_', 'Top ').toLowerCase()}</span></article>
       <article className="scanner-stat-card"><span className="scanner-stat-label">Long / Short</span><strong><span className="scanner-stat-long">{longSignals}</span><span className="scanner-stat-slash"> / </span><span className="scanner-stat-short">{shortSignals}</span></strong><span className="scanner-stat-foot">Directional setups</span></article>
-      <article className="scanner-stat-card"><span className="scanner-stat-label">Market health</span><strong className={`scanner-health-value ${degraded ? 'is-warning' : ''}`}>{healthLabel}</strong><span className="scanner-stat-foot">{data ? `Updated ${new Date(data.updatedAt).toLocaleTimeString()}` : 'Waiting for first scan'}</span></article>
+      <article className="scanner-stat-card"><span className="scanner-stat-label">Market health</span><strong className={`scanner-health-value ${degraded ? 'is-warning' : ''}`}>{healthLabel}</strong><span className="scanner-stat-foot">{data && hasCandidates ? `Last saved scan ${new Date(data.updatedAt).toLocaleTimeString()}` : 'No saved scan'}</span></article>
     </section>
     <section className="card stack scanner-panel">
       <div className="scanner-panel-header"><div><p className="mono">MARKET OPPORTUNITIES</p><h2>Signal watchlist</h2><p className="muted">Signals are research references only; no orders are placed.</p><p className="scanner-research-target" role="note">Standard research target: 95% win rate · unverified objective, not an achieved result.</p><p className="muted" role="status">Reload saved results every 30 seconds · {lastCheckedAt ? `Last checked ${new Date(lastCheckedAt).toLocaleTimeString()}` : 'Checking for updates…'}</p></div>
@@ -158,8 +177,8 @@ function StandardSignals({
       {error && <div role="alert" className="error"><strong>Saved scanner results unavailable</strong><br />{error}</div>}
       {notificationWarning && <p role="status" className="scanner-warning">{notificationWarning}</p>}
       {degraded && <p role="status" className="scanner-warning"><strong>Partial market data</strong><span>{stale} stale and {unavailable} unavailable pairs. Reloading saved results does not fetch new market data. A separately authorized scan is required; stale prices and entry targets are withheld.</span></p>}
-      {!error && loading && !data && <p className="muted">Loading the latest scheduled Binance scan results…</p>}
-      {data && candidates.length === 0 && <p className="scanner-empty"><strong>No scan results yet</strong><span>Background scans refresh a bounded batch of Binance pairs on a rotating timeframe. After syncing the coin universe, an administrator can run an immediate 15-minute scan from Scanner Management.</span>{isAdmin && <Link href="/admin#scanner-management">Open coin management</Link>}</p>}
+      {!error && loading && !data && <p className="muted">Loading saved Binance scan results…</p>}
+      {data && candidates.length === 0 && <p className="scanner-empty"><strong>No saved results for this selection</strong><span>Choose another timeframe or market list to view available results. New data requires a separately authorized scan.</span>{isAdmin && <Link href="/admin#scanner-management">Open coin management</Link>}</p>}
       {data && ready.length === 0 && candidates.length > 0 && <p className="scanner-empty"><strong>No actionable setups right now</strong><span>Try another timeframe or market list. These indicators are informational and do not execute trades.</span></p>}
       {candidates.length > 0 && <div className="scanner-signal-list">{candidates.map((item) => <article className={`scanner-signal-card ${item.status === 'READY' ? item.side === 'LONG' ? 'is-long' : 'is-short' : 'is-wait'} `} key={item.symbol}>
         <div className="scanner-signal-header">

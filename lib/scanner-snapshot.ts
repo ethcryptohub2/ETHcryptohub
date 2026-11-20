@@ -28,3 +28,25 @@ export function scannerSyncIsRecent(lastSuccess: string | Date, now = Date.now()
   const time = new Date(lastSuccess).getTime();
   return Number.isFinite(time) && time <= now && now - time <= 30 * 60_000;
 }
+
+const liveSignalStatuses = new Set(['ACTIVE', 'TP1_HIT', 'TP2_HIT']);
+
+/** Persisted signal validity can end before the underlying scanner cache ages out. */
+export function applyScannerSignalValidity(
+  candidate: MarketScannerCandidate,
+  signal: { generatedAt: string; expiresAt: string; status: string } | null | undefined,
+  now: number,
+): MarketScannerCandidate {
+  if (candidate.status !== 'READY' || !signal) return candidate;
+  const generatedAt = new Date(signal.generatedAt).getTime();
+  const expiresAt = new Date(signal.expiresAt).getTime();
+  if (liveSignalStatuses.has(signal.status) && generatedAt > 0 && generatedAt <= now && now < expiresAt) return candidate;
+  return {
+    ...candidate,
+    status: 'WAIT',
+    side: 'WAIT',
+    setup: null,
+    rationale: 'WAIT: the saved signal is outside its active window or its validity is unavailable.',
+    warnings: [...candidate.warnings, 'The previous signal is no longer actionable.'],
+  };
+}

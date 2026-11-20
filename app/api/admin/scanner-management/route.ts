@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { AuthError, requireAdmin } from '../../../../lib/auth';
 import { validCsrf } from '../../../../lib/http';
+import { createAdminReadLimiter } from '../../../../lib/admin-read-rate-limit';
+import { isApprovedAdminDemoStagingTarget } from '../../../../lib/admin-demo-staging-policy';
 import { runSignalScan, SignalScanError } from '../../../../lib/signal-scan';
 import {
   changeScannerCoins,
@@ -18,6 +20,10 @@ export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
 
 const symbol = z.string().regex(/^[\p{L}\p{N}]{2,30}$/u);
+const allowRead = createAdminReadLimiter();
+const noStore = { 'Cache-Control': 'no-store' };
+const marketRefreshEnabled = () => process.env.SMARTEXIT_ADMIN_SCANNER_REFRESH_ENABLED === 'true' &&
+  isApprovedAdminDemoStagingTarget(process.env);
 const actionSchema = z.discriminatedUnion('action', [
   z.object({ action: z.literal('scan_now') }).strict(),
   z.object({ action: z.literal('sync_now') }).strict(),
@@ -37,7 +43,9 @@ function diagnosticMessage(error: unknown, fallback: string): string {
 export async function GET(request: NextRequest) {
   try {
     const admin = await requireAdmin();
-    await consumeScannerAdminRateLimit(admin.id, 'read');
+    if (!allowRead(admin.id)) {
+      return NextResponse.json({ error: 'Too many scanner management requests. Wait a minute and retry.' }, { status: 429, headers: noStore });
+    }
     const parsed = z.object({
       auditPage: z.coerce.number().int().min(1).max(100_000).default(1),
     }).safeParse(Object.fromEntries(request.nextUrl.searchParams));
@@ -55,7 +63,7 @@ export async function GET(request: NextRequest) {
       else counts.inactive += 1;
       return counts;
     }, { total: 0, enabled: 0, disabled: 0, active: 0, inactive: 0 });
-    return NextResponse.json({ data: { coins, metrics: data, sync, audit: audit.entries, auditTotal: audit.total, auditPage: audit.page } }, {
+    return NextResponse.json({ data: { coins, metrics: data, sync, audit: audit.entries, auditTotal: audit.total, auditPage: audit.page, marketRefreshEnabled: marketRefreshEnabled() } }, {
       headers: { 'Cache-Control': 'no-store' },
     });
   } catch (error) {
@@ -86,6 +94,9 @@ export async function POST(request: NextRequest) {
     const parsed = actionSchema.safeParse(body);
     if (!parsed.success) return NextResponse.json({ error: 'Invalid scanner management action.' }, { status: 422 });
     const action = parsed.data;
+    if ((action.action === 'sync_now' || action.action === 'scan_now') && !marketRefreshEnabled()) {
+      return NextResponse.json({ error: 'Scanner market refresh is disabled pending separate approval.' }, { status: 503, headers: noStore });
+    }
     await consumeScannerAdminRateLimit(
       admin.id,
       action.action === 'sync_now' || action.action === 'scan_now' ? 'sync' : 'write',

@@ -20,6 +20,7 @@ export async function POST(request: NextRequest) {
     await requireAdmin();
     if (request.nextUrl.search || request.body !== null) return json({ state: 'INVALID_REQUEST' }, 422);
     if (process.env.SMARTEXIT_PUBLIC_REST_SNAPSHOT_ENABLED !== 'true' ||
+        process.env.SMARTEXIT_STAGING_SUPABASE_PROJECT_REF !== 'ghecpkpaxbrvehquhzkr' ||
         !isApprovedAdminDemoStagingTarget(process.env)) return json({ state: 'DISABLED' }, 503);
     const now = performance.now();
     if (now < nextAttemptAt) return json({ state: 'COOLDOWN' }, 429);

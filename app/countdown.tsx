@@ -1,17 +1,10 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-
-function getRemaining(expiresAt: string, serverNow: string) {
-  const expiry = Date.parse(expiresAt);
-  const serverTimestamp = Date.parse(serverNow);
-  if (!Number.isFinite(expiry) || !Number.isFinite(serverTimestamp)) return 0;
-  const serverOffset = serverTimestamp - Date.now();
-  return Math.max(0, expiry - (Date.now() + serverOffset));
-}
+import { signalRemainingMs } from '../lib/signal-countdown';
 
 function formatRemaining(milliseconds: number) {
-  const seconds = Math.floor(milliseconds / 1000);
+  const seconds = Math.ceil(milliseconds / 1000);
   const hours = Math.floor(seconds / 3600);
   const minutes = Math.floor((seconds % 3600) / 60);
   const remainder = seconds % 60;
@@ -31,7 +24,8 @@ export function SignalCountdown({
   const [remaining, setRemaining] = useState<number | null>(null);
 
   useEffect(() => {
-    const update = () => setRemaining(getRemaining(expiresAt, serverNow));
+    const startedAt = performance.now();
+    const update = () => setRemaining(signalRemainingMs(expiresAt, serverNow, performance.now() - startedAt));
     update();
     const timer = window.setInterval(update, 1000);
     return () => window.clearInterval(timer);

@@ -45,6 +45,7 @@ type State = {
   audit: AuditEntry[];
   auditTotal: number;
   auditPage: number;
+  marketRefreshEnabled: boolean;
 };
 
 type Filter = 'ALL' | 'ENABLED' | 'DISABLED' | 'ACTIVE' | 'INACTIVE';
@@ -146,13 +147,14 @@ export function AdminScannerManagement() {
       <div><p className="mono">ADMIN · MARKET UNIVERSE</p><h2>Scanner Management</h2>
         <p className="muted">Binance USDⓈ-M USDT perpetual contracts are synchronized from official exchange information. Admin-disabled pairs remain disabled across syncs.</p>
       </div>
-      <button type="button" disabled={busy} onClick={() => void mutate({ action: 'sync_now' }, '')}>
+      <button type="button" disabled={busy || !state?.marketRefreshEnabled} onClick={() => void mutate({ action: 'sync_now' }, '')}>
         {busy ? 'Working…' : 'Sync Now'}
       </button>
-      <button type="button" className="button-secondary" disabled={busy} onClick={() => void mutate({ action: 'scan_now' }, '')}>
+      <button type="button" className="button-secondary" disabled={busy || !state?.marketRefreshEnabled} onClick={() => void mutate({ action: 'scan_now' }, '')}>
         {busy ? 'Working…' : 'Run 15m Scan'}
       </button>
     </div>
+    {state && !state.marketRefreshEnabled && <p className="muted">Market refresh requires separate approval.</p>}
     {error && <p className="error" role="alert">{error}</p>}
     {notice && <p className="success" role="status">{notice}</p>}
     {!state && !error && <p className="muted">Loading scanner universe…</p>}

@@ -25,6 +25,7 @@ export function AuthForm({
 }) {
   const router = useRouter();
   const formRef = useRef<HTMLFormElement>(null);
+  const requestInFlight = useRef(false);
   const autoSubmittedCode = useRef('');
   const [email, setEmail] = useState(initialEmail);
   const [error, setError] = useState('');
@@ -46,6 +47,8 @@ export function AuthForm({
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (requestInFlight.current) return;
+    requestInFlight.current = true;
     setBusy(true);
     setError('');
     setNotice('');
@@ -95,6 +98,7 @@ export function AuthForm({
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : 'Request could not be completed.');
     } finally {
+      requestInFlight.current = false;
       setBusy(false);
     }
   }

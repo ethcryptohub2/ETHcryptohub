@@ -15,9 +15,10 @@ export async function fetchPublicRestSnapshot(signal: AbortSignal, transport: ty
     signal,
     headers: { accept: 'application/json' },
   });
-  const usedWeight = Number(response.headers.get('x-mbx-used-weight-1m'));
-  if (response.status !== 200 || usedWeight >= 300 || !response.body) {
-    await response.body?.cancel();
+  const weightHeader = response.headers.get('x-mbx-used-weight-1m');
+  const usedWeight = weightHeader !== null && /^\d+$/.test(weightHeader) ? Number(weightHeader) : NaN;
+  if (response.status !== 200 || !Number.isSafeInteger(usedWeight) || usedWeight >= 300 || !response.body) {
+    await response.body?.cancel().catch(() => {});
     return { state: 'UNAVAILABLE' as const, status: response.status, quotes: [] };
   }
   const reader = response.body.getReader();

@@ -92,12 +92,14 @@ const observationFields = new Set([
 ]);
 function validObservation(value: MarketObservation) {
   return Object.keys(value).every((key) => observationFields.has(key)) &&
-    value.source === 'BINANCE_USDM' && /^[\p{L}\p{N}_]{2,40}$/u.test(value.symbol) && value.symbol === value.symbol.toUpperCase() &&
+    value.source === 'BINANCE_USDM' && typeof value.symbol === 'string' &&
+    /^[\p{L}\p{N}_]{2,40}$/u.test(value.symbol) && value.symbol === value.symbol.toUpperCase() &&
     [value.eventTime, value.receivedAt, value.price, value.bid, value.ask, value.quoteVolume,
       value.buyQuoteVolume, value.sellQuoteVolume, value.bidDepth, value.askDepth].every(finite) &&
-    value.price > 0 && value.bid > 0 && value.ask >= value.bid && value.quoteVolume >= 0 &&
+    Number.isSafeInteger(value.eventTime) && value.eventTime > 0 && Number.isSafeInteger(value.receivedAt) &&
+    value.price > 0 && value.bid > 0 && value.ask > value.bid && value.quoteVolume >= 0 &&
     value.buyQuoteVolume >= 0 && value.sellQuoteVolume >= 0 && value.bidDepth >= 0 && value.askDepth >= 0 &&
-    value.buyQuoteVolume + value.sellQuoteVolume <= value.quoteVolume * 1.000001 &&
+    Math.abs(value.quoteVolume - value.buyQuoteVolume - value.sellQuoteVolume) <= Math.max(1e-8, value.quoteVolume * 1e-10) &&
     (value.openInterest === undefined || (finite(value.openInterest) && value.openInterest >= 0)) &&
     (value.fundingRate === undefined || finite(value.fundingRate)) &&
     (value.volumeIntervalMs === undefined || (finite(value.volumeIntervalMs) && value.volumeIntervalMs > 0 && value.volumeIntervalMs <= 60_000)) &&

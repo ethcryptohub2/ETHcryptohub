@@ -50,7 +50,7 @@ export function ExchangeDemoReview() {
         <div aria-live="polite">
           <span className={styles.badge}>{environment}</span>
           <h3>{name}</h3>
-          <p className="muted">Remote connection blocked pending approval.</p>
+          <p className="muted">Mock-tested. Remote connection blocked pending schema and credential approval.</p>
         </div>
       </section>
 
@@ -91,8 +91,11 @@ export function ExchangeDemoReview() {
         <h2 id="demo-capabilities-heading">Capability matrix</h2>
         <dl className={styles.capabilities}>
           <div><dt>Authenticated account reads</dt><dd>Blocked pending connection approval</dd></div>
+          <div><dt>Staging schema</dt><dd>Blocked pending migration and access verification</dd></div>
+          <div><dt>Credential storage</dt><dd>Blocked pending encrypted storage verification</dd></div>
           <div><dt>Order placement and cancellation</dt><dd>Blocked pending execution approval</dd></div>
           <div><dt>Protection and reconciliation</dt><dd>{lifecycle}. Remote execution blocked.</dd></div>
+          <div><dt>Verified Demo executions</dt><dd>No authorized remote execution evidence</dd></div>
         </dl>
       </section>
 

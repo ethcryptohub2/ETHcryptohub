@@ -66,7 +66,7 @@ export class BinanceMarketFeed {
   private timestamp(event: Row, receivedAt: number) {
     return integer(event.E) && Number.isFinite(receivedAt) && event.E <= receivedAt + 1000 && event.E > 0;
   }
-  private applyLevels(map: Map<number, number>, levels: unknown, bids: boolean) {
+  private applyLevels(map: Map<number, number>, levels: unknown) {
     if (!Array.isArray(levels) || levels.length > 10000) throw new Error('INVALID_BOOK_LEVELS');
     for (const level of levels) {
       if (!Array.isArray(level) || level.length < 2 || !positive(level[0]) || !numeric(level[1]) || Number(level[1]) < 0) throw new Error('INVALID_BOOK_LEVEL');
@@ -76,8 +76,6 @@ export class BinanceMarketFeed {
     // Trimming a diff book would make previously untracked levels appear reliable.
     // Fail closed and resnapshot rather than silently claiming full continuity.
     if (map.size > this.maxBookLevels) throw new Error('BOOK_CAPACITY_EXCEEDED');
-    const prices = [...map.keys()].sort((a,b) => bids ? b-a : a-b);
-    return prices;
   }
   private depth(state: SymbolState, event: Row) {
     const book = state.book;
@@ -86,8 +84,8 @@ export class BinanceMarketFeed {
     if (!book.bridged ? !(event.U <= book.last && event.u >= book.last) : event.pu !== book.last) {
       this.counters.gaps++; throw new Error('DEPTH_SEQUENCE_GAP');
     }
-    this.applyLevels(book.bids, event.b, true);
-    this.applyLevels(book.asks, event.a, false);
+    this.applyLevels(book.bids, event.b);
+    this.applyLevels(book.asks, event.a);
     if (!book.bids.size || !book.asks.size || Math.max(...book.bids.keys()) >= Math.min(...book.asks.keys())) throw new Error('CROSSED_OR_EMPTY_BOOK');
     book.last = event.u; book.bridged = true; book.time = event.E as number; book.valid = true;
   }
@@ -98,8 +96,8 @@ export class BinanceMarketFeed {
     try {
       const book = blankBook();
       book.last = snapshot.lastUpdateId;
-      this.applyLevels(book.bids, snapshot.bids, true);
-      this.applyLevels(book.asks, snapshot.asks, false);
+      this.applyLevels(book.bids, snapshot.bids);
+      this.applyLevels(book.asks, snapshot.asks);
       if (!book.bids.size || !book.asks.size || Math.max(...book.bids.keys()) >= Math.min(...book.asks.keys())) throw new Error('INVALID_SNAPSHOT');
       state.book = book;
       for (const event of buffered) this.depth(state, event);

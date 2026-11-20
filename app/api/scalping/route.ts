@@ -20,7 +20,7 @@ export async function GET() {
   } catch (error) {
     const status = error instanceof AuthError || error instanceof SubscriptionError ? error.status : 503;
     return NextResponse.json({
-      error: error instanceof Error ? error.message : 'High-risk scalping data is unavailable.',
+      error: error instanceof AuthError || error instanceof SubscriptionError ? error.message : 'High-risk scalping data is unavailable.',
       ...(error instanceof SubscriptionError ? { code: error.code } : {}),
     }, { status, headers: { 'Cache-Control': 'no-store' } });
   }

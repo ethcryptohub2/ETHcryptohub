@@ -351,11 +351,11 @@ export function createAdminDemoProviderService(dependencies: AdminDemoProviderSe
   ) => ReturnType<typeof createAdminBybitDemoExecutionPort>;
   const createBybit = dependencies.createBybitAdapter ?? defaultCreateBybit;
   const createOkx = dependencies.createOkxAdapter ??
-    ((credentials: ExchangeCredentials) =>
-      createOkxDemoAdapter(credentials) as InjectedExchangeAdapter);
+    ((credentials: ExchangeCredentials, adapterTransport: AdminDemoProviderTransport) =>
+      createOkxDemoAdapter(credentials, adapterTransport) as InjectedExchangeAdapter);
   const createGate = dependencies.createGateAdapter ??
-    ((credentials: ExchangeCredentials, environment: 'TESTNET') =>
-      createGateTestnetAdapter(credentials, environment) as InjectedExchangeAdapter);
+    ((credentials: ExchangeCredentials, environment: 'TESTNET', adapterTransport: AdminDemoProviderTransport) =>
+      createGateTestnetAdapter(credentials, environment, adapterTransport) as InjectedExchangeAdapter);
 
   function assertActor(actor: AdminDemoProviderActor) {
     assertAdminDemoProviderActor(actor);

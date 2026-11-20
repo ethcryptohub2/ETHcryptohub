@@ -12,6 +12,7 @@ import {
 import { isSupportedPushEndpoint } from './notifications';
 import { processPersistedSignalLifecycle } from './signal-lifecycle';
 import { getEnabledScannerSymbols } from './scanner-coins';
+import { highRiskEntryWindowOpen } from './high-risk-scalping-status';
 import { BinanceFuturesMarketsService } from '../smartexit/apps/api/src/services/binance-futures-markets';
 import {
   calculateAdx,
@@ -522,15 +523,15 @@ export async function listHighRiskScalpingSignals(userId: number) {
     context: row.setup_context,
     userState: row.user_state,
   }));
+  const now = Date.now();
+  const active = (signal: StoredScalpingSignal) =>
+    settings.enabled && settings.enabledTimeframes.includes(signal.timeframe) && highRiskEntryWindowOpen(signal, now);
   return {
     settings,
-    active: signals.filter((signal) =>
-      ['ACTIVE', 'TP1_HIT', 'TP2_HIT'].includes(signal.lifecycleStatus) && !signal.userState,
-    ),
+    serverNow: now,
+    active: signals.filter((signal) => !signal.userState && active(signal)),
     entered: signals.filter((signal) => signal.userState !== null),
-    history: signals.filter((signal) =>
-      !['ACTIVE', 'TP1_HIT', 'TP2_HIT'].includes(signal.lifecycleStatus) && !signal.userState,
-    ),
+    history: signals.filter((signal) => !signal.userState && !active(signal)),
   };
 }
 
@@ -543,7 +544,14 @@ export async function markScalpingSignalEntered(userId: number, signalId: string
          FROM public.market_signals
         WHERE id = $1 AND scanner_type = 'HIGH_RISK'
           AND status IN ('ACTIVE', 'TP1_HIT', 'TP2_HIT')
+          AND generated_at <= NOW()
           AND entry_expires_at > NOW()
+          AND expires_at > NOW()
+          AND EXISTS (
+            SELECT 1 FROM public.high_risk_scalping_settings AS settings
+             WHERE settings.singleton = TRUE AND settings.enabled
+               AND settings.enabled_timeframes ? market_signals.timeframe
+          )
         FOR UPDATE`,
       [signalId],
     );

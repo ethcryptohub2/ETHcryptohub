@@ -1,7 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 
 type SignalItem = {
   id: string;
@@ -51,11 +51,14 @@ export function SignalHistory({ successfulOnly = false }: { successfulOnly?: boo
   const [userEntryPrice, setUserEntryPrice] = useState('');
   const [userExitPrice, setUserExitPrice] = useState('');
   const [error, setError] = useState('');
-  const [busy, setBusy] = useState(false);
+  const [loadingHistory, setLoadingHistory] = useState(false);
+  const [savingTrade, setSavingTrade] = useState(false);
+  const detailRequest = useRef<AbortController | null>(null);
 
-  const load = useCallback(async () => {
-    setBusy(true);
+  const load = useCallback(async (signal: AbortSignal) => {
+    setLoadingHistory(true);
     setError('');
+    setData(null);
     const params = new URLSearchParams({ page: String(page), pageSize: '20' });
     if (scannerType) params.set('scannerType', scannerType);
     if (side) params.set('side', side);
@@ -63,39 +66,50 @@ export function SignalHistory({ successfulOnly = false }: { successfulOnly?: boo
     if (symbol.trim()) params.set('symbol', symbol.trim());
     if (successfulOnly) params.set('successful', 'true');
     try {
-      const response = await fetch(`/api/signals/history?${params}`, { cache: 'no-store' });
+      const response = await fetch(`/api/signals/history?${params}`, { cache: 'no-store', signal });
       const body = await response.json() as { data?: HistoryData; error?: string };
       if (!response.ok || !body.data) throw new Error(body.error ?? 'Signal history could not be loaded.');
-      setData(body.data);
+      if (!signal.aborted) setData(body.data);
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : 'Signal history could not be loaded.');
+      if (!signal.aborted) setError(reason instanceof Error ? reason.message : 'Signal history could not be loaded.');
     } finally {
-      setBusy(false);
+      if (!signal.aborted) setLoadingHistory(false);
     }
   }, [page, scannerType, side, status, symbol, successfulOnly]);
 
   useEffect(() => {
-    const timer = window.setTimeout(() => void load(), 0);
-    return () => window.clearTimeout(timer);
+    const controller = new AbortController();
+    const timer = window.setTimeout(() => void load(controller.signal), 0);
+    return () => {
+      controller.abort();
+      window.clearTimeout(timer);
+    };
   }, [load]);
 
+  useEffect(() => () => detailRequest.current?.abort(), []);
+
   async function showDetails(id: string) {
+    detailRequest.current?.abort();
+    const controller = new AbortController();
+    detailRequest.current = controller;
+    setSelected(null);
     setError('');
     try {
-      const response = await fetch(`/api/signals/${id}`, { cache: 'no-store' });
+      const response = await fetch(`/api/signals/${id}`, { cache: 'no-store', signal: controller.signal });
       const body = await response.json() as { data?: Detail; error?: string };
       if (!response.ok || !body.data) throw new Error(body.error ?? 'Signal details could not be loaded.');
+      if (controller.signal.aborted) return;
       setSelected(body.data);
       setUserEntryPrice(body.data.userEntry?.entry_price ?? '');
       setUserExitPrice(body.data.userEntry?.exit_price ?? '');
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : 'Signal details could not be loaded.');
+      if (!controller.signal.aborted) setError(reason instanceof Error ? reason.message : 'Signal details could not be loaded.');
     }
   }
 
   async function saveUserTrade(closeTrade: boolean) {
-    if (!selected) return;
-    setBusy(true);
+    if (!selected || savingTrade) return;
+    setSavingTrade(true);
     setError('');
     try {
       const csrfResponse = await fetch('/api/csrf', { cache: 'no-store' });
@@ -114,7 +128,7 @@ export function SignalHistory({ successfulOnly = false }: { successfulOnly?: boo
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : 'User-reported trade could not be saved.');
     } finally {
-      setBusy(false);
+      setSavingTrade(false);
     }
   }
 
@@ -134,8 +148,8 @@ export function SignalHistory({ successfulOnly = false }: { successfulOnly?: boo
         <label>Coin pair<input value={symbol} maxLength={30} placeholder="e.g. BTCUSDT" onChange={(event) => { setPage(1); setSymbol(event.target.value); }} /></label>
       </div>
       {error && <p className="error" role="alert">{error}</p>}
-      {busy && <p className="muted">Loading persisted signals…</p>}
-      {!busy && data && <div className="scanner-table-wrap"><table className="scan-table signal-history-table">
+      {loadingHistory && <p className="muted" role="status">Loading persisted signals…</p>}
+      {!loadingHistory && data && <div className="scanner-table-wrap"><table className="scan-table signal-history-table">
         <thead><tr><th>Generated</th><th>Coin</th><th>Scanner</th><th>Direction</th><th>TF</th><th>Entry</th><th>Achieved</th><th>Lifecycle</th><th>Outcome PnL</th><th></th></tr></thead>
         <tbody>{data.items.map((signal) => <tr key={signal.id}>
           <td>{new Date(signal.generated_at).toLocaleString()}</td><td>{signal.symbol}</td><td>{signal.scanner_type === 'HIGH_RISK' ? 'High-Risk' : 'Standard'}</td>
@@ -143,14 +157,14 @@ export function SignalHistory({ successfulOnly = false }: { successfulOnly?: boo
           <td>{signal.achieved_targets.length ? [...new Set(signal.achieved_targets)].join(', ').replaceAll('_HIT', '') : '—'}{signal.first_target_hit_at && <small className="history-target-time">{new Date(signal.first_target_hit_at).toLocaleString()}</small>}</td>
           <td>{signal.status.replaceAll('_', ' ')} · {signal.entry_status}</td>
           <td>{signal.realized_pnl ? `Realized ${signal.realized_pnl}` : signal.simulated_pnl ? `Simulated ${signal.simulated_pnl}` : '—'}</td>
-          <td><button className="text-button" type="button" onClick={() => void showDetails(signal.id)}>Details</button></td>
+          <td><button className="text-button" type="button" disabled={savingTrade} onClick={() => void showDetails(signal.id)}>Details</button></td>
         </tr>)}
         {!data.items.length && <tr><td colSpan={10}>No matching persisted signals.</td></tr>}</tbody>
       </table></div>}
-      {data && <div className="signal-history-pagination"><span>{data.total} signals · page {data.page} of {pageCount}</span><button type="button" className="button-secondary" disabled={page <= 1 || busy} onClick={() => setPage((value) => value - 1)}>Previous</button><button type="button" className="button-secondary" disabled={page >= pageCount || busy} onClick={() => setPage((value) => value + 1)}>Next</button></div>}
+      {data && <div className="signal-history-pagination"><span>{data.total} signals · page {data.page} of {pageCount}</span><button type="button" className="button-secondary" disabled={page <= 1 || loadingHistory} onClick={() => setPage((value) => value - 1)}>Previous</button><button type="button" className="button-secondary" disabled={page >= pageCount || loadingHistory} onClick={() => setPage((value) => value + 1)}>Next</button></div>}
     </section>
     {selected && <section className="card stack signal-history-detail">
-      <div className="signal-detail-heading"><h2>{selected.signal.symbol} · {selected.signal.side} · {selected.signal.timeframe}</h2><button className="button-secondary" type="button" onClick={() => setSelected(null)}>Close</button></div>
+      <div className="signal-detail-heading"><h2>{selected.signal.symbol} · {selected.signal.side} · {selected.signal.timeframe}</h2><button className="button-secondary" type="button" disabled={savingTrade} onClick={() => setSelected(null)}>Close</button></div>
       <p className="muted">{selected.signal.scanner_type} · {selected.signal.strategy_name} · status {selected.signal.status}</p>
       <h3>Lifecycle events</h3>
       {selected.events.length ? <ol>{selected.events.map((event, index) => <li key={`${event.event_type}-${event.event_timestamp}-${index}`}>{event.event_type.replaceAll('_', ' ')} · {new Date(event.event_timestamp).toLocaleString()} · price {price(event.event_price)}</li>)}</ol> : <p className="muted">No lifecycle events are recorded yet.</p>}
@@ -164,8 +178,8 @@ export function SignalHistory({ successfulOnly = false }: { successfulOnly?: boo
             {selected.userEntry?.entry_price && <p className="muted">Recorded entry price: {price(selected.userEntry.entry_price)}</p>}
             {selected.userEntry?.entry_price && <label>Actual exit price<input inputMode="decimal" value={userExitPrice} onChange={(event) => setUserExitPrice(event.target.value)} placeholder="User-reported fill" /></label>}
             {!selected.userEntry?.entry_price
-              ? <button type="button" disabled={busy || !userEntryPrice.trim()} onClick={() => void saveUserTrade(false)}>{busy ? 'Saving…' : 'Record entry fill'}</button>
-              : <button type="button" disabled={busy || !userExitPrice.trim()} onClick={() => void saveUserTrade(true)}>{busy ? 'Saving…' : 'Record exit and close trade'}</button>}
+              ? <button type="button" disabled={savingTrade || !userEntryPrice.trim()} onClick={() => void saveUserTrade(false)}>{savingTrade ? 'Saving…' : 'Record entry fill'}</button>
+              : <button type="button" disabled={savingTrade || !userExitPrice.trim()} onClick={() => void saveUserTrade(true)}>{savingTrade ? 'Saving…' : 'Record exit and close trade'}</button>}
           </div>}
       </div>
     </section>}

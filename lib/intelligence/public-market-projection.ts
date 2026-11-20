@@ -26,7 +26,7 @@ function symbols(values: readonly string[], maximum: number) {
 }
 export function validatePublicMarketObservation(raw: MarketObservation, now: number, maxAgeMs = 5000): MarketObservation {
   if (!raw || typeof raw !== 'object' || Object.keys(raw).some(key => !(keys as readonly string[]).includes(key)) ||
-      raw.source !== 'BINANCE_USDM' || !symbolPattern.test(raw.symbol) || raw.symbol !== raw.symbol.toUpperCase() ||
+      raw.source !== 'BINANCE_USDM' || typeof raw.symbol !== 'string' || !symbolPattern.test(raw.symbol) || raw.symbol !== raw.symbol.toUpperCase() ||
       !time(raw.eventTime) || !time(raw.receivedAt) || raw.eventTime > raw.receivedAt || raw.receivedAt > now ||
       now - raw.eventTime > maxAgeMs || raw.fresh !== true || raw.sequenceValid !== true ||
       !Number.isSafeInteger(raw.feedEpoch) || raw.feedEpoch! < 0 ||

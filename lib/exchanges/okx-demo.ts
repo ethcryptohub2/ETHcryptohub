@@ -5,6 +5,7 @@ import type {
   ExchangeBalance,
   ExchangeCredentials,
   ExchangeInstrument,
+  ExchangeOrder,
   ExchangePosition,
 } from './types';
 import type { AdminDemoProviderCapabilities } from '../admin-demo-provider-contract';
@@ -56,6 +57,23 @@ const positionSchema = z.object({
   upl: z.string(),
   lever: z.string().optional(),
 }).passthrough();
+
+const swapId = z.string().regex(/^[A-Z0-9]{1,24}-USDT-SWAP$/);
+const exchangeOrderId = z.string().regex(/^[1-9]\d{0,31}$/);
+const clientOrderId = z.string().regex(/^[A-Za-z0-9]{1,32}$/);
+const orderAmount = z.string().regex(/^\d{1,30}(?:\.\d{1,30})?$/);
+const orderSchema = z.object({
+  instType: z.literal('SWAP'),
+  instId: swapId,
+  ordId: exchangeOrderId,
+  clOrdId: z.union([clientOrderId, z.literal('')]),
+  side: z.enum(['buy', 'sell']),
+  ordType: z.enum(['market', 'limit', 'post_only', 'fok', 'ioc', 'optimal_limit_ioc']),
+  state: z.enum(['live', 'partially_filled', 'filled', 'canceled', 'mmp_canceled']),
+  sz: orderAmount,
+  accFillSz: orderAmount,
+  px: z.union([orderAmount, z.literal('')]),
+});
 
 export type OkxDemoAccountConfiguration = {
   accountLevel: 'spot' | 'futures' | 'multi-currency-margin' | 'portfolio-margin';
@@ -176,9 +194,13 @@ export function signOkxDemoRequest(
 type OkxDemoAdapter = ExchangeAdapter & {
   readonly capabilities: Readonly<AdminDemoProviderCapabilities>;
   getAccountConfiguration(): Promise<OkxDemoAccountConfiguration>;
+  getOrderStatus(symbol: string, orderId: string): Promise<ExchangeOrder | null>;
 };
 
-export function createOkxDemoAdapter(credentials: ExchangeCredentials): OkxDemoAdapter {
+export function createOkxDemoAdapter(
+  credentials: ExchangeCredentials,
+  transport?: typeof fetch,
+): OkxDemoAdapter {
   assertCredential(credentials?.apiKey, 'API key');
   assertCredential(credentials?.apiSecret, 'API secret');
   assertCredential(credentials?.passphrase, 'API passphrase');
@@ -215,7 +237,7 @@ export function createOkxDemoAdapter(credentials: ExchangeCredentials): OkxDemoA
 
     let response: Response;
     try {
-      response = await fetch(`${OKX_DEMO_REST_URL}${requestPath}`, {
+      response = await (transport ?? fetch)(`${OKX_DEMO_REST_URL}${requestPath}`, {
         method,
         headers,
         ...(method === 'POST' ? { body } : {}),
@@ -226,7 +248,7 @@ export function createOkxDemoAdapter(credentials: ExchangeCredentials): OkxDemoA
     } catch {
       throw new OkxDemoError('OKX Demo API request failed or timed out.', 503);
     }
-    if (!response.ok) {
+    if (!response.ok || response.redirected) {
       throw new OkxDemoError(`OKX Demo API returned HTTP ${response.status}.`, response.status === 429 ? 429 : 502);
     }
 
@@ -260,6 +282,49 @@ export function createOkxDemoAdapter(credentials: ExchangeCredentials): OkxDemoA
       `OKX Demo ${operation} is disabled: the TP1/TP2 trailing and TP3 full-position lifecycle is not implemented or reconciled.`,
       501,
     );
+  }
+
+  async function lookupOrder(
+    symbol: string,
+    identifier: string,
+    kind: 'ordId' | 'clOrdId',
+  ): Promise<ExchangeOrder | null> {
+    if (!transport || transport === fetch) return unsupported('remote order lookup');
+    const idSchema = kind === 'ordId' ? exchangeOrderId : clientOrderId;
+    if (!swapId.safeParse(symbol).success || !idSchema.safeParse(identifier).success) {
+      throw new OkxDemoError('Invalid OKX Demo swap or order identifier.', 422);
+    }
+    let rows: unknown[];
+    try {
+      rows = await request('GET', '/api/v5/trade/order', { instId: symbol, [kind]: identifier }, true);
+    } catch (error) {
+      if (error instanceof OkxDemoError && error.code === '51603') return null;
+      throw error;
+    }
+    const parsed = orderSchema.safeParse(rows[0]);
+    if (rows.length !== 1 || !parsed.success || parsed.data.instId !== symbol ||
+        parsed.data[kind] !== identifier) {
+      throw new OkxDemoError('OKX Demo order response could not be matched to the request.', 502);
+    }
+    const order = parsed.data;
+    const fillComparison = compareDecimals(order.accFillSz, order.sz);
+    if (!isPositiveDecimal(order.sz) || fillComparison === null || fillComparison > 0 ||
+        (order.state === 'filled' && fillComparison !== 0) ||
+        (order.state === 'partially_filled' && (!isPositiveDecimal(order.accFillSz) || fillComparison !== -1)) ||
+        (order.ordType !== 'market' && order.ordType !== 'optimal_limit_ioc' && !isPositiveDecimal(order.px))) {
+      throw new OkxDemoError('OKX Demo returned inconsistent order quantities or pricing.', 502);
+    }
+    return {
+      symbol: order.instId,
+      exchangeOrderId: order.ordId,
+      clientOrderId: order.clOrdId || null,
+      side: order.side === 'buy' ? 'BUY' : 'SELL',
+      type: order.ordType.toUpperCase(),
+      status: order.state.toUpperCase(),
+      quantity: order.sz,
+      filledQuantity: order.accFillSz,
+      price: order.px || null,
+    };
   }
 
   return {
@@ -388,6 +453,8 @@ export function createOkxDemoAdapter(credentials: ExchangeCredentials): OkxDemoA
     async setPositionStopLoss() { return unsupported('stop-loss protection'); },
     async setPositionTakeProfit() { return unsupported('take-profit protection'); },
     async closePosition() { return unsupported('reduce-only close'); },
-    async reconcileOrder() { return unsupported('order reconciliation'); },
+    getOrderStatus: (symbol, orderId) => lookupOrder(symbol, orderId, 'ordId'),
+    // A null result is an unresolved lookup, never authority to resubmit.
+    reconcileOrder: (symbol, orderId) => lookupOrder(symbol, orderId, 'clOrdId'),
   };
 }

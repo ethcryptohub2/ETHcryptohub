@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { TABLE_PAGE_SIZE } from '../../lib/pagination';
 import { TablePagination } from './table-pagination';
 
@@ -48,31 +48,48 @@ export function AdminSubscriptions() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
+  const latestLoad = useRef(0);
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (signal?: AbortSignal) => {
+    const requestId = ++latestLoad.current;
     const params = new URLSearchParams({
       search, status, codeStatus, userPage: String(userPage), codePage: String(codePage),
     });
-    const response = await fetch(`/api/admin/subscriptions?${params}`, { cache: 'no-store' });
-    const body = await response.json() as { data?: AdminData; error?: string };
-    if (!response.ok || !body.data) throw new Error(body.error ?? 'Subscription management could not be loaded.');
-    const lastUserPage = Math.max(1, Math.ceil(body.data.usersTotal / TABLE_PAGE_SIZE));
-    const lastCodePage = Math.max(1, Math.ceil(body.data.codesTotal / TABLE_PAGE_SIZE));
-    if (userPage > lastUserPage || codePage > lastCodePage) {
-      if (userPage > lastUserPage) setUserPage(lastUserPage);
-      if (codePage > lastCodePage) setCodePage(lastCodePage);
-      return;
+    try {
+      const response = await fetch(`/api/admin/subscriptions?${params}`, { cache: 'no-store', signal });
+      const body = await response.json() as { data?: AdminData; error?: string };
+      if (signal?.aborted || requestId !== latestLoad.current) return;
+      if (!response.ok || !body.data) throw new Error(body.error ?? 'Subscription management could not be loaded.');
+      const lastUserPage = Math.max(1, Math.ceil(body.data.usersTotal / TABLE_PAGE_SIZE));
+      const lastCodePage = Math.max(1, Math.ceil(body.data.codesTotal / TABLE_PAGE_SIZE));
+      if (userPage > lastUserPage || codePage > lastCodePage) {
+        if (userPage > lastUserPage) setUserPage(lastUserPage);
+        if (codePage > lastCodePage) setCodePage(lastCodePage);
+        return;
+      }
+      setData(body.data);
+      setError('');
+    } catch (reason) {
+      if (signal?.aborted || requestId !== latestLoad.current) return;
+      setError(reason instanceof Error ? reason.message : 'Subscription data unavailable.');
     }
-    setData(body.data);
-    setSelectedPlan((current) => current || body.data!.plans.find((plan) => plan.plan_key !== 'FREE_TRIAL')?.id || '');
   }, [search, status, codeStatus, userPage, codePage]);
 
   useEffect(() => {
-    const timer = window.setTimeout(() => {
-      void load().catch((reason: unknown) => setError(reason instanceof Error ? reason.message : 'Subscription data unavailable.'));
-    }, 0);
-    return () => window.clearTimeout(timer);
+    const controller = new AbortController();
+    const timer = window.setTimeout(() => void load(controller.signal), 0);
+    return () => {
+      controller.abort();
+      window.clearTimeout(timer);
+    };
   }, [load]);
+
+  // Mutations may finish after the operator changes a filter. Refresh the
+  // current selection rather than the filters captured when the POST began.
+  const refresh = useRef(load);
+  useEffect(() => { refresh.current = load; }, [load]);
+  const activePlans = data?.plans.filter((plan) => plan.plan_key !== 'FREE_TRIAL' && plan.is_active) ?? [];
+  const licensePlan = activePlans.find((plan) => plan.id === selectedPlan) ?? activePlans[0];
 
   async function mutate(payload: Record<string, unknown>, successText: string) {
     setBusy(true);
@@ -91,8 +108,8 @@ export function AdminSubscriptions() {
       const body = await response.json() as { data?: { codes?: GeneratedCode[] }; error?: string };
       if (!response.ok) throw new Error(body.error ?? 'Subscription action failed.');
       if (body.data?.codes) setGenerated(body.data.codes);
-      await load();
       setNotice(successText);
+      await refresh.current();
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : 'Subscription action failed.');
     } finally {
@@ -102,7 +119,7 @@ export function AdminSubscriptions() {
 
   async function generateCodes(event: React.FormEvent) {
     event.preventDefault();
-    const plan = data?.plans.find((item) => item.id === selectedPlan);
+    const plan = licensePlan;
     if (!plan) return;
     if (!window.confirm(`Confirm payment was independently verified before issuing ${codeCount} ${plan.plan_name} code(s)?`)) return;
     await mutate({
@@ -172,8 +189,9 @@ export function AdminSubscriptions() {
       <form className="stack subscription-code-generator" onSubmit={(event) => void generateCodes(event)}>
         <h3>License Code Generator</h3>
         <div className="subscription-generator-grid">
-          <label>Plan<select required value={selectedPlan} onChange={(event) => setSelectedPlan(event.target.value)}>
-            {data.plans.filter((plan) => plan.plan_key !== 'FREE_TRIAL' && plan.is_active).map((plan) => <option key={plan.id} value={plan.id}>{plan.plan_name} · {plan.duration_days} days · ${Number(plan.price_usd).toFixed(2)}</option>)}
+          <label>Plan<select required disabled={!licensePlan} value={licensePlan?.id ?? ''} onChange={(event) => setSelectedPlan(event.target.value)}>
+            {!licensePlan && <option value="">No active premium plans</option>}
+            {activePlans.map((plan) => <option key={plan.id} value={plan.id}>{plan.plan_name} · {plan.duration_days} days · ${Number(plan.price_usd).toFixed(2)}</option>)}
           </select></label>
           <label>Codes<input type="number" min={1} max={100} value={codeCount} onChange={(event) => setCodeCount(Number(event.target.value))} /></label>
           <label>Assigned email (optional)<input type="email" maxLength={255} value={assignedEmail} onChange={(event) => setAssignedEmail(event.target.value)} /></label>
@@ -182,7 +200,7 @@ export function AdminSubscriptions() {
           <label>Internal note<input maxLength={300} value={note} onChange={(event) => setNote(event.target.value)} /></label>
         </div>
         <p className="muted">Generate only after independently verifying payment. Codes are stored as keyed hashes and displayed only in this response.</p>
-        <button type="submit" disabled={busy || !selectedPlan || !paymentReference.trim()}>{busy ? 'Processing…' : 'Generate Code'}</button>
+        <button type="submit" disabled={busy || !licensePlan || !paymentReference.trim()}>{busy ? 'Processing…' : 'Generate Code'}</button>
       </form>
 
       {generated.length > 0 && <div className="subscription-generated-codes">

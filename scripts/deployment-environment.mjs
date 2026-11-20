@@ -18,6 +18,13 @@ const executionGates = [
   'BINANCE_FUTURES_LIVE_TRADING_APPROVED',
   'SMARTEXIT_BYBIT_DEMO_ORDER_SUBMISSION_ENABLED',
 ];
+const unapprovedStagingServiceGates = [
+  'SMARTEXIT_ADMIN_DEMO_REMOTE_SERVICE_ENABLED',
+  'SMARTEXIT_ADMIN_BINANCE_DEMO_LAB_ENABLED',
+  'SMARTEXIT_ADMIN_BYBIT_DEMO_LAB_ENABLED',
+  'SMARTEXIT_ADMIN_SCANNER_REFRESH_ENABLED',
+  'SMARTEXIT_PUBLIC_REST_SNAPSHOT_ENABLED',
+];
 
 function isDisabled(value) {
   return value === undefined || value === null || value.trim() === '' || value.trim().toLowerCase() === 'false';
@@ -171,6 +178,12 @@ export function validateDeploymentEnvironment(env, binanceSource = '') {
   }
   checks.executionGatesDisabled = invalidGates.length === 0;
   if (invalidGates.length) errors.push(`Trading gates must remain unset or false: ${invalidGates.join(', ')}.`);
+  if (isPreviewOrStaging) {
+    const enabledServices = unapprovedStagingServiceGates.filter((name) => !isDisabled(env[name]));
+    if (enabledServices.length) {
+      errors.push(`Staging remote service gates must remain unset or false: ${enabledServices.join(', ')}.`);
+    }
+  }
 
   if (env.BINANCE_FUTURES_DEMO_API_URL && env.BINANCE_FUTURES_DEMO_API_URL !== DEMO_ENDPOINT) {
     errors.push('A non-standard Binance Demo endpoint override is not permitted.');

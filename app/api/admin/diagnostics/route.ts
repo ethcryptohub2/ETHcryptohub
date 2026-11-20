@@ -1,11 +1,13 @@
 import { NextResponse } from 'next/server';
 import { AuthError, requireAdmin } from '../../../../lib/auth';
 import { isDatabaseConfigured, query } from '../../../../lib/db';
-import { getScannerSyncState, consumeScannerAdminRateLimit } from '../../../../lib/scanner-coins';
+import { getScannerSyncState } from '../../../../lib/scanner-coins';
 import { scannerSyncIsRecent } from '../../../../lib/scanner-snapshot';
+import { createAdminReadLimiter } from '../../../../lib/admin-read-rate-limit';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
+const allowRead = createAdminReadLimiter();
 
 type DiagnosticStatus = 'ok' | 'warning' | 'error';
 type DiagnosticCheck = {
@@ -29,8 +31,7 @@ async function checkDatabase(): Promise<DiagnosticCheck> {
   try {
     await query('SELECT 1');
     return { id: 'database', label: 'Database', status: 'ok', detail: 'Database connection is responding.' };
-  } catch (error) {
-    console.error('Admin diagnostic database check failed:', error instanceof Error ? error.message : 'Unknown error');
+  } catch {
     return {
       id: 'database',
       label: 'Database',
@@ -72,32 +73,14 @@ function checkEmail(): DiagnosticCheck {
   };
 }
 
-async function checkBinance(): Promise<DiagnosticCheck> {
-  try {
-    const response = await fetch('https://fapi.binance.com/fapi/v1/ping', {
-      cache: 'no-store',
-      signal: AbortSignal.timeout(5_000),
-    });
-    if (!response.ok) {
-      return {
-        id: 'binance',
-        label: 'Binance market-data API',
-        status: 'error',
-        detail: `Binance returned HTTP ${response.status}.`,
-        recommendation: 'Check Binance API availability and outbound network access from this server.',
-      };
-    }
-    return { id: 'binance', label: 'Binance market-data API', status: 'ok', detail: 'Public market-data endpoint is responding.' };
-  } catch (error) {
-    console.error('Admin diagnostic Binance check failed:', error instanceof Error ? error.message : 'Unknown error');
-    return {
-      id: 'binance',
-      label: 'Binance market-data API',
-      status: 'error',
-      detail: 'The public market-data endpoint could not be reached.',
-      recommendation: 'Check Binance availability and outbound network access from this server.',
-    };
-  }
+function marketConnectivityStatus(): DiagnosticCheck {
+  return {
+    id: 'binance',
+    label: 'Binance market-data API',
+    status: 'warning',
+    detail: 'Connectivity has not been checked by these diagnostics.',
+    recommendation: 'A finite public market check requires separate approval.',
+  };
 }
 
 async function checkScanner(): Promise<DiagnosticCheck> {
@@ -109,7 +92,7 @@ async function checkScanner(): Promise<DiagnosticCheck> {
         label: 'Scanner sync',
         status: 'warning',
         detail: 'The scanner has no recorded successful universe sync.',
-        recommendation: 'Use “Attempt safe scanner recovery” to sync the pair list and run one scan.',
+        recommendation: 'A scanner refresh requires separate approval.',
       };
     }
     if (state.exchange_status === 'ERROR') {
@@ -117,8 +100,8 @@ async function checkScanner(): Promise<DiagnosticCheck> {
         id: 'scanner',
         label: 'Scanner sync',
         status: 'error',
-        detail: state.last_error ?? 'The most recent scanner sync failed.',
-        recommendation: 'Try a safe scanner recovery. If it fails again, check the database and Binance checks above.',
+        detail: 'The most recent scanner sync failed.',
+        recommendation: 'Review the scanner sync evidence before approving another refresh.',
       };
     }
     return {
@@ -128,8 +111,7 @@ async function checkScanner(): Promise<DiagnosticCheck> {
       detail: `Last successful sync: ${new Date(state.last_success_at).toLocaleString('en-US', { timeZone: 'UTC' })} UTC.`,
       recommendation: 'Pair discovery status does not establish fresh scan results. Review snapshot timestamps; no automatic recovery is performed.',
     };
-  } catch (error) {
-    console.error('Admin diagnostic scanner check failed:', error instanceof Error ? error.message : 'Unknown error');
+  } catch {
     return {
       id: 'scanner',
       label: 'Scanner sync',
@@ -143,17 +125,18 @@ async function checkScanner(): Promise<DiagnosticCheck> {
 export async function GET() {
   try {
     const admin = await requireAdmin();
-    await consumeScannerAdminRateLimit(admin.id, 'read');
-    const checks = await Promise.all([checkDatabase(), checkAuthSecret(), checkEmail(), checkBinance(), checkScanner()]);
+    if (!allowRead(admin.id)) {
+      return NextResponse.json({ error: 'Too many diagnostics requests. Wait a minute and retry.' }, {
+        status: 429, headers: { 'Cache-Control': 'no-store' },
+      });
+    }
+    const checks = await Promise.all([checkDatabase(), checkAuthSecret(), checkEmail(), marketConnectivityStatus(), checkScanner()]);
     return NextResponse.json({ data: { checks, checkedAt: new Date().toISOString() } }, {
       headers: { 'Cache-Control': 'no-store' },
     });
   } catch (error) {
-    const message = error instanceof Error ? error.message : 'Diagnostics could not be completed.';
-    if (!(error instanceof AuthError) && !message.startsWith('Too many')) {
-      console.error('Admin diagnostics failed:', message);
-    }
-    const status = error instanceof AuthError ? error.status : message.startsWith('Too many') ? 429 : 503;
+    const message = error instanceof AuthError ? error.message : 'Diagnostics could not be completed.';
+    const status = error instanceof AuthError ? error.status : 503;
     return NextResponse.json({ error: message }, { status, headers: { 'Cache-Control': 'no-store' } });
   }
 }

@@ -8,14 +8,15 @@ export async function readIntelligenceStatus(actor: IntelligenceActor) {
   if (!isApprovedAdminDemoStagingTarget(process.env)) return buildIntelligenceStatus(actor, null);
   try {
     const result = await query<{ enabled: string; covered: string; latest: string | null }>(
-      `SELECT
-         (SELECT count(*)::text FROM public.scanner_coin_configs
-           WHERE exchange='BINANCE' AND quote_asset='USDT' AND contract_type='PERPETUAL'
-             AND trading_status='TRADING' AND is_enabled=TRUE) AS enabled,
-         (SELECT count(DISTINCT s.symbol)::text FROM public.scanner_candidate_snapshots s
-           JOIN public.scanner_coin_configs c ON c.symbol=s.symbol AND c.exchange=s.exchange
-           WHERE c.is_enabled=TRUE AND c.trading_status='TRADING') AS covered,
-         (SELECT max(scanned_at)::text FROM public.scanner_candidate_snapshots) AS latest`,
+      `WITH enabled AS (
+         SELECT exchange, symbol FROM public.scanner_coin_configs
+          WHERE exchange='BINANCE' AND quote_asset='USDT' AND contract_type='PERPETUAL'
+            AND trading_status='TRADING' AND is_enabled=TRUE
+       )
+       SELECT (SELECT count(*)::text FROM enabled) AS enabled,
+              count(DISTINCT s.symbol)::text AS covered, max(s.scanned_at)::text AS latest
+         FROM public.scanner_candidate_snapshots s
+         JOIN enabled e ON e.symbol=s.symbol AND e.exchange=s.exchange`,
     );
     const row = result.rows[0];
     return buildIntelligenceStatus(actor, row ? {

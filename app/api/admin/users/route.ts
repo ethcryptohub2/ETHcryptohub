@@ -43,7 +43,7 @@ export async function POST(request: NextRequest) {
     const parsed = z.object({
       action: z.enum(['toggle_x_verification', 'toggle_active', 'delete_user', 'mark_email_verified']),
       userId: z.number().int().positive().safe(),
-    }).safeParse(await request.json());
+    }).safeParse(await request.json().catch(() => null));
     if (!parsed.success) {
       return NextResponse.json({ error: 'Invalid user action.' }, { status: 400 });
     }
@@ -55,15 +55,15 @@ export async function POST(request: NextRequest) {
     if (action === 'toggle_x_verification') {
       result = await query('UPDATE public.users SET is_x_verified = 1 - is_x_verified WHERE id = $1', [target]);
     } else if (action === 'toggle_active') {
-      result = await query('UPDATE public.users SET is_active = 1 - is_active WHERE id = $1 AND id <> $2', [target, admin.id]);
+      result = await query("UPDATE public.users SET is_active = 1 - is_active WHERE id = $1 AND id <> $2 AND role <> 'admin'", [target, admin.id]);
     } else if (action === 'delete_user') {
-      result = await query('DELETE FROM public.users WHERE id = $1 AND id <> $2', [target, admin.id]);
+      result = await query("DELETE FROM public.users WHERE id = $1 AND id <> $2 AND role <> 'admin'", [target, admin.id]);
     } else if (action === 'mark_email_verified') {
       const client = await pool().connect();
       try {
         await client.query('BEGIN');
         result = await client.query(
-          'UPDATE public.users SET is_email_verified = 1, email_verification_token = NULL WHERE id = $1 AND is_email_verified = 0',
+          "UPDATE public.users SET is_email_verified = 1, email_verification_token = NULL WHERE id = $1 AND is_email_verified = 0 AND role <> 'admin'",
           [target],
         );
         if (result.rowCount === 1) {

@@ -5,12 +5,14 @@ import type {
   ExchangeCredentials,
   ExchangeEnvironment,
   ExchangeInstrument,
+  ExchangeOrder,
   ExchangePosition,
 } from './types';
 
 const GATE_FUTURES_TESTNET_REST_URL = 'https://api-testnet.gateapi.io/api/v4';
 const SETTLE_CURRENCY = 'usdt';
 const REQUEST_TIMEOUT_MS = 10_000;
+const orderNotFound = Symbol('Gate order not found');
 
 export const GATE_TESTNET_DOCUMENTATION_URL = 'https://www.gate.com/docs/developers/apiv4/en/';
 export const GATE_TESTNET_ACCESS_URL_DOCUMENTATION =
@@ -50,6 +52,51 @@ const positionSchema = z.object({
   unrealised_pnl: numericValue,
   leverage: numericValue.optional(),
 });
+
+const futuresSymbol = z.string().regex(/^[A-Z0-9]{1,24}_USDT$/);
+const exchangeOrderId = z.string().regex(/^[1-9]\d{0,18}$/);
+const clientOrderId = z.string().regex(/^t-[A-Za-z0-9_.-]{1,28}$/);
+const decimal = z.string().regex(/^-?\d{1,30}(?:\.\d{1,30})?$/);
+const orderSchema = z.object({
+  id: exchangeOrderId,
+  contract: futuresSymbol,
+  size: decimal,
+  left: decimal,
+  price: decimal,
+  text: z.string().max(64).optional(),
+  tif: z.enum(['gtc', 'ioc', 'poc', 'fok']),
+  status: z.enum(['open', 'finished']),
+  finish_as: z.enum([
+    '', 'filled', 'cancelled', 'liquidated', 'ioc', 'auto_deleveraged',
+    'reduce_only', 'position_closed', 'reduce_out', 'stp',
+  ]).optional(),
+  is_reduce_only: z.boolean().optional(),
+});
+
+type GateTestnetOrder = ExchangeOrder & {
+  finishReason: string | null;
+  reduceOnly: boolean | null;
+};
+
+function orderQuantities(size: string, left: string) {
+  const quantity = size.replace(/^-/, '');
+  const remaining = left.replace(/^-/, '');
+  const [quantityWhole, quantityFraction = ''] = quantity.split('.');
+  const [remainingWhole, remainingFraction = ''] = remaining.split('.');
+  const scale = Math.max(quantityFraction.length, remainingFraction.length);
+  const total = BigInt(quantityWhole + quantityFraction.padEnd(scale, '0'));
+  const unfilled = BigInt(remainingWhole + remainingFraction.padEnd(scale, '0'));
+  if (total === 0n || unfilled > total) {
+    throw new GateTestnetError('Gate Futures Testnet returned inconsistent signed order quantities.', 502);
+  }
+  const digits = String(total - unfilled).padStart(scale + 1, '0');
+  return {
+    quantity,
+    filled: scale ? `${digits.slice(0, -scale)}.${digits.slice(-scale)}` : digits,
+    fullyFilled: unfilled === 0n,
+    partiallyFilled: unfilled > 0n && unfilled < total,
+  };
+}
 
 export class GateTestnetError extends Error {
   constructor(message: string, readonly status = 502) {
@@ -122,20 +169,29 @@ export type GateTestnetAdapter = {
   getAccountBalance(): Promise<ExchangeBalance[]>;
   getMarketInstruments(): Promise<ExchangeInstrument[]>;
   getPositions(): Promise<ExchangePosition[]>;
+  getOrderStatus(symbol: string, orderId: string): Promise<GateTestnetOrder | null>;
+  reconcileOrder(symbol: string, clientOrderId: string): Promise<GateTestnetOrder | null>;
 };
 
 export function createGateTestnetAdapter(
   credentials: ExchangeCredentials,
   environment: ExchangeEnvironment = 'TESTNET',
+  transport?: typeof fetch,
 ): GateTestnetAdapter {
   if (environment !== 'TESTNET') {
     throw new GateTestnetError('Gate adapter is pinned to TESTNET; Live and Demo environments are unavailable.', 422);
   }
-  if (!credentials.apiKey.trim() || !credentials.apiSecret.trim()) {
+  if (typeof credentials?.apiKey !== 'string' || !credentials.apiKey.trim() ||
+      typeof credentials?.apiSecret !== 'string' || !credentials.apiSecret.trim()) {
     throw new GateTestnetError('Gate Futures Testnet API key and secret are required.', 422);
   }
 
-  async function request(path: string, params: Record<string, string> = {}, privateRequest = true) {
+  async function request(
+    path: string,
+    params: Record<string, string> = {},
+    privateRequest = true,
+    isOrderLookup = false,
+  ) {
     const queryString = sortedQuery(params);
     const requestPath = `/api/v4${path}`;
     const url = `${GATE_FUTURES_TESTNET_REST_URL}${path}${queryString ? `?${queryString}` : ''}`;
@@ -143,6 +199,7 @@ export function createGateTestnetAdapter(
       Accept: 'application/json',
       'Content-Type': 'application/json',
     };
+    if (isOrderLookup) headers['X-Gate-Size-Decimal'] = '1';
     if (privateRequest) {
       const timestamp = Math.floor(Date.now() / 1000).toString();
       headers.KEY = credentials.apiKey;
@@ -158,7 +215,7 @@ export function createGateTestnetAdapter(
 
     let response: Response;
     try {
-      response = await fetch(url, {
+      response = await (transport ?? fetch)(url, {
         method: 'GET',
         headers,
         cache: 'no-store',
@@ -168,13 +225,28 @@ export function createGateTestnetAdapter(
     } catch {
       throw new GateTestnetError('Gate Futures Testnet request failed or timed out.', 503);
     }
+    if (response.redirected) {
+      throw new GateTestnetError('Gate Futures Testnet rejected a redirected response.', 502);
+    }
     if (!response.ok) {
+      if (isOrderLookup && response.status === 404) {
+        const error = z.object({ label: z.literal('ORDER_NOT_FOUND') })
+          .safeParse(await response.json().catch(() => null));
+        if (error.success) return orderNotFound;
+      }
       throw new GateTestnetError(
         `Gate Futures Testnet returned HTTP ${response.status}.`,
         response.status === 429 ? 429 : 502,
       );
     }
     try {
+      if (isOrderLookup) {
+        // Gate returns int64 order IDs. Recover their original digits before schema validation.
+        return JSON.parse(await response.text(), (key, value, context?: { source?: string }) => {
+          if (key !== 'id' || typeof value !== 'number') return value;
+          return context?.source ?? (Number.isSafeInteger(value) ? String(value) : value);
+        }) as unknown;
+      }
       return await response.json() as unknown;
     } catch {
       throw new GateTestnetError('Gate Futures Testnet returned invalid JSON.', 502);
@@ -186,6 +258,49 @@ export function createGateTestnetAdapter(
     const parsed = accountSchema.safeParse(data);
     if (!parsed.success) throw new GateTestnetError('Gate Futures Testnet returned invalid account data.', 502);
     return parsed.data;
+  }
+
+  async function lookupOrder(
+    symbol: string,
+    identifier: string,
+    kind: 'id' | 'text',
+  ): Promise<GateTestnetOrder | null> {
+    if (!transport || transport === fetch) {
+      throw new GateTestnetError('Gate Futures Testnet remote order lookup is disabled.', 501);
+    }
+    const idSchema = kind === 'id' ? exchangeOrderId : clientOrderId;
+    if (!futuresSymbol.safeParse(symbol).success || !idSchema.safeParse(identifier).success) {
+      throw new GateTestnetError('Invalid Gate Futures Testnet contract or order identifier.', 422);
+    }
+    const data = await request(`/futures/${SETTLE_CURRENCY}/orders/${identifier}`, {}, true, true);
+    if (data === orderNotFound) return null;
+    const parsed = orderSchema.safeParse(data);
+    if (!parsed.success || parsed.data.contract !== symbol || parsed.data[kind] !== identifier) {
+      throw new GateTestnetError('Gate Futures Testnet order response could not be matched to the request.', 502);
+    }
+    const order = parsed.data;
+    const { quantity, filled, fullyFilled, partiallyFilled } = orderQuantities(order.size, order.left);
+    const price = Number(order.price);
+    if (price < 0 || (price === 0 && order.tif !== 'ioc') ||
+        (order.status === 'finished' && (!order.finish_as || (order.finish_as === 'filled') !== fullyFilled)) ||
+        (order.status === 'open' && (fullyFilled || order.finish_as))) {
+      throw new GateTestnetError('Gate Futures Testnet returned inconsistent order status or pricing.', 502);
+    }
+    return {
+      symbol,
+      exchangeOrderId: order.id,
+      clientOrderId: order.text && clientOrderId.safeParse(order.text).success ? order.text : null,
+      side: order.size.startsWith('-') ? 'SELL' : 'BUY',
+      type: price === 0 ? 'MARKET' : 'LIMIT',
+      status: order.status === 'open'
+        ? (partiallyFilled ? 'PARTIALLY_FILLED' : 'OPEN')
+        : order.finish_as!.toUpperCase(),
+      quantity,
+      filledQuantity: filled,
+      price: price === 0 ? null : order.price,
+      finishReason: order.finish_as || null,
+      reduceOnly: order.is_reduce_only ?? null,
+    };
   }
 
   return {
@@ -247,5 +362,9 @@ export function createGateTestnetAdapter(
         }];
       });
     },
+
+    getOrderStatus: (symbol, orderId) => lookupOrder(symbol, orderId, 'id'),
+    // Gate's lookup retention can hide a cancelled order. Never treat null as safe to resubmit.
+    reconcileOrder: (symbol, orderId) => lookupOrder(symbol, orderId, 'text'),
   };
 }

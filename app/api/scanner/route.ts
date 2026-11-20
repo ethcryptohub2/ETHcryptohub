@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { AuthError } from '../../../lib/auth';
 import { marketScannerQuerySchema } from '../../../smartexit/apps/api/src/schemas';
 import type { MarketScannerCandidate } from '../../../smartexit/apps/api/src/services/market-scanner';
-import { savedScannerCandidate } from '../../../lib/scanner-snapshot';
+import { applyScannerSignalValidity, savedScannerCandidate } from '../../../lib/scanner-snapshot';
 import {
   defaultNotificationSystemSettings,
   getPersistedSignalMetadata,
@@ -48,7 +48,6 @@ export async function GET(request: NextRequest) {
     const now = Date.now();
     const candidates: MarketScannerCandidate[] = snapshotRows.map(({ candidate_json: saved, scanned_at }) =>
       savedScannerCandidate(saved, scanned_at, parsed.data.maxAgeSeconds, now));
-    const staleStatuses = new Set(['EXPIRED', 'ENTRY_INVALIDATED', 'STOP_LOSS_HIT', 'TP3_HIT', 'MISSED', 'AMBIGUOUS']);
     let signalMap: Record<string, Awaited<ReturnType<typeof getPersistedSignalMetadata>>[string] | null> = {};
     if (candidates.length && !notificationWarning) {
       try {
@@ -63,18 +62,12 @@ export async function GET(request: NextRequest) {
         notificationWarning = 'Signal notifications are unavailable because their database migration is not configured.';
       }
     }
-    const displayedCandidates = candidates.map((candidate) => {
-      const signal = signalMap[candidate.symbol];
-      if (candidate.status !== 'READY' || !signal || !staleStatuses.has(signal.status)) return candidate;
-      return {
-        ...candidate,
-        status: 'WAIT' as const,
-        side: 'WAIT' as const,
-        setup: null,
-        rationale: `WAIT: this persisted signal is ${signal.status.replaceAll('_', ' ').toLowerCase()} and is not a fresh entry.`,
-        warnings: [...candidate.warnings, 'The previous signal is no longer actionable.'],
-      };
-    });
+    const serverNow = Date.now();
+    const displayedCandidates = candidates.map((candidate) => applyScannerSignalValidity(
+      savedScannerCandidate(candidate, candidate.scannedAt ?? '', parsed.data.maxAgeSeconds, serverNow),
+      signalMap[candidate.symbol],
+      serverNow,
+    ));
     const scanTimes = snapshotRows.map((row) => Date.parse(row.scanned_at)).filter(Number.isFinite);
     const result = {
       exchange: 'BINANCE' as const,
@@ -95,7 +88,7 @@ export async function GET(request: NextRequest) {
     };
     return NextResponse.json({
       data: result,
-      signalMetadata: { signals: signalMap, serverNow: new Date().toISOString() },
+      signalMetadata: { signals: signalMap, serverNow: new Date(serverNow).toISOString() },
       ...(notificationWarning ? { notificationWarning } : {}),
     }, { headers: { 'Cache-Control': 'no-store' } });
   } catch (error) {

@@ -216,6 +216,11 @@ if ($Mode -eq 'setup') {
   exit 0
 }
 
+$playwrightCli = Join-Path $repositoryRoot 'node_modules\@playwright\test\cli.js'
+if (!(Test-Path -LiteralPath $playwrightCli -PathType Leaf)) {
+  throw 'The existing local Playwright installation is required to run the auth suite.'
+}
+
 try {
   $adminCredential = [SmartExitCredentialStore]::Read($adminTarget)
   $userCredential = [SmartExitCredentialStore]::Read($userTarget)
@@ -247,7 +252,7 @@ if ($Suite -ne 'auth') {
   $arguments += "--grep=${Suite}:"
 }
 
-& node.exe @arguments
+& node.exe $playwrightCli @arguments
 $exitCode = $LASTEXITCODE
 foreach ($name in @(
   'SMARTEXIT_ADMIN_TEST_EMAIL',

@@ -1,6 +1,8 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { useRouter } from 'next/navigation';
+import { signalRemainingMs } from '../lib/signal-countdown';
 
 type Plan = { id: string; plan_key: string; plan_name: string; duration_days: number; price_usd: string };
 type Subscription = {
@@ -28,7 +30,7 @@ function remaining(expiresAt: string, serverNow: string, tick: number) {
   const end = Date.parse(expiresAt);
   const server = Date.parse(serverNow);
   if (!Number.isFinite(end) || !Number.isFinite(server)) return '—';
-  const seconds = Math.max(0, Math.floor((end - server - tick) / 1000));
+  const seconds = Math.ceil(signalRemainingMs(expiresAt, serverNow, tick) / 1000);
   const days = Math.floor(seconds / 86_400);
   const hours = Math.floor((seconds % 86_400) / 3600);
   const minutes = Math.floor((seconds % 3600) / 60);
@@ -43,6 +45,7 @@ function date(value: string | null) {
 }
 
 export function SubscriptionPanel({ paywall = false }: { paywall?: boolean }) {
+  const router = useRouter();
   const [subscription, setSubscription] = useState<Subscription | null>(null);
   const [plans, setPlans] = useState<Plan[]>([]);
   const [history, setHistory] = useState<History | null>(null);
@@ -51,6 +54,7 @@ export function SubscriptionPanel({ paywall = false }: { paywall?: boolean }) {
   const [supportEmail, setSupportEmail] = useState('');
   const [paymentPlan, setPaymentPlan] = useState<Plan | null>(null);
   const [tick, setTick] = useState(0);
+  const receivedAt = useRef<number | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
@@ -65,6 +69,8 @@ export function SubscriptionPanel({ paywall = false }: { paywall?: boolean }) {
       error?: string;
     };
     if (!subscriptionResponse.ok || !body.data) throw new Error(body.error ?? 'Subscription status is unavailable.');
+    receivedAt.current = performance.now();
+    setTick(0);
     setSubscription(body.data.subscription);
     setPlans(body.data.plans);
     setSupportEmail(body.data.supportEmail ?? '');
@@ -81,7 +87,7 @@ export function SubscriptionPanel({ paywall = false }: { paywall?: boolean }) {
       );
     }, 0);
     const refresh = window.setInterval(() => {
-      setTick((value) => value + 1000);
+      if (receivedAt.current !== null) setTick(performance.now() - receivedAt.current);
     }, 1000);
     return () => {
       window.clearTimeout(timer);
@@ -108,6 +114,7 @@ export function SubscriptionPanel({ paywall = false }: { paywall?: boolean }) {
       setActivationCode('');
       setNotice('Premium access activated successfully.');
       await load();
+      if (paywall) router.refresh();
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : 'Activation code could not be redeemed.');
     } finally {
@@ -115,10 +122,13 @@ export function SubscriptionPanel({ paywall = false }: { paywall?: boolean }) {
     }
   }
 
-  const isLocked = paywall || (subscription !== null && !subscription.hasPremiumAccess);
   const expiration = subscription?.status === 'PREMIUM_ACTIVE'
     ? subscription.premiumExpiresAt
     : subscription?.trialExpiresAt ?? null;
+  const isLocked = subscription === null
+    ? paywall
+    : !subscription.hasPremiumAccess || !expiration ||
+      signalRemainingMs(expiration, subscription.serverNow, tick) === 0;
   const planHref = (plan: Plan) => {
     const subject = encodeURIComponent(`Manual payment instructions — ${plan.plan_name}`);
     const body = encodeURIComponent(`Hello,\n\nI would like to purchase ${plan.plan_name} (${plan.duration_days} days, $${Number(plan.price_usd).toFixed(2)} USD).\n\nAccount email:`);
@@ -128,7 +138,9 @@ export function SubscriptionPanel({ paywall = false }: { paywall?: boolean }) {
   return <section id="subscription" className={`card stack subscription-panel${isLocked ? ' is-locked' : ''}`}>
     {isLocked ? <>
       <p className="mono">SUBSCRIPTION REQUIRED</p>
-      <h2>{subscription?.status === 'PREMIUM_EXPIRED' ? 'Your Premium Subscription Has Expired' : 'Your Free Trial Has Expired'}</h2>
+      <h2>{subscription === null ? 'Subscription required'
+        : subscription.status === 'PREMIUM_EXPIRED' || subscription.status === 'PREMIUM_ACTIVE'
+          ? 'Your Premium Subscription Has Expired' : 'Your Free Trial Has Expired'}</h2>
       <p className="muted">Subscribe to Premium to unlock Smart Signals, Live Market Research, Technical Analysis and Trading Alerts. Manual payment verification is required; clicking a plan does not process a payment.</p>
       <div className="subscription-plan-grid">{plans.map((plan) => <article key={plan.id}>
         <p className="mono">{plan.plan_name}</p><strong>${Number(plan.price_usd).toFixed(2)} <small>USD</small></strong>
