@@ -17,6 +17,7 @@ import {
   requiresBybitDemoOrderSubmission,
 } from '../../../../../lib/exchanges/demo-order-approval';
 import { assertExchangeFoundationReady } from '../../../../../lib/exchanges/schema';
+import { isApprovedAdminDemoStagingTarget } from '../../../../../lib/admin-demo-staging-policy';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -160,6 +161,11 @@ export async function POST(request: NextRequest) {
   let adminUserId = 0;
   try {
     const admin = await requireAdmin();
+    if (process.env.SMARTEXIT_ADMIN_BYBIT_DEMO_LAB_ENABLED !== 'true' ||
+        !isApprovedAdminDemoStagingTarget(process.env)) {
+      return Response.json({ error: 'Authenticated Bybit Demo actions are disabled.' },
+        { status: 503, headers: { 'Cache-Control': 'no-store' } });
+    }
     adminUserId = admin.id;
     await assertExchangeFoundationReady();
     const body: unknown = await request.json().catch(() => null);

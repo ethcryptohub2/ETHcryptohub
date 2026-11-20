@@ -18,13 +18,21 @@ Depth books are initialized early, then U/u/pu continuity and trade IDs are chec
 
 ## Exact future operator command — run only after separate approval
 
-From `C:\Users\91797\Ethcryptohub`, using the already available Node 24 binary:
+From `C:\Users\91797\Ethcryptohub`, use the installed Node 24 binary and the isolated Windows launcher. The launcher starts Node with only `SystemRoot` and `WINDIR` from the Windows installation. The caller's environment and the diagnostic's credential guard stay intact.
+
+Validate the isolated environment offline before requesting live execution approval:
 
 ```powershell
 $node24 = 'C:\Users\91797\.cache\codex-runtimes\codex-primary-runtime\dependencies\node\bin\node.exe'
-& $node24 --version
+& .\scripts\launch-windows-public-preflight.ps1 -NodePath $node24 -VerifyOnly
+```
+
+After the operator confirms eligibility and separately approves one live run:
+
+```powershell
+$node24 = 'C:\Users\91797\.cache\codex-runtimes\codex-primary-runtime\dependencies\node\bin\node.exe'
 $runFolder = Join-Path (Get-Location) ('tmp\public-preflight-' + (Get-Date -Format 'yyyyMMdd-HHmmss'))
-& $node24 .\scripts\windows-public-preflight.mjs --execute-approved-public-only --eligibility-confirmed --output $runFolder
+& .\scripts\launch-windows-public-preflight.ps1 -NodePath $node24 -OutputDirectory $runFolder -ExecuteApprovedPublicOnly -EligibilityConfirmed
 ```
 
 The output folder must not exist. Exit code 0 means COMPLETE_LOCAL_EVIDENCE; exit code 1 means ABORTED, INCOMPLETE or refused startup. Ctrl+C stops provider traffic. Do not set persistent-worker approval variables, start the worker CLI or copy credentials. The flag records the operator’s eligibility assertion. Obtain that eligibility decision and explicit finite Windows-network-run approval first. No agreement is accepted automatically.

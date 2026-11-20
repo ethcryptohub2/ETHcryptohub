@@ -130,20 +130,44 @@ async function publicRequest<T>(baseUrl: string, path: string, transport: typeof
 
 export type BinanceCredentialPair = { apiKey: string; apiSecret: string };
 
+const fixedDemoSignedPaths = {
+  GET: new Set([
+    '/fapi/v3/account',
+    '/fapi/v3/positionRisk',
+    '/fapi/v1/positionSide/dual',
+    '/fapi/v1/order',
+    '/fapi/v1/algoOrder',
+    '/fapi/v1/openAlgoOrders',
+  ]),
+  POST: new Set(['/fapi/v1/order', '/fapi/v1/algoOrder']),
+  DELETE: new Set(['/fapi/v1/order', '/fapi/v1/algoOrder']),
+};
+
 export function createFixedBinanceDemoClient(
   credentials: BinanceCredentialPair,
   transport: typeof fetch = fetch,
 ) {
   const baseUrl = 'https://demo-fapi.binance.com';
+  const demoTransport: typeof fetch = (input, init) => transport(input, { ...init, redirect: 'error' });
   return {
     environment: 'DEMO' as const,
     baseUrl,
-    request: <T>(
+    request: async <T>(
       method: 'GET' | 'POST' | 'DELETE',
       path: string,
       parameters: Record<string, string> = {},
-    ) => signedRequest<T>(baseUrl, method, path, parameters, credentials.apiKey, credentials.apiSecret, transport),
-    publicRequest: <T>(path: string) => publicRequest<T>(baseUrl, path, transport),
+    ) => {
+      if (!Object.hasOwn(fixedDemoSignedPaths, method) || !fixedDemoSignedPaths[method].has(path)) {
+        throw new BinanceFuturesError('Binance Demo signed request is outside the reviewed endpoint allowlist.', 422);
+      }
+      return signedRequest<T>(baseUrl, method, path, parameters, credentials.apiKey, credentials.apiSecret, demoTransport);
+    },
+    publicRequest: async <T>(path: string) => {
+      if (path !== '/fapi/v1/exchangeInfo' && !/^\/fapi\/v1\/premiumIndex\?symbol=[A-Z0-9]{2,40}$/.test(path)) {
+        throw new BinanceFuturesError('Binance Demo public request is outside the reviewed endpoint allowlist.', 422);
+      }
+      return publicRequest<T>(baseUrl, path, demoTransport);
+    },
   };
 }
 

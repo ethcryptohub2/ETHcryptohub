@@ -1,0 +1,96 @@
+.lab,
+.columns,
+.credentialFields {
+  display: grid;
+  gap: 1rem;
+}
+
+.lab h2 {
+  margin-top: 0;
+}
+
+.selection,
+.columns {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 20rem), 1fr));
+  gap: 1rem;
+}
+
+.selection {
+  align-items: center;
+}
+
+.field {
+  display: grid;
+  gap: .35rem;
+}
+
+.field select,
+.field input {
+  width: 100%;
+  min-width: 0;
+}
+
+.badge {
+  display: inline-block;
+  padding: .25rem .6rem;
+  color: var(--text-primary);
+  background: var(--surface-raised);
+  border: 1px solid var(--surface-border);
+  border-radius: 999px;
+  font: 600 .75rem 'DM Mono', monospace;
+}
+
+.credentialFields {
+  margin: 0;
+  padding: 0;
+  border: 0;
+  min-inline-size: 0;
+}
+
+.approvals {
+  display: grid;
+  gap: .65rem;
+  padding-inline-start: 1.4rem;
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: .5rem;
+}
+
+.capabilities,
+.evidence {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 12rem), 1fr));
+  gap: .75rem;
+  margin: 0;
+}
+
+.capabilities > div,
+.evidence > div {
+  padding: .8rem;
+  border: 1px solid var(--surface-border);
+  background: var(--surface-raised);
+  border-radius: .6rem;
+}
+
+.capabilities dt,
+.evidence dt {
+  font-weight: 600;
+}
+
+.capabilities dd,
+.evidence dd {
+  color: var(--text-muted);
+  margin: .35rem 0 0;
+}
+
+.visuallyHidden {
+  position: absolute;
+  inline-size: 1px;
+  block-size: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+}

@@ -419,6 +419,9 @@ export function createAdminDemoExecutionService(dependencies: AdminDemoServiceDe
 export async function createProductionAdminDemoExecutionService(
   options: { transport?: BinanceDemoTransport } = {},
 ) {
+  if (process.env.SMARTEXIT_ADMIN_BINANCE_DEMO_LAB_ENABLED !== 'true') {
+    throw new Error('Admin Binance Demo service is disabled.');
+  }
   const dbQuery: AdminDemoQuery = (sql, values) => query(sql, values);
   const authorization = await createServerAdminDemoAuthorizationRepository();
   const repository = createAdminDemoExecutionRepository(dbQuery);

@@ -1,5 +1,12 @@
 import { createHmac } from 'node:crypto';
-import type { ExchangeEnvironment } from './types';
+import { z } from 'zod';
+import type {
+  ExchangeBalance,
+  ExchangeCredentials,
+  ExchangeEnvironment,
+  ExchangeOrder,
+  ExchangePosition,
+} from './types';
 
 export const BITGET_DEMO_REST_URL = 'https://api.bitget.com';
 export const BITGET_DEMO_DOCUMENTATION_URL = 'https://www.bitget.com/docs/uta/quick-start.md';
@@ -61,6 +68,212 @@ export function createBitgetDemoAdapter(environment: ExchangeEnvironment = 'DEMO
       ? 'Testnet'
       : 'Live';
   throw new BitgetDemoError(
-    `Bitget ${environmentName} integration is unsupported: current official documentation does not verify Demo-mode requirements for the futures account, contracts, and positions endpoints. No requests are enabled.`,
+    `Bitget ${environmentName} remote integration is blocked pending approved account and endpoint verification. No requests are enabled.`,
   );
+}
+
+const category = 'USDT-FUTURES';
+const decimal = z.string().regex(/^-?\d{1,30}(?:\.\d{1,30})?$/);
+const positive = decimal.refine((value) => Number(value) > 0);
+const nonnegative = decimal.refine((value) => Number(value) >= 0);
+const symbol = z.string().regex(/^[A-Z0-9]{1,24}USDT$/);
+const asset = z.string().regex(/^[A-Z0-9]{1,24}$/);
+const orderId = z.string().regex(/^\d{1,32}$/);
+const balanceResponse = z.object({
+  assets: z.array(z.object({
+    coin: asset,
+    balance: decimal,
+    available: decimal,
+    equity: decimal,
+  })).max(500),
+});
+const instrumentsResponse = z.array(z.object({
+  category: z.literal(category),
+  symbol,
+  quoteCoin: z.literal('USDT'),
+  type: z.literal('perpetual'),
+  status: z.string().min(1).max(32),
+  priceMultiplier: positive,
+  quantityMultiplier: positive,
+  minOrderQty: positive,
+  maxOrderQty: nonnegative,
+  minOrderAmount: nonnegative,
+})).max(1000);
+const positionsResponse = z.object({
+  list: z.array(z.object({
+    category: z.literal(category),
+    symbol,
+    posSide: z.enum(['long', 'short']),
+    holdMode: z.enum(['one_way_mode', 'hedge_mode']),
+    total: nonnegative,
+    avgPrice: positive,
+    markPrice: positive,
+    unrealisedPnl: decimal,
+    leverage: positive,
+  })).max(500),
+});
+const orderResponse = z.object({
+  category: z.literal(category),
+  symbol,
+  orderId,
+  clientOid: z.string().max(128),
+  side: z.enum(['buy', 'sell']),
+  orderType: z.enum(['limit', 'market']),
+  orderStatus: z.enum(['live', 'new', 'partially_filled', 'filled', 'cancelled']),
+  qty: positive,
+  cumExecQty: nonnegative,
+  price: z.union([nonnegative, z.literal('')]),
+});
+
+const BITGET_FIXTURE_ROUTES = {
+  balance: '/api/v3/account/assets',
+  instruments: '/api/v3/market/instruments',
+  positions: '/api/v3/position/current-position',
+  order: '/api/v3/trade/order-info',
+} as const;
+
+type FixtureRequest = Readonly<{
+  origin: typeof BITGET_DEMO_REST_URL;
+  method: 'GET';
+  path: (typeof BITGET_FIXTURE_ROUTES)[keyof typeof BITGET_FIXTURE_ROUTES];
+  query: string;
+  headers: Readonly<Record<string, string>>;
+}>;
+
+/** The fixture callback has no default transport. Only synthetic credentials are accepted. */
+export function createBitgetDemoFixtureAdapter(
+  credentials: ExchangeCredentials & { environment: ExchangeEnvironment },
+  options: {
+    mode: 'MOCK_READY';
+    respond: (fixture: FixtureRequest) => Promise<{ status: number; body: unknown }>;
+    now: () => number;
+  },
+) {
+  if (
+    credentials?.environment !== 'DEMO' || options?.mode !== 'MOCK_READY' ||
+    typeof options.respond !== 'function' || typeof options.now !== 'function' ||
+    ![credentials.apiKey, credentials.apiSecret, credentials.passphrase].every(
+      (value) => typeof value === 'string' && /^fixture-[a-z0-9-]{1,60}$/.test(value),
+    )
+  ) {
+    throw new BitgetDemoError('Bitget fixtures require Demo mode and synthetic credentials.', 400);
+  }
+  const { apiKey, apiSecret, passphrase } = credentials;
+  const { respond, now } = options;
+
+  async function read<T>(
+    route: keyof typeof BITGET_FIXTURE_ROUTES,
+    query: string,
+    schema: z.ZodType<T>,
+  ): Promise<T> {
+    const clock = now();
+    if (!Number.isSafeInteger(clock) || clock <= 0) {
+      throw new BitgetDemoError('Invalid Bitget fixture timestamp.', 400);
+    }
+    const path = BITGET_FIXTURE_ROUTES[route];
+    const timestamp = String(clock);
+    let response: Awaited<ReturnType<typeof respond>>;
+    try {
+      response = await respond({
+        origin: BITGET_DEMO_REST_URL,
+        method: 'GET',
+        path,
+        query,
+        headers: {
+          'ACCESS-KEY': apiKey,
+          'ACCESS-PASSPHRASE': passphrase!,
+          'ACCESS-SIGN': signBitgetDemoRequest(apiSecret, timestamp, 'GET', path, query),
+          'ACCESS-TIMESTAMP': timestamp,
+          paptrading: '1',
+        },
+      });
+    } catch {
+      throw new BitgetDemoError('Bitget fixture transport failed.', 502);
+    }
+    if (response?.status !== 200) {
+      throw new BitgetDemoError('Bitget fixture HTTP request failed.', response?.status === 429 ? 429 : 502);
+    }
+    const envelope = z.object({ code: z.literal('00000'), data: schema }).safeParse(response.body);
+    if (!envelope.success) {
+      throw new BitgetDemoError('Bitget fixture returned a provider error or invalid response.', 502);
+    }
+    return envelope.data.data;
+  }
+
+  return {
+    exchange: 'BITGET' as const,
+    environment: 'DEMO' as const,
+    readiness: 'MOCK_READY' as const,
+    capabilities: Object.freeze({
+      connectionTest: true,
+      balance: true,
+      instruments: true,
+      positions: true,
+      orderStatus: true,
+      orderSubmission: false,
+      cancellation: false,
+      protection: false,
+      reconciliation: false,
+    }),
+    async testConnection(): Promise<void> {
+      await read('balance', '', balanceResponse);
+    },
+    async getAccountBalance(): Promise<Omit<ExchangeBalance, 'unrealizedPnl'>[]> {
+      const { assets } = await read('balance', '', balanceResponse);
+      return assets.map((row) => ({
+        asset: row.coin,
+        walletBalance: row.balance,
+        availableBalance: row.available,
+        equity: row.equity,
+      }));
+    },
+    async getMarketInstruments() {
+      const rows = await read('instruments', `category=${category}`, instrumentsResponse);
+      return rows.map((row) => ({
+        exchangeSymbol: row.symbol,
+        smartExitSymbol: row.symbol,
+        contractType: 'PERPETUAL' as const,
+        quoteAsset: row.quoteCoin,
+        status: row.status,
+        tickSize: row.priceMultiplier,
+        quantityStep: row.quantityMultiplier,
+        minimumQuantity: row.minOrderQty,
+        maximumQuantity: Number(row.maxOrderQty) === 0 ? null : row.maxOrderQty,
+        minimumNotional: row.minOrderAmount,
+      }));
+    },
+    async getPositions(): Promise<(ExchangePosition & { positionMode: string })[]> {
+      const { list } = await read('positions', `category=${category}`, positionsResponse);
+      return list.filter((row) => Number(row.total) > 0).map((row) => ({
+        symbol: row.symbol,
+        side: row.posSide === 'long' ? 'LONG' : 'SHORT',
+        quantity: row.total,
+        entryPrice: row.avgPrice,
+        markPrice: row.markPrice,
+        unrealizedPnl: row.unrealisedPnl,
+        leverage: Number(row.leverage),
+        positionMode: row.holdMode,
+      }));
+    },
+    async getOrderStatus(expectedSymbol: string, id: string): Promise<ExchangeOrder> {
+      if (!symbol.safeParse(expectedSymbol).success || !orderId.safeParse(id).success) {
+        throw new BitgetDemoError('Invalid Bitget fixture order identifiers.', 400);
+      }
+      const row = await read('order', `orderId=${id}`, orderResponse);
+      if (row.orderId !== id || row.symbol !== expectedSymbol) {
+        throw new BitgetDemoError('Bitget fixture order response does not match the request.', 502);
+      }
+      return {
+        symbol: row.symbol,
+        exchangeOrderId: row.orderId,
+        clientOrderId: row.clientOid || null,
+        side: row.side === 'buy' ? 'BUY' : 'SELL',
+        type: row.orderType.toUpperCase(),
+        status: row.orderStatus,
+        quantity: row.qty,
+        filledQuantity: row.cumExecQty,
+        price: row.price || null,
+      };
+    },
+  };
 }

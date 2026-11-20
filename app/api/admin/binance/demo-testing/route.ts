@@ -107,6 +107,10 @@ export async function POST(request: NextRequest) {
 
   try {
     const admin = await requireAdmin();
+    if (process.env.SMARTEXIT_ADMIN_BINANCE_DEMO_LAB_ENABLED !== 'true') {
+      return Response.json({ error: 'Admin Binance Demo credential changes are disabled.' },
+        { status: 503, headers: { 'Cache-Control': 'no-store' } });
+    }
     const parsed = requestSchema.safeParse(await request.json().catch(() => null));
     if (!parsed.success) return Response.json({ error: 'Invalid Admin Binance Demo credential request.' }, { status: 422 });
 

@@ -1411,6 +1411,9 @@ export async function createServerAdminDemoProviderService() {
   if (!isApprovedAdminDemoStagingTarget(process.env)) {
     throw new Error('Admin Demo provider state is unavailable outside an approved staging target.');
   }
+  if (process.env.SMARTEXIT_ADMIN_DEMO_REMOTE_SERVICE_ENABLED !== 'true') {
+    throw new Error('Admin Demo provider remote service is disabled.');
+  }
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
   const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
   if (!url || !serviceRoleKey) {

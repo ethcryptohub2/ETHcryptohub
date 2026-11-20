@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { AuthError, requireAdmin } from '../../../../../lib/auth';
 import { createBinanceEnvironmentAdapter } from '../../../../../lib/binance-futures';
+import { isApprovedAdminDemoStagingTarget } from '../../../../../lib/admin-demo-staging-policy';
 import {
   assertBinanceDemoOnly,
   inspectBinanceDemoReadiness,
@@ -19,6 +20,11 @@ const querySchema = z.object({
 export async function GET(request: Request) {
   try {
     const admin = await requireAdmin();
+    if (process.env.SMARTEXIT_ADMIN_BINANCE_DEMO_LAB_ENABLED !== 'true' ||
+        !isApprovedAdminDemoStagingTarget(process.env)) {
+      return Response.json({ error: 'Authenticated Binance Demo preflight is disabled.' },
+        { status: 503, headers: { 'Cache-Control': 'no-store' } });
+    }
     const parsed = querySchema.safeParse(Object.fromEntries(new URL(request.url).searchParams));
     if (!parsed.success) {
       return Response.json({ error: 'Provide a valid symbol and quantity for a read-only Demo preflight.' }, { status: 422 });
