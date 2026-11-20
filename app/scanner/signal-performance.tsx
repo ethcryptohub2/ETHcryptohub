@@ -82,7 +82,7 @@ export function SignalPerformance() {
           <p>TP2 achievement rate <strong>{data.summary.tp2_rate ?? '—'}%</strong></p>
           <p>TP3 achievement rate <strong>{data.summary.tp3_rate ?? '—'}%</strong></p>
           <p>Entry success rate <strong>{data.summary.entry_success_rate ?? '—'}%</strong></p>
-          <p>Avg. user-reported realized PnL <strong>{data.summary.average_realized_pnl ?? 'Not recorded'}</strong></p>
+          <p>Your avg. reported realized PnL <strong>{data.summary.average_realized_pnl ?? 'Not recorded'}</strong></p>
           <p>Avg. simulated PnL <strong>{data.summary.average_simulated_pnl ?? 'Not calculated'}</strong></p>
           <p>Avg. holding duration (sec) <strong>{data.summary.average_holding_duration_seconds ?? '—'}</strong></p>
         </div>

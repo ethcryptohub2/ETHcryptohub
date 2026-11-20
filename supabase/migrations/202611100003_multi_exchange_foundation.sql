@@ -19,10 +19,12 @@ CREATE TABLE IF NOT EXISTS public.exchange_api_credentials (
 
 INSERT INTO public.exchange_api_credentials (
     user_id, exchange, environment, api_key_ciphertext, api_secret_ciphertext,
-    api_key_suffix, created_at, updated_at
+    api_key_suffix, updated_at
 )
+-- The legacy table records only updated_at. The new row's created_at uses
+-- its own insertion timestamp instead of inventing a historical creation time.
 SELECT user_id, 'BINANCE', environment, api_key_ciphertext, api_secret_ciphertext,
-       NULL, created_at, updated_at
+       NULL, updated_at
   FROM public.binance_api_credentials
 ON CONFLICT (user_id, exchange, environment) DO NOTHING;
 

@@ -37,7 +37,7 @@ $runFolder = Join-Path (Get-Location) ('tmp\public-preflight-' + (Get-Date -Form
 
 The output folder must not exist. Exit code 0 means COMPLETE_LOCAL_EVIDENCE; exit code 1 means ABORTED, INCOMPLETE or refused startup. Ctrl+C stops provider traffic. Do not set persistent-worker approval variables, start the worker CLI or copy credentials. The flag records the operator’s eligibility assertion. Obtain that eligibility decision and explicit finite Windows-network-run approval first. No agreement is accepted automatically.
 
-Optional offline packaging: `node scripts/build-windows-preflight-bundle.mjs <new-local-directory>` extends the existing exclusive six-source-file worker bundle with four allowlisted diagnostic/watchlist files, SHA256 manifest and no dependencies/install hooks. Deploy nothing. The artifact's worker remains separately guarded and is not invoked by the diagnostic. Node 24 Windows and Linux ARM64 binaries are listed in the [official release](https://nodejs.org/en/blog/release/v24.22.3).
+Optional offline packaging: `node scripts/build-windows-preflight-bundle.mjs <new-local-directory>` extends the existing worker bundle with the isolated Windows launcher, diagnostic scripts, fixed watchlist, and SHA256 manifest. It adds no dependencies or install hooks. The worker keeps its separate activation guard. [Node 24 builds](https://nodejs.org/en/blog/release/v24.22.3).
 
 ## Seven expected local evidence files
 

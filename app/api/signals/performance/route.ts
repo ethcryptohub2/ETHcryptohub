@@ -8,14 +8,14 @@ export const dynamic = 'force-dynamic';
 
 export async function GET() {
   try {
-    await requirePremiumUser();
-    return NextResponse.json({ data: await getSignalPerformanceSummary() }, {
+    const { user } = await requirePremiumUser();
+    return NextResponse.json({ data: await getSignalPerformanceSummary(user.id) }, {
       headers: { 'Cache-Control': 'no-store' },
     });
   } catch (error) {
     const status = error instanceof AuthError || error instanceof SubscriptionError ? error.status : 503;
     return NextResponse.json(
-      { error: error instanceof Error ? error.message : 'Signal performance is unavailable.' },
+      { error: error instanceof AuthError || error instanceof SubscriptionError ? error.message : 'Signal performance is unavailable.' },
       { status, headers: { 'Cache-Control': 'no-store' } },
     );
   }

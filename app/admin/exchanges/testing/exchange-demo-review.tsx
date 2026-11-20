@@ -19,9 +19,12 @@ const providerDetails = {
 
 const accountPanels = [
   ['Balances', 'No approved account snapshot.'],
+  ['Futures instruments', 'No approved instrument snapshot.'],
   ['Positions', 'No approved position snapshot.'],
   ['Orders', 'No approved order lookup.'],
-  ['History', 'No approved account history.'],
+  ['Order and execution history', 'No approved account history.'],
+  ['Reconciliation', 'No authorized execution to reconcile.'],
+  ['Audit trail', 'Staging audit storage has not been verified.'],
   ['Test results', 'No remote test results available in this review.'],
 ] as const;
 
@@ -82,10 +85,29 @@ export function ExchangeDemoReview() {
           <div className={styles.actions} aria-describedby="demo-execution-reason">
             <button type="button" disabled>Test connection</button>
             <button type="button" disabled>Start test</button>
-            <button type="button" disabled>Stop test</button>
+            <button type="button" disabled>Emergency stop</button>
           </div>
         </section>
       </div>
+
+      <section className="card" aria-labelledby="demo-order-heading">
+        <h2 id="demo-order-heading">Demo order preparation</h2>
+        <p id="demo-order-reason" className="muted">
+          Blocked pending verified instrument limits, risk controls, and approval for an individual {environment} test.
+        </p>
+        <fieldset disabled className={styles.credentialFields} aria-describedby="demo-order-reason">
+          <legend className={styles.visuallyHidden}>{name} order details</legend>
+          <label className={styles.field}>Futures instrument<select defaultValue=""><option value="">No verified instruments</option></select></label>
+          <label className={styles.field}>Order side<select defaultValue=""><option value="">Select a side</option><option>Buy</option><option>Sell</option></select></label>
+          <label className={styles.field}>Quantity<input inputMode="decimal" /></label>
+          <label className={styles.field}>Maximum exposure<input inputMode="decimal" /></label>
+          <label className={styles.field}>Stop-loss price<input inputMode="decimal" /></label>
+          <label className={styles.field}>Take-profit 1 price<input inputMode="decimal" /></label>
+          <label className={styles.field}>Take-profit 2 price<input inputMode="decimal" /></label>
+          <label className={styles.field}>Take-profit 3 price<input inputMode="decimal" /></label>
+          <button type="button">Prepare test order</button>
+        </fieldset>
+      </section>
 
       <section className="card" aria-labelledby="demo-capabilities-heading">
         <h2 id="demo-capabilities-heading">Capability matrix</h2>

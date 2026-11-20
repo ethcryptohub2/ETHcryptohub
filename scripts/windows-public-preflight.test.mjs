@@ -156,11 +156,12 @@ test('book evidence rejects crossed or malformed levels before qualification',()
   assert.throws(()=>snapshotSample({bids:[['2','1']],asks:[['1','1']]},base),/CROSSED/);
   assert.throws(()=>snapshotSample({bids:[['1','NaN']],asks:[['2','1']]},base),/LEVEL/);
 });
-test('prepared ten-source-file artifact has no install dependencies and refuses unapproved execution',async()=>{
+test('prepared bundle includes the isolated launcher and refuses unapproved execution',async()=>{
   const dir=await fs.mkdtemp(path.join(os.tmpdir(),'smartexit-free-preflight-bundle-')),output=path.join(dir,'bundle');
   try {
-    const result=await buildWindowsPreflightBundle(output);assert.equal(result.files.length,10);assert.equal(result.livePreflightApproved,false);
-    const manifest=JSON.parse(await fs.readFile(path.join(output,'MANIFEST.json'),'utf8'));assert.equal(manifest.files.length,10);
+    const result=await buildWindowsPreflightBundle(output);assert.equal(result.files.length,11);assert.equal(result.livePreflightApproved,false);
+    const manifest=JSON.parse(await fs.readFile(path.join(output,'MANIFEST.json'),'utf8'));assert.equal(manifest.files.length,11);
+    assert.ok(manifest.files.some(entry=>entry.name==='scripts/launch-windows-public-preflight.ps1'));
     assert.ok(manifest.files.every(f=>/^[a-f0-9]{64}$/.test(f.sha256)&&!/(?:\.env|\/db\.|postgres|email|notification|migration)/.test(f.name)));
     const child=spawnSync(process.execPath,[path.join(output,'scripts/windows-public-preflight.mjs')],{encoding:'utf8',env:{SystemRoot:process.env.SystemRoot??'C:\\Windows'}});
     assert.equal(child.status,1);assert.match(child.stderr,/SEPARATE_FINITE_PREFLIGHT_APPROVAL_REQUIRED/);

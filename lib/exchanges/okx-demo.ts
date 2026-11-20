@@ -74,6 +74,11 @@ const orderSchema = z.object({
   accFillSz: orderAmount,
   px: z.union([orderAmount, z.literal('')]),
 });
+const cancellationAcknowledgment = z.object({
+  ordId: exchangeOrderId,
+  clOrdId: z.union([clientOrderId, z.literal('')]),
+  sCode: z.literal('0'),
+});
 
 export type OkxDemoAccountConfiguration = {
   accountLevel: 'spot' | 'futures' | 'multi-currency-margin' | 'portfolio-margin';
@@ -200,10 +205,20 @@ type OkxDemoAdapter = ExchangeAdapter & {
 export function createOkxDemoAdapter(
   credentials: ExchangeCredentials,
   transport?: typeof fetch,
+  fixtureMode?: 'MOCK_CANCELLATION',
 ): OkxDemoAdapter {
   assertCredential(credentials?.apiKey, 'API key');
   assertCredential(credentials?.apiSecret, 'API secret');
   assertCredential(credentials?.passphrase, 'API passphrase');
+  if (fixtureMode !== undefined && (
+    fixtureMode !== 'MOCK_CANCELLATION' || !transport || transport === fetch ||
+    ![credentials.apiKey, credentials.apiSecret, credentials.passphrase].every(
+      (value) => /^fixture-[a-z0-9-]{1,60}$/.test(value),
+    )
+  )) {
+    throw new OkxDemoError('OKX mock cancellation requires synthetic credentials and an injected transport.', 422);
+  }
+  const attemptedCancellations = new Set<string>();
 
   async function request(
     method: 'GET' | 'POST',
@@ -449,7 +464,41 @@ export function createOkxDemoAdapter(
     async setLeverage() { return unsupported('leverage changes'); },
     async placeMarketOrder() { return unsupported('market entries'); },
     async placeLimitOrder() { return unsupported('limit entries'); },
-    async cancelOrder() { return unsupported('order cancellation'); },
+    async cancelOrder(symbol, orderId) {
+      if (fixtureMode !== 'MOCK_CANCELLATION') return unsupported('order cancellation');
+      const original = await lookupOrder(symbol, orderId, 'ordId');
+      if (original?.status === 'CANCELED' || original?.status === 'MMP_CANCELED') return;
+      if (!original || !['LIVE', 'PARTIALLY_FILLED'].includes(original.status)) {
+        throw new OkxDemoError('OKX Demo cancellation requires a confirmed open order.', 409);
+      }
+      const identity = `${symbol}:${orderId}`;
+      if (attemptedCancellations.has(identity)) {
+        throw new OkxDemoError('OKX Demo already attempted cancellation. Reconcile the original order.', 409);
+      }
+      attemptedCancellations.add(identity);
+      let acknowledgment: unknown[];
+      try {
+        acknowledgment = await request('POST', '/api/v5/trade/cancel-order', { instId: symbol, ordId: orderId }, true);
+      } catch (error) {
+        throw new OkxDemoError(
+          'OKX Demo cancellation could not be confirmed. Reconcile the original order.',
+          error instanceof OkxDemoError ? error.status : 502,
+        );
+      }
+      const accepted = cancellationAcknowledgment.safeParse(acknowledgment[0]);
+      if (acknowledgment.length !== 1 || !accepted.success || accepted.data.ordId !== orderId ||
+          (accepted.data.clOrdId || null) !== original.clientOrderId) {
+        throw new OkxDemoError('OKX Demo cancellation acknowledgment could not be matched. Reconcile the original order.', 409);
+      }
+      const reconciled = await lookupOrder(symbol, orderId, 'ordId');
+      if (!reconciled || reconciled.clientOrderId !== original.clientOrderId ||
+          reconciled.side !== original.side || reconciled.type !== original.type ||
+          compareDecimals(reconciled.quantity, original.quantity) !== 0 ||
+          compareDecimals(reconciled.filledQuantity, original.filledQuantity) === -1 ||
+          !['CANCELED', 'MMP_CANCELED'].includes(reconciled.status)) {
+        throw new OkxDemoError('OKX Demo cancellation lacks terminal status. Reconcile the original order.', 409);
+      }
+    },
     async setPositionStopLoss() { return unsupported('stop-loss protection'); },
     async setPositionTakeProfit() { return unsupported('take-profit protection'); },
     async closePosition() { return unsupported('reduce-only close'); },

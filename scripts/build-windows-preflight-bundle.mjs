@@ -5,7 +5,7 @@ import { pathToFileURL,fileURLToPath } from 'node:url';
 import { createHash } from 'node:crypto';
 import { buildPublicWorkerBundle } from './build-public-worker-bundle.mjs';
 export const DIAGNOSTIC_FILES=Object.freeze(['scripts/windows-public-preflight.mjs','scripts/public-preflight-wire.mjs',
-  'scripts/qualify-public-preflight.mjs','deploy/market-worker/soak-watchlist.json']);
+  'scripts/qualify-public-preflight.mjs','scripts/launch-windows-public-preflight.ps1','deploy/market-worker/soak-watchlist.json']);
 export async function buildWindowsPreflightBundle(destination) {
   const target=path.resolve(destination),root=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..');
   const worker=await buildPublicWorkerBundle(target);

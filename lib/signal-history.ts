@@ -16,6 +16,14 @@ export interface SignalHistoryFilters {
   successful?: boolean;
 }
 
+const activeSignalSql = `s.status IN ('ACTIVE', 'TP1_HIT', 'TP2_HIT')
+  AND s.generated_at <= statement_timestamp() AND s.expires_at > statement_timestamp()`;
+const successfulSignalSql = `EXISTS (
+  SELECT 1 FROM public.signal_events success_event
+   WHERE success_event.signal_id = s.id
+     AND success_event.event_type IN ('TP1_HIT', 'TP2_HIT', 'TP3_HIT')
+)`;
+
 function filterSql(filters: SignalHistoryFilters) {
   const values: unknown[] = [];
   const clauses: string[] = [];
@@ -31,13 +39,7 @@ function filterSql(filters: SignalHistoryFilters) {
   if (filters.strategy) add((i) => `s.strategy_name ILIKE $${i}`, `%${filters.strategy}%`);
   if (filters.from) add((i) => `s.generated_at >= $${i}::TIMESTAMPTZ`, filters.from);
   if (filters.to) add((i) => `s.generated_at < $${i}::TIMESTAMPTZ`, filters.to);
-  if (filters.successful) {
-    clauses.push(`EXISTS (
-      SELECT 1 FROM public.signal_events success_event
-       WHERE success_event.signal_id = s.id
-         AND success_event.event_type IN ('TP1_HIT', 'TP2_HIT', 'TP3_HIT')
-    )`);
-  }
+  if (filters.successful) clauses.push(successfulSignalSql);
   return { where: clauses.length ? `WHERE ${clauses.join(' AND ')}` : '', values };
 }
 
@@ -245,13 +247,13 @@ const aggregateQuery = `
   ), user_performance AS (
     SELECT signal_id, AVG(realized_pnl) AS realized_pnl
       FROM public.signal_user_entries
-     WHERE status = 'CLOSED'
+     WHERE user_id = $1 AND status = 'CLOSED'
      GROUP BY signal_id
   )
   SELECT COUNT(*)::TEXT AS total,
          COUNT(*) FILTER (WHERE scanner_type = 'STANDARD')::TEXT AS standard,
          COUNT(*) FILTER (WHERE scanner_type = 'HIGH_RISK')::TEXT AS high_risk,
-         COUNT(*) FILTER (WHERE status IN ('ACTIVE', 'TP1_HIT', 'TP2_HIT'))::TEXT AS active,
+         COUNT(*) FILTER (WHERE ${activeSignalSql})::TEXT AS active,
          COUNT(*) FILTER (WHERE COALESCE(e.tp1_hit, FALSE))::TEXT AS tp1,
          COUNT(*) FILTER (WHERE COALESCE(e.tp2_hit, FALSE))::TEXT AS tp2,
          COUNT(*) FILTER (WHERE COALESCE(e.tp3_hit, FALSE))::TEXT AS tp3,
@@ -271,13 +273,13 @@ const aggregateQuery = `
     LEFT JOIN user_performance user_perf ON user_perf.signal_id = s.id
     LEFT JOIN public.signal_performance perf ON perf.signal_id = s.id`;
 
-export async function getSignalPerformanceSummary() {
+export async function getSignalPerformanceSummary(userId: number) {
   const [summary, byScanner, byStrategy, byTimeframe, bySymbol] = await Promise.all([
-    query(aggregateQuery),
+    query(aggregateQuery, [userId]),
     query(
       `WITH user_performance AS (
          SELECT signal_id, AVG(realized_pnl) AS realized_pnl
-           FROM public.signal_user_entries WHERE status = 'CLOSED' GROUP BY signal_id
+           FROM public.signal_user_entries WHERE user_id = $1 AND status = 'CLOSED' GROUP BY signal_id
        )
        SELECT scanner_type, COUNT(*)::TEXT AS total,
               COUNT(*) FILTER (WHERE status = 'STOP_LOSS_HIT')::TEXT AS stop_loss,
@@ -289,29 +291,30 @@ export async function getSignalPerformanceSummary() {
          LEFT JOIN user_performance user_perf ON user_perf.signal_id = s.id
          LEFT JOIN public.signal_performance perf ON perf.signal_id = s.id
         GROUP BY scanner_type ORDER BY scanner_type`,
+      [userId],
     ),
     query(
       `SELECT strategy_name, scanner_type, COUNT(*)::TEXT AS total,
-              COUNT(*) FILTER (WHERE status IN ('TP1_HIT', 'TP2_HIT', 'TP3_HIT', 'COMPLETED'))::TEXT AS target_hit
-         FROM public.market_signals GROUP BY strategy_name, scanner_type ORDER BY total DESC`,
+              COUNT(*) FILTER (WHERE ${successfulSignalSql})::TEXT AS target_hit
+         FROM public.market_signals s GROUP BY strategy_name, scanner_type ORDER BY total DESC`,
     ),
     query(
       `SELECT timeframe, scanner_type, COUNT(*)::TEXT AS total,
-              COUNT(*) FILTER (WHERE status IN ('TP1_HIT', 'TP2_HIT', 'TP3_HIT', 'COMPLETED'))::TEXT AS target_hit
-         FROM public.market_signals GROUP BY timeframe, scanner_type ORDER BY timeframe, scanner_type`,
+              COUNT(*) FILTER (WHERE ${successfulSignalSql})::TEXT AS target_hit
+         FROM public.market_signals s GROUP BY timeframe, scanner_type ORDER BY timeframe, scanner_type`,
     ),
     query(
       `SELECT symbol, scanner_type, COUNT(*)::TEXT AS total,
-              COUNT(*) FILTER (WHERE status IN ('TP1_HIT', 'TP2_HIT', 'TP3_HIT', 'COMPLETED'))::TEXT AS target_hit
-         FROM public.market_signals GROUP BY symbol, scanner_type ORDER BY total DESC LIMIT 100`,
+              COUNT(*) FILTER (WHERE ${successfulSignalSql})::TEXT AS target_hit
+         FROM public.market_signals s GROUP BY symbol, scanner_type ORDER BY total DESC LIMIT 100`,
     ),
   ]);
   return {
     definitions: {
       targetRates: 'Distinct signals with the specified target event divided by all generated signals; target hits are milestones, not closed trades.',
-      entrySuccessRate: 'Signals currently marked ENTERED divided by generated signals. Entries are user-recorded; no orders are executed.',
+      entrySuccessRate: 'Shared signals with a recorded entry milestone divided by generated signals.',
       winRate: 'Not reported. Expired and missed signals are not treated as losses.',
-      averageRealizedPnl: 'Average of user-reported entry and exit fills; not exchange-verified and excludes no fees unless the user accounts for them.',
+      averageRealizedPnl: 'Average realized PnL from your own recorded entry and exit prices. Fees are not measured by this report.',
       averageSimulatedPnl: 'Average only of explicitly recorded simulated terminal outcomes; excludes signals without an outcome.',
     },
     summary: summary.rows[0] ?? {},
@@ -327,13 +330,13 @@ export async function getAdminSignalStats() {
     query(
       `SELECT COUNT(*)::TEXT AS total,
               COUNT(*) FILTER (WHERE generated_at >= CURRENT_DATE)::TEXT AS generated_today,
-              COUNT(*) FILTER (WHERE status IN ('TP1_HIT', 'TP2_HIT', 'TP3_HIT', 'COMPLETED'))::TEXT AS successful_targets,
+              COUNT(*) FILTER (WHERE ${successfulSignalSql})::TEXT AS successful_targets,
               COUNT(*) FILTER (WHERE status = 'STOP_LOSS_HIT')::TEXT AS stop_loss,
               COUNT(*) FILTER (WHERE status = 'EXPIRED')::TEXT AS expired,
               COUNT(*) FILTER (WHERE status = 'MISSED')::TEXT AS missed,
               COUNT(*) FILTER (WHERE status = 'ENTRY_INVALIDATED')::TEXT AS invalidated,
-              COUNT(*) FILTER (WHERE status IN ('ACTIVE', 'TP1_HIT', 'TP2_HIT'))::TEXT AS active
-         FROM public.market_signals`,
+              COUNT(*) FILTER (WHERE ${activeSignalSql})::TEXT AS active
+         FROM public.market_signals s`,
     ),
     query(
       `SELECT COUNT(*)::TEXT AS total,
@@ -348,8 +351,8 @@ export async function getAdminSignalStats() {
     query(
       `SELECT scanner_type, COUNT(*)::TEXT AS total,
               COUNT(*) FILTER (WHERE generated_at >= CURRENT_DATE)::TEXT AS generated_today,
-              COUNT(*) FILTER (WHERE status IN ('ACTIVE', 'TP1_HIT', 'TP2_HIT'))::TEXT AS active
-         FROM public.market_signals GROUP BY scanner_type ORDER BY scanner_type`,
+              COUNT(*) FILTER (WHERE ${activeSignalSql})::TEXT AS active
+         FROM public.market_signals s GROUP BY scanner_type ORDER BY scanner_type`,
     ),
     query<{ count: string }>(
       `SELECT COALESCE(SUM(repeated_scan_count), 0)::TEXT AS count FROM public.market_signals`,
