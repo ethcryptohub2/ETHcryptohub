@@ -1,5 +1,7 @@
 # Singapore public-market preflight approval packet
 
+Current mission supersedes the paid-host proposal below: no paid hosting or upgrade is approved. Use the prepared local Windows diagnostic in WINDOWS-FREE-PUBLIC-PREFLIGHT.md only after separate finite-run approval. ORACLE-ALWAYS-FREE-CHECKLIST.md is compatibility review only, not account/provisioning permission. A Windows result is not Singapore/cloud evidence.
+
 Prepared 20 November 2026. This packet and its offline evaluator do not create a VM, contact Binance market endpoints, start a worker, accept terms, write a database or enable a feature. Previous mock success and a workstation request cannot certify Singapore connectivity. Current regional access, all 20 symbols' qualification and applicable live-data permission remain **NOT ESTABLISHED**.
 
 ## Exact proposed scope and spend

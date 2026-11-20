@@ -8,8 +8,8 @@ const exact = (value, keys) => value && typeof value==='object' && !Array.isArra
 const stamp = value => Number.isSafeInteger(value) && value>0;
 const positive = value => Number.isFinite(value) && value>0;
 const median = values => { const sorted=[...values].sort((a,b)=>a-b), n=sorted.length; return n%2 ? sorted[(n-1)/2] : (sorted[n/2-1]+sorted[n/2])/2; };
-export function qualifyPublicPreflight(evidence, now=Date.now()) {
-  if (!stamp(now) || !exact(evidence,['version','region','collectedAt','exchangeInfoAt','symbols']) || evidence.version!==1 || evidence.region!=='sgp1' ||
+export function qualifyPublicPreflight(evidence, now=Date.now(), {expectedRegion='sgp1'}={}) {
+  if (!['sgp1','windows-local'].includes(expectedRegion) || !stamp(now) || !exact(evidence,['version','region','collectedAt','exchangeInfoAt','symbols']) || evidence.version!==1 || evidence.region!==expectedRegion ||
       !stamp(evidence.collectedAt) || evidence.collectedAt>now || now-evidence.collectedAt>60_000 || !stamp(evidence.exchangeInfoAt) ||
       evidence.exchangeInfoAt>evidence.collectedAt || evidence.collectedAt-evidence.exchangeInfoAt>900_000 || !Array.isArray(evidence.symbols) || evidence.symbols.length!==20 ||
       new Set(evidence.symbols.map(row=>row?.symbol)).size!==20 || evidence.symbols.some(row=>!watchlist.symbols.includes(row?.symbol))) throw Error('INVALID_PREFLIGHT_EVIDENCE');

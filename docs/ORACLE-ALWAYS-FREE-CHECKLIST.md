@@ -1,0 +1,27 @@
+# Oracle Always Free compatibility checklist — no account or infrastructure created
+
+Checked 20 November 2026. This is a future compatibility review, not provisioning approval. The immediate preflight runs on the existing Windows PC with no cloud service. Do not purchase resources, upgrade an account, use paid trial-only resources or accept a new agreement under this task.
+
+## Current official allowance facts
+
+The [Always Free guide](https://docs.oracle.com/en-us/iaas/Content/FreeTier/freetier_topic-Always_Free_Resources.htm) lists up to two VM.Standard.E2.1.Micro AMD instances (1/8 OCPU, 1 GB each), and VM.Standard.A1.Flex ARM of 1,500 OCPU-hours and 9,000 GB-hours per month (2 OCPUs and 12 GB for Always Free tenancies). Compute must be in the tenancy home region; availability is not guaranteed. Boot/block storage totals 200 GB, with a 47 GB minimum boot volume. Outbound transfer allowance is 10 TB/month. Idle compute may be reclaimed after a seven-day low-utilization period. Reconfirm all shared tenancy usage and current limits in the console before any future approval; do not assume the older 4 OCPU and 24 GB allowance.
+
+The [Free Tier FAQ](https://www.oracle.com/cloud/free/faq/) distinguishes Always Free from the 30-day promotional trial. Signup generally requires accurate identity/contact/card verification, can cause temporary authorization holds, permits one free account per person and provides no SLA. We did not inspect a tenancy or establish account eligibility. No card, cloud credential, account identity or signup was requested. If card verification/holds are unacceptable, do not sign up; the local Windows diagnostic needs none of this.
+
+## Project-specific compatibility and capacity decision
+
+- **A1 candidate, not approved:** one 1 OCPU, 4 GB Linux ARM64 instance, only if explicitly Always Free eligible with no charge and within the account's remaining aggregate allowance. This is a conservative proposed size, not measured capacity. Do not increase resources automatically. No Oracle Windows image is proposed.
+- **E2 micro:** its fractional CPU and 1 GB of memory has unproved headroom for 20 depth/trade symbols plus shared ticker JSON/fsync. It must not be presented as equivalent to a dedicated CPU host or certified for 24-hour operation. Measure before considering a worker; do not fabricate load to avoid reclamation.
+- **ARM64:** existing standalone worker is JavaScript and erasable TypeScript with Node built-ins and no native npm dependency. Install the correct reviewed Linux-arm64 Node 24 build only under future approval, validate checksum/version and run the offline suite on that architecture. Official [Node 24 releases](https://nodejs.org/en/blog/release/v24.22.3) publish ARM64 binaries. Compatibility is architectural; we have not run an Oracle ARM VM. The current Windows CLI intentionally refuses non-Windows live execution and cannot certify Oracle access.
+- **Storage:** inventory all boot volumes, data volumes, backups and retained artifacts; keep only approved local journal/log/evidence bounds. Persistent state must survive process restart; disk availability, restore procedure and reclaim/data-loss recovery remain unverified. No database is needed for a public-only local-journal worker.
+- **Network/region:** home-region selection is not proof of Binance eligibility or access. Verify legal/operator/data-use scope before any cloud probe. Record actual VCN/DNS/TLS/WSS behavior and actual egress, privately. No inbound application listener, NAT gateway, load balancer, reserved-address add-on, cross-region copy or paid networking product is required by this design. Any console cost or unknown eligibility is a STOP, not permission to substitute a paid service or bypass a denied region.
+- **Capacity:** collect real CPU/RSS/frame rate/backpressure/RTT and filesystem durability evidence before applying the existing 24-hour soak thresholds. A Windows fixture or successful finite probe cannot certify cloud uptime, capacity, recovery or 24/7 service.
+
+## Zero-spend safeguards for any later proposal
+
+1. Remain on an explicitly free, non-upgraded account. Always Free eligibility is different from a trial-credit price offset. Never choose Pay As You Go, a paid image/service, additional paid capacity or an upgrade to solve unavailability. Wait or stop instead.
+2. Verify account-wide quotas/usage, resource eligibility label, exact size/image/storage/network and zero estimated charge before any future approval. Do not rely on the word free in marketing or an old quota screenshot. No account/provision action is authorized now.
+3. A dedicated compartment, narrowly scoped operator permissions and reviewed quotas can constrain a future design. [Budgets](https://docs.oracle.com/en-us/iaas/Content/Billing/Concepts/budgetsoverview.htm) are monitoring/alerts, not a hard spending guarantee. No alerts or notifications were configured here. Any safeguards require separate review; none permits spending.
+4. Record a manual stop/delete/recovery plan without executing it. Retain public-data evidence securely, never add trading/application/service-role/email credentials, and keep the worker stopped/uninstalled until a distinct activation approval. Free-resource scarcity, changing terms, billing uncertainty or lack of independent zero-cost confirmation remain blockers.
+
+No signup, console login, free or paid VM, subscription, service installation, regional probe, notification or persistent process was created.

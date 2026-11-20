@@ -11,6 +11,11 @@ test('all twenty supplied fixtures can qualify without granting access or activa
   const report=qualifyPublicPreflight(evidence(),now);assert.equal(report.status,'QUALIFIED_FROM_SUPPLIED_EVIDENCE');assert.equal(report.results.length,20);
   assert.equal(report.activationAuthorized,false);assert.equal(report.regionalConnectivity,'NOT_ESTABLISHED');assert.equal(report.legalEligibility,'NOT_ESTABLISHED');
 });
+test('Windows-local evidence is explicitly requested and cannot masquerade as Singapore qualification',()=>{
+  const local=evidence();local.region='windows-local';assert.throws(()=>qualifyPublicPreflight(local,now));
+  const report=qualifyPublicPreflight(local,now,{expectedRegion:'windows-local'});assert.equal(report.regionalConnectivity,'NOT_ESTABLISHED');
+  assert.throws(()=>qualifyPublicPreflight(evidence(),now,{expectedRegion:'windows-local'}));
+});
 test('ineligible or illiquid symbols stop the fixed list rather than silently substituting',()=>{
   for(const mutate of [r=>{r.status='BREAK';},r=>{r.quoteVolume24h=1;},r=>{r.samples.forEach(s=>{s.ask=100.5;});},r=>{r.samples.forEach(s=>{s.bidDepthQuote=1;});},r=>{r.high=100;r.low=100;}]){
     const e=evidence();mutate(e.symbols[0]);const report=qualifyPublicPreflight(e,now);assert.equal(report.status,'STOP_REVIEW_SYMBOL_LIST');assert.equal(report.results[0].qualified,false);
