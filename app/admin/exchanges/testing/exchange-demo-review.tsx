@@ -10,12 +10,12 @@ import {
 import styles from './exchange-demo-review.module.css';
 
 const providerDetails = {
-  BINANCE: { name: 'Binance USD-M', passphrase: false, lifecycle: 'Existing isolated test harness' },
-  BYBIT: { name: 'Bybit', passphrase: false, lifecycle: 'Mock-tested lifecycle' },
-  OKX: { name: 'OKX', passphrase: true, lifecycle: 'Blocked pending lifecycle adapter review' },
-  BITGET: { name: 'Bitget', passphrase: true, lifecycle: 'Blocked pending lifecycle adapter review' },
-  GATE: { name: 'Gate.io Futures', passphrase: false, lifecycle: 'Blocked pending lifecycle adapter review' },
-} satisfies Record<AdminDemoProvider, { name: string; passphrase: boolean; lifecycle: string }>;
+  BINANCE: { name: 'Binance USD-M', passphrase: false, fixtures: 'Account, instruments, order and protection lifecycle' },
+  BYBIT: { name: 'Bybit', passphrase: false, fixtures: 'Account, orders, protection and reconciliation' },
+  OKX: { name: 'OKX', passphrase: true, fixtures: 'Account, positions, instruments, order lookup and single-order cancellation' },
+  BITGET: { name: 'Bitget', passphrase: true, fixtures: 'Signed reads, instrument precision and lookup by order or client ID' },
+  GATE: { name: 'Gate.io Futures', passphrase: false, fixtures: 'Account, positions, contracts, order lookup and single-order cancellation' },
+} satisfies Record<AdminDemoProvider, { name: string; passphrase: boolean; fixtures: string }>;
 
 const accountPanels = [
   ['Balances', 'No approved account snapshot.'],
@@ -30,7 +30,7 @@ const accountPanels = [
 
 export function ExchangeDemoReview() {
   const [provider, setProvider] = useState<AdminDemoProvider>('BINANCE');
-  const { name, passphrase, lifecycle } = providerDetails[provider];
+  const { name, passphrase, fixtures } = providerDetails[provider];
   const environment = ADMIN_DEMO_PROVIDER_ENVIRONMENTS[provider];
 
   return (
@@ -112,12 +112,12 @@ export function ExchangeDemoReview() {
       <section className="card" aria-labelledby="demo-capabilities-heading">
         <h2 id="demo-capabilities-heading">Capability matrix</h2>
         <dl className={styles.capabilities}>
-          <div><dt>Authenticated account reads</dt><dd>Blocked pending connection approval</dd></div>
-          <div><dt>Staging schema</dt><dd>Blocked pending migration and access verification</dd></div>
-          <div><dt>Credential storage</dt><dd>Blocked pending encrypted storage verification</dd></div>
-          <div><dt>Order placement and cancellation</dt><dd>Blocked pending execution approval</dd></div>
-          <div><dt>Protection and reconciliation</dt><dd>{lifecycle}. Remote execution blocked.</dd></div>
-          <div><dt>Verified Demo executions</dt><dd>No authorized remote execution evidence</dd></div>
+          <div><dt>Connection</dt><dd>Not configured in this review</dd></div>
+          <div><dt>Staging schema</dt><dd>Schema blocked pending migration and access verification</dd></div>
+          <div><dt>Credential storage</dt><dd>Credentials blocked pending encrypted storage verification</dd></div>
+          <div><dt>Mock ready</dt><dd>{fixtures}</dd></div>
+          <div><dt>Signed read verification</dt><dd>Awaiting an approved remote check</dd></div>
+          <div><dt>Demo execution verification</dt><dd>Awaiting verified risk controls and individual execution approval</dd></div>
         </dl>
       </section>
 

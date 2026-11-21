@@ -12,11 +12,11 @@ import { z } from 'zod';
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
-export async function GET() {
+export async function GET(request: NextRequest) {
   try {
     const user = await requireUser();
     const [subscription, plans] = await Promise.all([
-      getSubscriptionEntitlement(user.id),
+      getSubscriptionEntitlement(user.id, { reconcile: request.nextUrl.searchParams.get('mode') !== 'read-only' }),
       getAvailableSubscriptionPlans(),
     ]);
     return NextResponse.json({

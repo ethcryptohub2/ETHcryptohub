@@ -1,8 +1,14 @@
 import { createCipheriv, createDecipheriv, randomBytes } from 'node:crypto';
 
+const validKey = /^[a-f0-9]{64}$/i;
+
+export function isCredentialEncryptionConfigured() {
+  return validKey.test(process.env.BINANCE_CREDENTIALS_KEY ?? '');
+}
+
 function key() {
   const value = process.env.BINANCE_CREDENTIALS_KEY ?? '';
-  if (!/^[a-f0-9]{64}$/i.test(value)) throw new Error('BINANCE_CREDENTIALS_KEY must be 32 random bytes encoded as 64 hex characters.');
+  if (!validKey.test(value)) throw new Error('BINANCE_CREDENTIALS_KEY must be 32 random bytes encoded as 64 hex characters.');
   return Buffer.from(value, 'hex');
 }
 

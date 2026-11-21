@@ -116,8 +116,8 @@ export function ExchangeConnections() {
       exchange: 'BINANCE',
       name: 'Binance',
       environments: [
-        { environment: 'DEMO', enabled: true, supported: true, available: true, customerTradingReady: true },
-        { environment: 'LIVE', enabled: true, supported: true, available: true, customerTradingReady: true },
+        { environment: 'DEMO', enabled: false, supported: true, available: false, customerTradingReady: false },
+        { environment: 'LIVE', enabled: false, supported: true, available: false, customerTradingReady: false },
       ],
     },
     { exchange: 'BYBIT', name: 'Bybit', environments: [{ environment: 'DEMO', enabled: false, supported: true, available: false, customerTradingReady: false }] },
@@ -157,7 +157,7 @@ export function ExchangeConnections() {
     <label>Exchange<select value={selected} onChange={(event) => setSelected(event.target.value)}>
       {exchanges.map((exchange) => <option value={exchange.exchange} key={exchange.exchange}>{exchange.name}</option>)}
     </select></label>
-    {error && <p className="error" role="alert">{error} Binance connections remain available through the existing settings.</p>}
+    {error && <p className="muted" role="status">{error}</p>}
     {selected === 'BINANCE'
       ? <BinanceForm />
       : selected === 'BYBIT' && demo?.available

@@ -51,7 +51,10 @@ function requiredLicensePepper(): string {
   return secret;
 }
 
-export async function getSubscriptionEntitlement(userId: number): Promise<SubscriptionEntitlement> {
+export async function getSubscriptionEntitlement(
+  userId: number,
+  { reconcile = true }: { reconcile?: boolean } = {},
+): Promise<SubscriptionEntitlement> {
   const found = await query<SubscriptionEntitlement & { stored_status: SubscriptionStatus }>(
     `SELECT s.id::text, s.subscription_status AS stored_status,
             s.trial_started_at AS "trialStartedAt",
@@ -77,7 +80,7 @@ export async function getSubscriptionEntitlement(userId: number): Promise<Subscr
   const entitlement = found.rows[0];
   if (!entitlement) throw new Error('This account has no subscription record. Apply the subscriptions migration.');
   const status = statusFromDates(entitlement, Date.parse(entitlement.serverNow));
-  if (status !== entitlement.stored_status) {
+  if (reconcile && status !== entitlement.stored_status) {
     const updated = await query(
       `WITH changed AS (
          UPDATE public.subscriptions
@@ -103,13 +106,13 @@ export async function getSubscriptionEntitlement(userId: number): Promise<Subscr
   };
 }
 
-export async function requirePremiumUser(): Promise<{
+export async function requirePremiumUser(options?: { reconcile?: boolean }): Promise<{
   user: User;
   subscription: SubscriptionEntitlement;
 }> {
   const user = await currentUser();
   if (!user) throw new AuthError(401, 'Sign in is required.');
-  const subscription = await getSubscriptionEntitlement(user.id);
+  const subscription = await getSubscriptionEntitlement(user.id, options);
   if (!subscription.hasPremiumAccess) {
     throw new SubscriptionError(
       'SUBSCRIPTION_REQUIRED',

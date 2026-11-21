@@ -5,6 +5,8 @@ import {
   type BinanceContractMetadata,
 } from '../smartexit/apps/api/src/services/binance-futures-markets';
 import type { MarketScannerCandidate } from '../smartexit/apps/api/src/services/market-scanner';
+import type { ScannerCoverage, ScannerInstrument, ScannerRank } from './scanner-universe';
+import watchlist from '../deploy/market-worker/soak-watchlist.json' with { type: 'json' };
 
 const EXCHANGE = 'BINANCE';
 const CONTRACT = 'PERPETUAL';
@@ -489,21 +491,57 @@ export async function saveScannerCandidates(candidates: MarketScannerCandidate[]
   }
 }
 
-export async function getScannerCandidateSnapshots(
-  timeframe: '5m' | '15m' | '1h' | '4h',
-  symbols: string[],
-) {
-  if (symbols.length === 0) return [];
-  const result = await query<{ candidate_json: MarketScannerCandidate; scanned_at: string }>(
-    `SELECT snapshot.candidate_json, snapshot.scanned_at
-       FROM public.scanner_candidate_snapshots AS snapshot
-       JOIN public.scanner_coin_configs AS coin
-         ON coin.exchange = snapshot.exchange AND coin.symbol = snapshot.symbol
-      WHERE snapshot.timeframe = $1 AND snapshot.symbol = ANY($2::text[])
-        AND coin.quote_asset = 'USDT' AND coin.contract_type = 'PERPETUAL'
-        AND coin.trading_status = 'TRADING' AND coin.is_enabled = TRUE
-      ORDER BY snapshot.scanned_at DESC`,
-    [timeframe, symbols],
+type ScannerUniverseInput = {
+  timeframe: '5m' | '15m' | '1h' | '4h';
+  coverage: ScannerCoverage;
+  symbol: string;
+  rank: ScannerRank | null;
+  page: number;
+  limit: number;
+};
+
+type ScannerUniverseRow = ScannerInstrument & { candidate: MarketScannerCandidate | null };
+
+export async function getSavedScannerUniverse(input: ScannerUniverseInput) {
+  const result = await query<{
+    rows: ScannerUniverseRow[]; matching_count: number; eligible_count: number;
+    saved_count: number; latest_saved_at: string | null; universe_synced_at: string | null;
+  }>(
+    `WITH eligible AS (
+       SELECT coin.symbol, coin.base_asset, snapshot.scanned_at, snapshot.candidate_json
+         FROM public.scanner_coin_configs coin
+         LEFT JOIN public.scanner_candidate_snapshots snapshot
+           ON snapshot.exchange = coin.exchange AND snapshot.symbol = coin.symbol AND snapshot.timeframe = $1
+        WHERE coin.exchange = 'BINANCE' AND coin.quote_asset = 'USDT'
+          AND coin.contract_type = 'PERPETUAL' AND coin.trading_status = 'TRADING' AND coin.is_enabled
+          AND coin.symbol = coin.base_asset || 'USDT'
+          AND coin.base_asset ~ '^[[:alnum:]]{1,20}$'
+     ), selection AS (
+       SELECT * FROM eligible WHERE $2::text = 'eligible' OR ($2 = 'saved' AND scanned_at IS NOT NULL)
+       UNION ALL
+       SELECT wanted.symbol, eligible.base_asset, eligible.scanned_at, eligible.candidate_json
+         FROM unnest($3::text[]) AS wanted(symbol)
+         LEFT JOIN eligible ON eligible.symbol = wanted.symbol
+        WHERE $2 = 'watchlist'
+     ), matching AS (
+       SELECT * FROM selection WHERE starts_with(symbol, $4)
+         AND ($5::text IS NULL OR candidate_json->'marketRank' ? $5)
+     ), result_page AS (
+       SELECT * FROM matching
+        ORDER BY CASE WHEN $2 = 'saved' THEN scanned_at END DESC NULLS LAST, symbol
+        LIMIT $6 OFFSET $7
+     )
+     SELECT (SELECT count(*)::int FROM matching) AS matching_count,
+            (SELECT count(*)::int FROM eligible) AS eligible_count,
+            (SELECT count(scanned_at)::int FROM eligible) AS saved_count,
+            (SELECT max(scanned_at)::text FROM eligible) AS latest_saved_at,
+            (SELECT last_success_at::text FROM public.scanner_sync_state WHERE singleton) AS universe_synced_at,
+            COALESCE((SELECT jsonb_agg(jsonb_build_object(
+              'symbol', symbol, 'baseAsset', base_asset, 'eligible', base_asset IS NOT NULL,
+              'watchlist', symbol = ANY($3::text[]), 'savedScanAt', scanned_at, 'candidate', candidate_json
+            ) ORDER BY CASE WHEN $2 = 'saved' THEN scanned_at END DESC NULLS LAST, symbol) FROM result_page), '[]'::jsonb) AS rows`,
+    [input.timeframe, input.coverage, watchlist.symbols, input.symbol, input.rank, input.limit, (input.page - 1) * input.limit],
   );
-  return result.rows;
+  const row = result.rows[0];
+  return { ...row, watchlist_count: watchlist.symbols.length };
 }

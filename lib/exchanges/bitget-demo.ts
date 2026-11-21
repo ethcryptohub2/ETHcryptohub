@@ -44,7 +44,7 @@ export const BITGET_DEMO_UNSUPPORTED_CAPABILITIES = Object.freeze([
 ] as const);
 
 export class BitgetDemoError extends Error {
-  constructor(message: string, readonly status = 503) {
+  constructor(message: string, readonly status = 503, readonly code?: 'ORDER_NOT_FOUND') {
     super(message);
     this.name = 'BitgetDemoError';
   }
@@ -79,6 +79,7 @@ const nonnegative = decimal.refine((value) => Number(value) >= 0);
 const symbol = z.string().regex(/^[A-Z0-9]{1,24}USDT$/);
 const asset = z.string().regex(/^[A-Z0-9]{1,24}$/);
 const orderId = z.string().regex(/^\d{1,32}$/);
+const clientOrderId = z.string().regex(/^[A-Za-z0-9_:# +\-]{1,32}$/);
 const balanceResponse = z.object({
   assets: z.array(z.object({
     coin: asset,
@@ -195,9 +196,40 @@ export function createBitgetDemoFixtureAdapter(
     }
     const envelope = z.object({ code: z.literal('00000'), data: schema }).safeParse(response.body);
     if (!envelope.success) {
+      const absence = z.object({ code: z.literal('25204') }).safeParse(response.body);
+      if (route === 'order' && absence.success) {
+        throw new BitgetDemoError('Bitget could not find the requested order.', 404, 'ORDER_NOT_FOUND');
+      }
       throw new BitgetDemoError('Bitget fixture returned a provider error or invalid response.', 502);
     }
     return envelope.data.data;
+  }
+
+  async function lookupOrder(
+    expectedSymbol: string,
+    identifier: string,
+    kind: 'orderId' | 'clientOid',
+  ): Promise<ExchangeOrder> {
+    const idSchema = kind === 'orderId' ? orderId : clientOrderId;
+    if (!symbol.safeParse(expectedSymbol).success || !idSchema.safeParse(identifier).success) {
+      throw new BitgetDemoError('Invalid Bitget fixture order identifiers.', 400);
+    }
+    const query = new URLSearchParams({ [kind]: identifier }).toString();
+    const row = await read('order', query, orderResponse);
+    if (row[kind] !== identifier || row.symbol !== expectedSymbol) {
+      throw new BitgetDemoError('Bitget fixture order response does not match the request.', 502);
+    }
+    return {
+      symbol: row.symbol,
+      exchangeOrderId: row.orderId,
+      clientOrderId: row.clientOid || null,
+      side: row.side === 'buy' ? 'BUY' : 'SELL',
+      type: row.orderType.toUpperCase(),
+      status: row.orderStatus,
+      quantity: row.qty,
+      filledQuantity: row.cumExecQty,
+      price: row.price || null,
+    };
   }
 
   return {
@@ -213,7 +245,7 @@ export function createBitgetDemoFixtureAdapter(
       orderSubmission: false,
       cancellation: false,
       protection: false,
-      reconciliation: false,
+      reconciliation: true,
     }),
     async testConnection(): Promise<void> {
       await read('balance', '', balanceResponse);
@@ -255,25 +287,15 @@ export function createBitgetDemoFixtureAdapter(
         positionMode: row.holdMode,
       }));
     },
-    async getOrderStatus(expectedSymbol: string, id: string): Promise<ExchangeOrder> {
-      if (!symbol.safeParse(expectedSymbol).success || !orderId.safeParse(id).success) {
-        throw new BitgetDemoError('Invalid Bitget fixture order identifiers.', 400);
+    getOrderStatus: (expectedSymbol: string, id: string) => lookupOrder(expectedSymbol, id, 'orderId'),
+    async reconcileOrder(expectedSymbol: string, id: string): Promise<ExchangeOrder | null> {
+      try {
+        return await lookupOrder(expectedSymbol, id, 'clientOid');
+      } catch (error) {
+        // An absent client ID is still unresolved, including after an ambiguous submission.
+        if (error instanceof BitgetDemoError && error.code === 'ORDER_NOT_FOUND') return null;
+        throw error;
       }
-      const row = await read('order', `orderId=${id}`, orderResponse);
-      if (row.orderId !== id || row.symbol !== expectedSymbol) {
-        throw new BitgetDemoError('Bitget fixture order response does not match the request.', 502);
-      }
-      return {
-        symbol: row.symbol,
-        exchangeOrderId: row.orderId,
-        clientOrderId: row.clientOid || null,
-        side: row.side === 'buy' ? 'BUY' : 'SELL',
-        type: row.orderType.toUpperCase(),
-        status: row.orderStatus,
-        quantity: row.qty,
-        filledQuantity: row.cumExecQty,
-        price: row.price || null,
-      };
     },
   };
 }

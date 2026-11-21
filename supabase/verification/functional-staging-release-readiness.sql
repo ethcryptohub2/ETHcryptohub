@@ -182,9 +182,9 @@ COMMIT;
 -- POST-MIGRATION CHECKS: run only after the approved sequence completes.
 BEGIN READ ONLY;
 
-SELECT version
+SELECT version, name
   FROM supabase_migrations.schema_migrations
- WHERE version::TEXT IN (
+ WHERE COALESCE(substring(name FROM '^([0-9]{12})'), version::TEXT) IN (
        '202611100003', '202611100004', '202611110001', '202611110002',
        '202611110003', '202611110004', '202611110005', '202611110006',
        '202611110007', '202611140001'
@@ -296,5 +296,24 @@ SELECT table_name, grantee, privilege_type
    )
    AND grantee IN ('PUBLIC', 'anon', 'authenticated')
  ORDER BY table_name, grantee, privilege_type;
+
+-- All mutation privilege booleans must be false. All three relations must
+-- retain their append-only trigger, and all audit parent FKs must be RESTRICT.
+SELECT r.relation_name,
+       has_table_privilege('service_role', r.relation_name, 'UPDATE,DELETE,TRUNCATE,TRIGGER') AS service_role_can_mutate,
+       EXISTS (
+         SELECT FROM pg_trigger AS t
+          WHERE t.tgrelid = to_regclass(r.relation_name)
+            AND t.tgfoid = 'public.reject_admin_demo_audit_changes()'::regprocedure
+            AND t.tgenabled IN ('O','A') AND NOT t.tgisinternal
+       ) AS append_only_trigger_enabled,
+       NOT EXISTS (
+         SELECT FROM pg_constraint AS c
+          WHERE c.conrelid = to_regclass(r.relation_name)
+            AND c.contype = 'f' AND c.confdeltype <> 'r'
+       ) AS parent_deletes_restricted
+  FROM (VALUES ('public.admin_demo_exchange_audit_events'),
+               ('public.admin_demo_test_events'),
+               ('public.admin_demo_test_account_events')) AS r(relation_name);
 
 COMMIT;

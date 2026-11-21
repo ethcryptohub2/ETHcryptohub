@@ -53,6 +53,23 @@ BEGIN
        AND created_at > updated_at) <> 1 THEN
     RAISE EXCEPTION 'Synthetic ciphertext backfill or timestamp semantics failed';
   END IF;
+  IF NOT has_table_privilege('service_role', 'public.admin_demo_exchange_audit_events', 'SELECT')
+     OR NOT has_table_privilege('service_role', 'public.admin_demo_exchange_audit_events', 'INSERT')
+     OR has_table_privilege('service_role', 'public.admin_demo_exchange_audit_events', 'UPDATE,DELETE,TRUNCATE,TRIGGER')
+     OR has_table_privilege('service_role', 'public.admin_demo_test_account_events', 'UPDATE,DELETE,TRUNCATE,TRIGGER')
+     OR has_table_privilege('service_role', 'public.admin_demo_test_events', 'UPDATE,DELETE,TRUNCATE,TRIGGER')
+     OR has_sequence_privilege('service_role','public.admin_demo_exchange_audit_events_id_seq','UPDATE') THEN
+    RAISE EXCEPTION 'Append-only audit grants are incorrect';
+  END IF;
+  IF EXISTS (
+    SELECT FROM pg_constraint
+     WHERE conrelid IN ('public.admin_demo_exchange_audit_events'::regclass,
+                       'public.admin_demo_test_events'::regclass,
+                       'public.admin_demo_test_account_events'::regclass)
+       AND contype = 'f' AND confdeltype <> 'r'
+  ) THEN
+    RAISE EXCEPTION 'An audit relation can lose records through a parent mutation';
+  END IF;
 END
 $$;
 
@@ -100,6 +117,37 @@ BEGIN
   IF (SELECT COUNT(*) FROM public.admin_demo_exchange_audit_events WHERE session_id = fixture_session_id) <> 2 THEN
     RAISE EXCEPTION 'Unexpected number of action audit records';
   END IF;
+
+  BEGIN
+    UPDATE public.admin_demo_exchange_audit_events SET safe_details = '{"edited":true}' WHERE session_id = fixture_session_id;
+    RAISE EXCEPTION 'Direct audit update succeeded';
+  EXCEPTION WHEN object_not_in_prerequisite_state THEN NULL;
+  END;
+  BEGIN
+    DELETE FROM public.admin_demo_exchange_audit_events WHERE session_id = fixture_session_id;
+    RAISE EXCEPTION 'Direct audit delete succeeded';
+  EXCEPTION WHEN object_not_in_prerequisite_state THEN NULL;
+  END;
+  BEGIN
+    TRUNCATE TABLE public.admin_demo_exchange_audit_events;
+    RAISE EXCEPTION 'Direct audit truncate succeeded';
+  EXCEPTION WHEN object_not_in_prerequisite_state THEN NULL;
+  END;
+  BEGIN
+    TRUNCATE TABLE public.admin_demo_test_events;
+    RAISE EXCEPTION 'Legacy audit truncate succeeded';
+  EXCEPTION WHEN object_not_in_prerequisite_state THEN NULL;
+  END;
+  BEGIN
+    TRUNCATE TABLE public.admin_demo_test_account_events;
+    RAISE EXCEPTION 'Legacy account audit truncate succeeded';
+  EXCEPTION WHEN object_not_in_prerequisite_state THEN NULL;
+  END;
+  BEGIN
+    DELETE FROM public.admin_demo_identities WHERE admin_user_id = actor_id;
+    RAISE EXCEPTION 'Parent deletion bypassed audit retention';
+  EXCEPTION WHEN foreign_key_violation THEN NULL;
+  END;
 END
 $$;
 

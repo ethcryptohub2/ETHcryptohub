@@ -1,5 +1,11 @@
 import { query } from '../db';
 
+export class ExchangeFoundationBlockedError extends Error {
+  constructor() {
+    super('Exchange connections require the reviewed multi-exchange and credential migration sequence.');
+  }
+}
+
 export async function assertExchangeFoundationReady() {
   const result = await query<{ ready: boolean }>(
     `SELECT
@@ -32,6 +38,6 @@ export async function assertExchangeFoundationReady() {
        ) AS ready`,
   );
   if (!result.rows[0]?.ready) {
-    throw new Error('Multi-exchange credential schema is not installed. Apply migrations 202611100003_multi_exchange_foundation.sql and 202611110003_binance_credential_environment_confirmation.sql with this application release.');
+    throw new ExchangeFoundationBlockedError();
   }
 }

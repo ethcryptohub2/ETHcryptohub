@@ -1,5 +1,6 @@
 import { AuthError, requireUser } from '../../../lib/auth';
 import { listExchangeProviders } from '../../../lib/exchanges/providers';
+import { ExchangeFoundationBlockedError } from '../../../lib/exchanges/schema';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -24,7 +25,9 @@ export async function GET() {
   } catch (error) {
     const status = error instanceof AuthError ? error.status : 503;
     return Response.json(
-      { error: error instanceof Error ? error.message : 'Exchange connections are unavailable.' },
+      error instanceof ExchangeFoundationBlockedError
+        ? { code: 'SCHEMA_BLOCKED', error: error.message }
+        : { error: error instanceof AuthError ? error.message : 'Exchange connections are unavailable.' },
       { status, headers: { 'Cache-Control': 'no-store' } },
     );
   }

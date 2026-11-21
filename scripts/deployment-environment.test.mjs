@@ -75,6 +75,9 @@ test('Preview rejects opt-in Demo services and public provider traffic for this 
     'SMARTEXIT_ADMIN_BINANCE_DEMO_LAB_ENABLED',
     'SMARTEXIT_ADMIN_BYBIT_DEMO_LAB_ENABLED',
     'SMARTEXIT_ADMIN_SCANNER_REFRESH_ENABLED',
+    'SMARTEXIT_BINANCE_CREDENTIAL_STORAGE_ENABLED',
+    'SMARTEXIT_BINANCE_CREDENTIAL_TESTS_ENABLED',
+    'SMARTEXIT_BINANCE_BALANCE_READ_ENABLED',
     'SMARTEXIT_PUBLIC_REST_SNAPSHOT_ENABLED',
   ]) {
     const report = validateDeploymentEnvironment({ ...validPreview, [gate]: 'true' }, demoSource);

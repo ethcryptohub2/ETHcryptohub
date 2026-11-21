@@ -10,7 +10,7 @@ export const dynamic = 'force-dynamic';
 
 export async function GET() {
   try {
-    const { user } = await requirePremiumUser();
+    const { user } = await requirePremiumUser({ reconcile: false });
     const [notifications, unread] = await Promise.all([
       query(
         `SELECT n.id, n.read_at, n.created_at, e.event_type, e.payload, s.id AS signal_id,

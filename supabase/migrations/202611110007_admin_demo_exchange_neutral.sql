@@ -208,11 +208,11 @@ CREATE TABLE public.admin_demo_exchange_audit_events (
     CHECK ((session_id IS NULL) = (authorization_id IS NULL)),
     FOREIGN KEY (admin_user_id, admin_scope)
         REFERENCES public.admin_demo_identities (admin_user_id, admin_scope)
-        ON DELETE CASCADE,
+        ON DELETE RESTRICT,
     FOREIGN KEY (session_id, admin_user_id, admin_scope, provider, environment)
         REFERENCES public.admin_demo_exchange_sessions
             (id, admin_user_id, admin_scope, provider, environment)
-        ON DELETE CASCADE,
+        ON DELETE RESTRICT,
     FOREIGN KEY (authorization_id, session_id, admin_user_id, admin_scope, provider, environment)
         REFERENCES public.admin_demo_exchange_authorizations
             (id, session_id, admin_user_id, admin_scope, provider, environment)
@@ -239,9 +239,17 @@ GRANT ALL ON TABLE
     public.admin_demo_exchange_credentials,
     public.admin_demo_exchange_sessions,
     public.admin_demo_exchange_authorizations,
-    public.admin_demo_exchange_executions,
-    public.admin_demo_exchange_audit_events
+    public.admin_demo_exchange_executions
 TO service_role;
+
+REVOKE ALL ON public.admin_demo_exchange_audit_events FROM service_role;
+GRANT SELECT, INSERT ON public.admin_demo_exchange_audit_events TO service_role;
+
+CREATE TRIGGER admin_demo_exchange_audit_append_only
+    BEFORE UPDATE OR DELETE OR TRUNCATE ON public.admin_demo_exchange_audit_events
+    FOR EACH STATEMENT EXECUTE FUNCTION public.reject_admin_demo_audit_changes();
+
+REVOKE ALL ON SEQUENCE public.admin_demo_exchange_audit_events_id_seq FROM PUBLIC, anon, authenticated, service_role;
 GRANT USAGE, SELECT ON SEQUENCE
     public.admin_demo_exchange_credentials_id_seq,
     public.admin_demo_exchange_sessions_id_seq,

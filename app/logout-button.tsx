@@ -15,10 +15,10 @@ export function LogoutButton() {
       if (!csrfResponse.ok || !token) throw new Error('Secure sign-out could not start.');
       const response = await fetch('/api/auth/logout', { method: 'POST', headers: { 'X-CSRF-Token': token } });
       if (!response.ok) throw new Error('Sign-out failed.');
-      router.push('/login');
+      router.replace('/login');
       router.refresh();
     } catch (reason) { setError(reason instanceof Error ? reason.message : 'Sign-out failed.'); }
     finally { setBusy(false); }
   }
-  return <span><button onClick={() => void logout()} disabled={busy}>{busy ? 'Signing out…' : 'Log out'}</button>{error && <span role="alert" className="error">{error}</span>}</span>;
+  return <span><button type="button" onClick={() => void logout()} disabled={busy}>{busy ? 'Signing out…' : 'Log out'}</button>{error && <span role="alert" className="error">{error}</span>}</span>;
 }

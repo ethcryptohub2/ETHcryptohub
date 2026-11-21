@@ -5,6 +5,7 @@ import { NotificationsCenter } from './notifications-center';
 import { getSubscriptionEntitlement } from '../../lib/subscriptions';
 import { SubscriptionPanel } from '../subscription-panel';
 import { FuturesBalanceCard } from './futures-balance-card';
+import { isCredentialEncryptionConfigured } from '../../lib/binance-credentials';
 
 export const dynamic = 'force-dynamic';
 
@@ -17,7 +18,7 @@ export default async function DashboardPage() {
       <header className="topbar"><Link className="brand" href="/">ETHCRYPTOHUB</Link><nav className="links"><Link href="/scanner">Market Scanner</Link><Link href="/settings">Settings</Link><Link href="/binance">Binance API</Link>{user.role === 'admin' && <Link href="/admin">Admin</Link>}</nav></header>
       <section className="hero"><p className="mono">ACCOUNT · {user.role.toUpperCase()}</p><h1>Market intelligence dashboard.</h1><p className="muted">Connected as {user.email}. Review public perpetual-futures market data, manage account details, and configure separate Demo and Live Binance API credentials.</p><div className="links" style={{ marginTop: 24 }}><Link className="button" href="/scanner">Open market scanner</Link><Link href="/settings">Account settings</Link><Link href="/binance">Exchange API setup</Link></div></section>
       <SubscriptionPanel />
-      <FuturesBalanceCard />
+      <FuturesBalanceCard signedReadEnabled={process.env.SMARTEXIT_BINANCE_BALANCE_READ_ENABLED === 'true' && isCredentialEncryptionConfigured()} />
       {subscription.hasPremiumAccess
         ? <NotificationsCenter />
         : <section id="notifications" className="card stack notification-center">

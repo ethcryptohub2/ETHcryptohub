@@ -311,3 +311,30 @@ REVOKE ALL ON SEQUENCE
     public.admin_demo_test_executions_id_seq,
     public.admin_demo_test_events_id_seq
     FROM PUBLIC, anon, authenticated;
+
+-- Managed installations can grant service_role privileges by default.
+-- The legacy service uses a SECURITY DEFINER RPC and its server database
+-- connection for the audit writes, so service_role needs no direct audit DML.
+REVOKE ALL ON public.admin_demo_test_account_events, public.admin_demo_test_events FROM service_role;
+REVOKE ALL ON SEQUENCE public.admin_demo_test_account_events_id_seq, public.admin_demo_test_events_id_seq FROM service_role;
+
+CREATE OR REPLACE FUNCTION public.reject_admin_demo_audit_changes()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+SET search_path = pg_catalog
+AS $$
+BEGIN
+    RAISE EXCEPTION 'Admin Demo audit records are append-only'
+        USING ERRCODE = '55000';
+END;
+$$;
+
+REVOKE ALL ON FUNCTION public.reject_admin_demo_audit_changes() FROM PUBLIC, anon, authenticated, service_role;
+
+CREATE TRIGGER admin_demo_account_events_append_only
+    BEFORE UPDATE OR DELETE OR TRUNCATE ON public.admin_demo_test_account_events
+    FOR EACH STATEMENT EXECUTE FUNCTION public.reject_admin_demo_audit_changes();
+
+CREATE TRIGGER admin_demo_test_events_append_only
+    BEFORE UPDATE OR DELETE OR TRUNCATE ON public.admin_demo_test_events
+    FOR EACH STATEMENT EXECUTE FUNCTION public.reject_admin_demo_audit_changes();

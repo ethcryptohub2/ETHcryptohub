@@ -1,32 +1,68 @@
 import { z } from 'zod';
 import { NextRequest, NextResponse } from 'next/server';
 import { AuthError, requireUser } from '../../../lib/auth';
-import { BinanceFuturesError, isTradingEnvironment, testBinanceEnvironment, type TradingEnvironment } from '../../../lib/binance-futures';
-import { encryptCredential } from '../../../lib/binance-credentials';
+import { BinanceFuturesError, isTradingEnvironment, testBinanceEnvironment } from '../../../lib/binance-futures';
+import { encryptCredential, isCredentialEncryptionConfigured } from '../../../lib/binance-credentials';
 import { query } from '../../../lib/db';
 import { validCsrf } from '../../../lib/http';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
-type Credentials = {
-  api_key_ciphertext: string;
-  api_secret_ciphertext: string;
-  environment_confirmed: boolean;
-  updated_at: string;
-};
-const requestSchema = z.object({
-  action: z.enum(['save', 'remove', 'test']),
-  environment: z.enum(['DEMO', 'LIVE']),
-  apiKey: z.string().optional(),
-  apiSecret: z.string().optional(),
-}).strict();
+const noStore = { 'Cache-Control': 'no-store' };
+const blocked = {
+  SCHEMA_BLOCKED: 'Binance credentials are unavailable until the database migration for credential environment confirmation is approved and applied.',
+  ENCRYPTION_BLOCKED: 'Binance credentials are unavailable until an administrator verifies server-side encryption configuration.',
+  ADMIN_APPROVAL_REQUIRED: 'Binance credential changes are disabled pending separate administrator approval.',
+  SIGNED_READ_BLOCKED: 'Binance account verification is disabled pending separate provider-specific approval.',
+} as const;
+type BlockedCode = keyof typeof blocked;
+const environmentSchema = z.enum(['DEMO', 'LIVE']);
+const apiCredential = z.string().trim().regex(/^[A-Za-z0-9]{20,128}$/);
+const requestSchema = z.discriminatedUnion('action', [
+  z.object({
+    action: z.literal('save'),
+    environment: environmentSchema,
+    apiKey: apiCredential,
+    apiSecret: apiCredential,
+    confirmCredentialEnvironment: z.literal(true),
+  }).strict(),
+  z.object({ action: z.literal('remove'), environment: environmentSchema }).strict(),
+  z.object({ action: z.literal('test'), environment: environmentSchema }).strict(),
+]);
 
-async function credentials(userId: number, environment: TradingEnvironment) {
-  return query<Credentials>(
-    'SELECT api_key_ciphertext, api_secret_ciphertext, environment_confirmed, updated_at FROM public.binance_api_credentials WHERE user_id = $1 AND environment = $2',
-    [userId, environment],
+async function storageBlock(): Promise<BlockedCode | undefined> {
+  const readiness = await query<{ ready: boolean }>(
+    `SELECT EXISTS (
+       SELECT 1 FROM information_schema.columns
+        WHERE table_schema = 'public' AND table_name = 'binance_api_credentials'
+          AND column_name = 'environment_confirmed' AND data_type = 'boolean'
+     ) AS ready`,
   );
+  if (!readiness.rows[0]?.ready) return 'SCHEMA_BLOCKED';
+  if (!isCredentialEncryptionConfigured()) return 'ENCRYPTION_BLOCKED';
+  if (process.env.SMARTEXIT_BINANCE_CREDENTIAL_STORAGE_ENABLED !== 'true') return 'ADMIN_APPROVAL_REQUIRED';
+}
+
+function blockedResponse(code: BlockedCode) {
+  return NextResponse.json({ code, error: blocked[code] }, { status: 503, headers: noStore });
+}
+
+function errorResponse(reason: unknown) {
+  if (reason instanceof AuthError) {
+    return NextResponse.json({ error: reason.message }, { status: reason.status, headers: noStore });
+  }
+  if (reason && typeof reason === 'object' && 'code' in reason && (reason.code === '42P01' || reason.code === '42703')) {
+    return blockedResponse('SCHEMA_BLOCKED');
+  }
+  if (reason instanceof BinanceFuturesError) {
+    return NextResponse.json({ error: 'Binance account verification failed. Check the selected environment and key permissions.' }, {
+      status: reason.status, headers: noStore,
+    });
+  }
+  return NextResponse.json({ error: 'Binance credentials are currently unavailable. Try again later or contact an administrator.' }, {
+    status: 503, headers: noStore,
+  });
 }
 
 export async function GET(request: NextRequest) {
@@ -34,18 +70,23 @@ export async function GET(request: NextRequest) {
     const user = await requireUser();
     const requested = request.nextUrl.searchParams.get('environment') ?? 'DEMO';
     if (!isTradingEnvironment(requested)) return NextResponse.json({ error: 'Invalid Binance environment.' }, { status: 422 });
-    const result = await credentials(user.id, requested);
+    const reason = await storageBlock();
+    if (reason) return blockedResponse(reason);
+    const result = await query<{ environment_confirmed: boolean; updated_at: string }>(
+      'SELECT environment_confirmed, updated_at FROM public.binance_api_credentials WHERE user_id = $1 AND environment = $2',
+      [user.id, requested],
+    );
     return NextResponse.json({
       data: {
         environment: requested,
         configured: result.rows[0]?.environment_confirmed === true,
         environmentConfirmationRequired: Boolean(result.rows[0] && !result.rows[0].environment_confirmed),
         updatedAt: result.rows[0]?.updated_at ?? null,
+        signedReadEnabled: process.env.SMARTEXIT_BINANCE_CREDENTIAL_TESTS_ENABLED === 'true',
       },
     }, { headers: { 'Cache-Control': 'no-store' } });
   } catch (error) {
-    const status = error instanceof AuthError || error instanceof BinanceFuturesError ? error.status : 503;
-    return NextResponse.json({ error: error instanceof Error ? error.message : 'Binance settings unavailable.' }, { status });
+    return errorResponse(error);
   }
 }
 
@@ -55,8 +96,17 @@ export async function POST(request: NextRequest) {
     const user = await requireUser();
     const body: unknown = await request.json().catch(() => null);
     const parsed = requestSchema.safeParse(body);
-    if (!parsed.success) return NextResponse.json({ error: 'Invalid Binance credential request.' }, { status: 422 });
+    if (!parsed.success) {
+      return NextResponse.json({ error: 'Invalid Binance credential request. Saving requires valid keys and explicit confirmation of their environment.' }, {
+        status: 422, headers: noStore,
+      });
+    }
     const { action, environment } = parsed.data;
+    const reason = await storageBlock();
+    if (reason) return blockedResponse(reason);
+    if (action === 'test' && process.env.SMARTEXIT_BINANCE_CREDENTIAL_TESTS_ENABLED !== 'true') {
+      return blockedResponse('SIGNED_READ_BLOCKED');
+    }
 
     if (action === 'remove') {
       await query('DELETE FROM public.binance_api_credentials WHERE user_id = $1 AND environment = $2', [user.id, environment]);
@@ -65,15 +115,8 @@ export async function POST(request: NextRequest) {
 
     if (action === 'save') {
       const { apiKey, apiSecret } = parsed.data;
-      if (
-        typeof apiKey !== 'string' || typeof apiSecret !== 'string' ||
-        !/^[A-Za-z0-9]{20,128}$/.test(apiKey.trim()) ||
-        !/^[A-Za-z0-9]{20,128}$/.test(apiSecret.trim())
-      ) {
-        return NextResponse.json({ error: 'Enter valid Binance API key and secret values.' }, { status: 422 });
-      }
-      const apiKeyCiphertext = encryptCredential(apiKey.trim());
-      const apiSecretCiphertext = encryptCredential(apiSecret.trim());
+      const apiKeyCiphertext = encryptCredential(apiKey);
+      const apiSecretCiphertext = encryptCredential(apiSecret);
       await query(
         `INSERT INTO public.binance_api_credentials (
            user_id, environment, api_key_ciphertext, api_secret_ciphertext,
@@ -93,9 +136,6 @@ export async function POST(request: NextRequest) {
     const result = await testBinanceEnvironment(user.id, environment);
     return NextResponse.json({ data: result }, { headers: { 'Cache-Control': 'no-store' } });
   } catch (error) {
-    const status = error instanceof AuthError || error instanceof BinanceFuturesError ? error.status : 503;
-    return NextResponse.json({
-      error: error instanceof Error ? error.message : 'Binance request failed.',
-    }, { status });
+    return errorResponse(error);
   }
 }
