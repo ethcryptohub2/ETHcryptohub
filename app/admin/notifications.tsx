@@ -130,6 +130,6 @@ export function AdminNotifications() {
     </>}
     {message && <p className="success" role="status">{message}</p>}
     {error && <p className="error" role="alert">{error}</p>}
-    <p className="muted">On the free plan, GitHub Actions schedules scans about every 30 minutes, with a daily Vercel Cron backup. Scheduled scans rotate through supported timeframes; GitHub may delay scheduled runs.</p>
+    <p className="muted">Check Scanner Management for recorded runs and scheduling status.</p>
   </section>;
 }

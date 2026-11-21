@@ -11,7 +11,7 @@ export default async function AdminIntelligencePage() {
   const status = await readIntelligenceStatus(user);
   return <main className="shell"><section className="hero"><p className="mono">ADMIN · FEED AND PAPER OPERATIONS</p>
     <h1>Intelligence operations.</h1><p className="muted">Activation readiness is separate from application health. No worker, schedule or execution is started here.</p>
-    <Link href="/intelligence">Customer research view</Link></section>
+    <nav className="links"><Link href="/intelligence">Customer research view</Link><Link href="/admin/backtesting">Backtesting</Link></nav></section>
     <section className="grid">
       <article className="card"><h2>Feed health</h2><p>Worker inactive · subscriptions not started</p><p className="muted">Saved coverage {status.market.snapshotSymbols}/{status.market.enabledSymbols}. Last snapshot {status.market.latestSnapshotAt ?? 'unavailable'}.</p><p>No continuous sequence or live-lag verification is claimed.</p></article>
       <article className="card"><h2>Execution lock</h2><p>All remote execution disabled</p><button disabled>System execution locked</button><p className="muted">No kill-switch change is necessary while execution is inactive. Local paper journals support deterministic kill switches.</p></article>
