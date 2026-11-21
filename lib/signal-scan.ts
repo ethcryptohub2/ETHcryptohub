@@ -75,7 +75,9 @@ export async function runSignalScan(
   }
 
   await saveScannerCandidates(result.candidates);
-  const persisted = await persistSignalScan(result.candidates, settings);
+  const persisted = await persistSignalScan(result.candidates, settings, {
+    dispatchNotifications: options.deliverNotifications,
+  });
   await processSignalLifecycle(marketSnapshot);
   if (options.executeAutomaticTrades !== false) {
     await processNewAutomaticTrades(persisted.createdSignalIds);

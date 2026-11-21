@@ -342,6 +342,7 @@ async function insertSignal(
 export async function persistSignalScan(
   candidates: MarketScannerCandidate[],
   settings: NotificationSystemSettings,
+  options: { dispatchNotifications?: boolean } = {},
 ): Promise<{ created: number; createdSignalIds: string[]; signals: Record<string, { id: string; generatedAt: string; expiresAt: string; status: SignalStatus }> }> {
   let createdSignalIds: string[] = [];
   try {
@@ -371,10 +372,12 @@ export async function persistSignalScan(
     throw error;
   }
 
-  try {
-    await dispatchSignalEvents(settings);
-  } catch (error) {
-    console.error('Standard signal event dispatch failed; pending outbox events remain retryable:', error instanceof Error ? error.message : 'Unknown event dispatch error.');
+  if (options.dispatchNotifications !== false) {
+    try {
+      await dispatchSignalEvents(settings);
+    } catch (error) {
+      console.error('Standard signal event dispatch failed; pending outbox events remain retryable:', error instanceof Error ? error.message : 'Unknown event dispatch error.');
+    }
   }
   return { created: createdSignalIds.length, createdSignalIds, signals: await getPersistedSignalMetadata(candidates) };
 }

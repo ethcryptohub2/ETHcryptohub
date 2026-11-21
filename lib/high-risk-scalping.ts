@@ -190,7 +190,7 @@ export function analyzeHighRiskScalpingSetup(input: {
   btcDirection: ScalpingSetup['context']['btcDirection'];
   settings: HighRiskScalpingSettings;
   now?: number;
-}): ScalpingSetup | null {
+}): (ScalpingSetup & { lastCandleCloseAt: string }) | null {
   if (!Number.isFinite(input.price) || input.price <= 0 || !input.candles.length) return null;
   const now = input.now ?? Date.now();
   const candles = input.candles.filter((candle) => candle.closeTime < now);
@@ -225,6 +225,7 @@ export function analyzeHighRiskScalpingSetup(input: {
       tp2: analysis.tp2,
       lastPrice: input.price,
       candleOpenAt: new Date(latest.openTime).toISOString(),
+      lastCandleCloseAt: new Date(latest.closeTime).toISOString(),
       context: {
         rsi: analysis.rsi,
         relativeVolume: analysis.relativeVolume,
@@ -306,7 +307,9 @@ async function notifyNewSignal(signalId: string, setup: ScalpingSetup) {
   }));
 }
 
-export async function runHighRiskScalpingScan(request: typeof fetch = globalThis.fetch, now = Date.now()) {
+export async function runHighRiskScalpingScan(
+  request: typeof fetch = globalThis.fetch, now = Date.now(), options: { deliverNotifications?: boolean } = {},
+) {
   const settings = await getHighRiskScalpingSettings();
   const snapshot = await markets.list();
   const prices = new Map(snapshot.symbols.map((market) => [market.symbol, market.lastPrice]));
@@ -369,7 +372,7 @@ export async function runHighRiskScalpingScan(request: typeof fetch = globalThis
                    latest_price, last_candle_close_at, candle_open_at, expires_at, entry_expires_at, entry_status,
                    research_snapshot, source_metadata
                  ) VALUES ($1, 'HIGH_RISK', 'BINANCE', 'HIGH_RISK_SCALPING', $2, $3, $4, $5,
-                           $6, $7, $8, $9, $10, $11, NULL, $12, NULL, $13,
+                           $6, $7, $8, $9, $10, $11, NULL, $12, $18, $13,
                            NOW() + ($14 * INTERVAL '1 minute'),
                            NOW() + ($15 * INTERVAL '1 minute'), 'OPEN', $16::JSONB, $17::JSONB)
                  ON CONFLICT DO NOTHING RETURNING id::text`,
@@ -380,6 +383,7 @@ export async function runHighRiskScalpingScan(request: typeof fetch = globalThis
                   settings.signalValidityMinutes[timeframe], settings.entryValidityMinutes[timeframe],
                   JSON.stringify(setup.context),
                   JSON.stringify({ priceSource: 'BINANCE_USDM_TICKER_LAST_PRICE', market: 'USD-M_PERPETUAL' }),
+                  setup.lastCandleCloseAt,
                 ],
               );
               if (central.rowCount) {
@@ -403,6 +407,10 @@ export async function runHighRiskScalpingScan(request: typeof fetch = globalThis
               );
               if (!legacy.rowCount) throw new Error('Legacy scalping compatibility record could not be persisted.');
               legacyId = legacy.rows[0]!.id;
+              await client.query(
+                'UPDATE public.market_signals SET legacy_scalping_signal_id = $2 WHERE id = $1',
+                [centralId, legacyId],
+              );
               const payload = JSON.stringify({
                 scannerType: 'HIGH_RISK',
                 symbol,
@@ -467,7 +475,7 @@ export async function runHighRiskScalpingScan(request: typeof fetch = globalThis
         }
         if (centralId && legacyId) {
           created += 1;
-          await notifyNewSignal(legacyId, setup);
+          if (options.deliverNotifications !== false) await notifyNewSignal(legacyId, setup);
         }
       } catch (error) {
         failed += 1;

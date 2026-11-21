@@ -53,6 +53,7 @@ export async function POST(request: NextRequest) {
       // Transaction-scoped lock is shared by Preview instances and survives pooler transaction mode.
       const lock = await client.query<{ acquired: boolean }>('SELECT pg_try_advisory_xact_lock(783121, 501) AS acquired');
       if (!lock.rows[0]?.acquired) return json({ error: 'EVALUATION_BUSY' }, 429);
+      if (!enabled(request)) return json({ error: 'EVALUATION_REQUIRES_SEPARATE_APPROVAL' }, 503);
       const started = performance.now();
       try {
         const result = await evaluateStagingScanner({
