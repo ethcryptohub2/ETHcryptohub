@@ -3,7 +3,7 @@ import { AuthError } from '../../../lib/auth';
 import { marketScannerQuerySchema } from '../../../smartexit/apps/api/src/schemas';
 import { recommendedMaxAgeSeconds } from '../../../smartexit/apps/api/src/services/market-scanner';
 import type { MarketScannerCandidate } from '../../../smartexit/apps/api/src/services/market-scanner';
-import { applyScannerSignalValidity, savedScannerCacheStatus, savedScannerCandidate } from '../../../lib/scanner-snapshot';
+import { applyScannerSignalValidity, savedScannerCandidate } from '../../../lib/scanner-snapshot';
 import { scannerCoverageModes, scannerRanks, scannerSymbolPrefix, type SavedScannerResponse } from '../../../lib/scanner-universe';
 import {
   defaultNotificationSystemSettings,
@@ -59,6 +59,7 @@ export async function GET(request: NextRequest) {
   try {
     const universe = await getSavedScannerUniverse({
       timeframe: configuration.timeframe, coverage, symbol, rank, page, limit: configuration.limit,
+      maxAgeSeconds: configuration.maxAgeSeconds,
     });
     let settings = defaultNotificationSystemSettings();
     let notificationWarning = '';
@@ -103,7 +104,8 @@ export async function GET(request: NextRequest) {
     const lastSavedAt = Date.parse(universe.latest_saved_at ?? '');
     const updatedAt = Number.isFinite(lastSavedAt) && lastSavedAt <= serverNow ? new Date(lastSavedAt).toISOString() : null;
     const lastUniverseSync = Date.parse(universe.universe_synced_at ?? '');
-    const universeStatus = savedScannerCacheStatus(universe.saved_count, updatedAt, configuration.maxAgeSeconds, serverNow);
+    const universeStatus = !universe.saved_count ? 'NO_SAVED_RESULTS' :
+      universe.recent_until.some(expiry => expiry >= serverNow) ? 'RECENT_CACHE' : 'STALE_CACHE';
     const result: SavedScannerResponse = {
       exchange: 'BINANCE',
       market: 'USDⓈ-M FUTURES',
@@ -116,6 +118,7 @@ export async function GET(request: NextRequest) {
       eligibleCount: universe.eligible_count,
       universeSyncedAt: Number.isFinite(lastUniverseSync) && lastUniverseSync <= serverNow ? new Date(lastUniverseSync).toISOString() : null,
       savedCount: universe.saved_count,
+      recentUntil: universe.recent_until,
       watchlistCount: universe.watchlist_count,
       matchingCount: universe.matching_count,
       instruments: universe.rows.map(({ symbol, baseAsset, eligible, watchlist, savedScanAt }) =>

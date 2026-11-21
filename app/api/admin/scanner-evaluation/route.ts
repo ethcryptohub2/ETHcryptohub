@@ -15,7 +15,8 @@ export const dynamic = 'force-dynamic';
 export const maxDuration = 30;
 
 const input = z.object({ symbols: z.array(z.string().regex(/^[A-Z0-9]{1,20}USDT$/))
-  .min(1).max(scannerEvaluationBatchLimit).refine(values => new Set(values).size === values.length) }).strict();
+  .min(1).max(scannerEvaluationBatchLimit).refine(values => new Set(values).size === values.length),
+  mode: z.enum(['both', 'high_risk']).default('both') }).strict();
 const json = (body: object, status = 200) => Response.json(body, { status, headers: { 'Cache-Control': 'no-store' } });
 
 function enabled(request: NextRequest) {
@@ -58,6 +59,7 @@ export async function POST(request: NextRequest) {
       try {
         const result = await evaluateStagingScanner({
           symbols: parsed.data.symbols, minimumScore: standard.minimumSetupScore, highRisk,
+          mode: parsed.data.mode,
           signal: AbortSignal.any([request.signal, AbortSignal.timeout(15_000)]),
         });
         return json({ data: result });

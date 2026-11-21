@@ -4,6 +4,9 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { TABLE_PAGE_SIZE } from '../../lib/pagination';
 import { TablePagination } from './table-pagination';
 import { ScannerEvaluation } from './scanner-evaluation';
+import type { runSignalScan } from '../../lib/signal-scan';
+
+type ScanResult = Awaited<ReturnType<typeof runSignalScan>>;
 
 type ScannerCoin = {
   id: string;
@@ -61,6 +64,8 @@ export function AdminScannerManagement() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
+  const [scanPhase, setScanPhase] = useState('');
+  const [scanResult, setScanResult] = useState<ScanResult | null>(null);
 
   const load = useCallback(async (requestedAuditPage = auditPage) => {
     const response = await fetch(`/api/admin/scanner-management?auditPage=${requestedAuditPage}`, { cache: 'no-store' });
@@ -92,21 +97,32 @@ export function AdminScannerManagement() {
   const pageCoins = visibleCoins.slice((currentPage - 1) * TABLE_PAGE_SIZE, currentPage * TABLE_PAGE_SIZE);
 
   async function mutate(payload: Record<string, unknown>, successMessage: string) {
+    const scan = payload.action === 'scan_now';
     setBusy(true);
     setError('');
     setNotice('');
+    if (scan) {
+      setScanResult(null);
+      setScanPhase('Authorizing the 15-minute scan…');
+    }
     try {
       const csrfResponse = await fetch('/api/csrf', { cache: 'no-store' });
       const csrfBody = await csrfResponse.json() as { data?: { csrfToken: string } };
       const csrf = csrfBody.data?.csrfToken;
       if (!csrfResponse.ok || !csrf) throw new Error('Secure admin session unavailable.');
+      if (scan) setScanPhase('Running the batch and saving results. This can take up to one minute…');
       const response = await fetch('/api/admin/scanner-management', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrf },
         body: JSON.stringify(payload),
       });
-      const body = await response.json() as { data?: { added?: number; changed?: number; updated?: number; inactive?: number; timeframe?: string; candidates?: number; scannerStatus?: string }; error?: string };
+      const body = await response.json() as { data?: { added?: number; changed?: number; updated?: number; inactive?: number } & Partial<ScanResult>; error?: string };
       if (!response.ok) throw new Error(body.error ?? 'Scanner management action failed.');
+      if (scan) {
+        if (!body.data?.rows) throw new Error('The scan returned no report. Check saved results before running another scan.');
+        setScanResult(body.data as ScanResult);
+        setScanPhase('Scan completed. Reloading the management view…');
+      }
       setAuditPage(1);
       await load(1);
       setSelected([]);
@@ -121,6 +137,7 @@ export function AdminScannerManagement() {
       setError(reason instanceof Error ? reason.message : 'Scanner management action failed.');
     } finally {
       setBusy(false);
+      if (scan) setScanPhase('');
     }
   }
 
@@ -156,6 +173,20 @@ export function AdminScannerManagement() {
       </button>
     </div>
     {state && !state.marketRefreshEnabled && <p className="muted">Market refresh requires separate approval.</p>}
+    {scanPhase && <p role="status">{scanPhase}</p>}
+    {scanResult && <section className="stack" aria-label="Latest 15-minute scan result">
+      <h3>Latest 15-minute scan result</h3>
+      <p>{scanResult.candidates} returned from {scanResult.batchSize} selected of {scanResult.enabledCoins} enabled pairs.
+        {' '}{scanResult.rows.filter(row => row.status === 'READY').length} qualified, {scanResult.newSignals} new History records.</p>
+      <p className="muted">{scanResult.exchange} · {scanResult.source} · Started {scanResult.startedAt} · Completed {scanResult.completedAt}</p>
+      <ul>{scanResult.rows.map(row => <li key={row.symbol}>
+        <strong>{row.symbol} · {row.status === 'READY' ? 'QUALIFIED' : row.status}</strong>
+        {' · '}{row.candleCloseAt ? `Candle closed ${row.candleCloseAt}` : 'Closed candle unavailable'}
+        {' · '}{row.reason}
+        {row.setup && <p>{row.side} · Entry {row.setup.entryPrice} · SL {row.setup.initialStop}
+          {' · '}TP1 {row.setup.tp1} · TP2 {row.setup.tp2} · TP3 {row.setup.tp3}</p>}
+      </li>)}</ul>
+    </section>}
     <ScannerEvaluation />
     {error && <p className="error" role="alert">{error}</p>}
     {notice && <p className="success" role="status">{notice}</p>}

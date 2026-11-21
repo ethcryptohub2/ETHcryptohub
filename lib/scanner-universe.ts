@@ -23,6 +23,7 @@ export type SavedScannerResponse = Omit<MarketScannerResponse, 'updatedAt' | 'st
   eligibleCount: number;
   universeSyncedAt: string | null;
   savedCount: number;
+  recentUntil: number[];
   watchlistCount: number;
   instruments: ScannerInstrument[];
 };

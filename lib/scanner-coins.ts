@@ -498,6 +498,7 @@ type ScannerUniverseInput = {
   rank: ScannerRank | null;
   page: number;
   limit: number;
+  maxAgeSeconds: number;
 };
 
 type ScannerUniverseRow = ScannerInstrument & { candidate: MarketScannerCandidate | null };
@@ -506,6 +507,7 @@ export async function getSavedScannerUniverse(input: ScannerUniverseInput) {
   const result = await query<{
     rows: ScannerUniverseRow[]; matching_count: number; eligible_count: number;
     saved_count: number; latest_saved_at: string | null; universe_synced_at: string | null;
+    recent_until: number[];
   }>(
     `WITH eligible AS (
        SELECT coin.symbol, coin.base_asset, snapshot.scanned_at, snapshot.candidate_json
@@ -516,6 +518,14 @@ export async function getSavedScannerUniverse(input: ScannerUniverseInput) {
           AND coin.contract_type = 'PERPETUAL' AND coin.trading_status = 'TRADING' AND coin.is_enabled
           AND coin.symbol = coin.base_asset || 'USDT'
           AND coin.base_asset ~ '^[[:alnum:]]{1,20}$'
+     ), observations AS (
+       SELECT scanned_at,
+              CASE WHEN pg_input_is_valid(candidate_json->>'lastCandleCloseAt', 'timestamptz')
+                   THEN (candidate_json->>'lastCandleCloseAt')::timestamptz END AS candle_at
+         FROM eligible
+        WHERE candidate_json->>'status' IN ('READY', 'WAIT')
+          AND CASE WHEN jsonb_typeof(candidate_json->'price') = 'number'
+                   THEN (candidate_json->>'price')::numeric > 0 ELSE FALSE END
      ), selection AS (
        SELECT * FROM eligible WHERE $2::text = 'eligible' OR ($2 = 'saved' AND scanned_at IS NOT NULL)
        UNION ALL
@@ -535,12 +545,15 @@ export async function getSavedScannerUniverse(input: ScannerUniverseInput) {
             (SELECT count(*)::int FROM eligible) AS eligible_count,
             (SELECT count(scanned_at)::int FROM eligible) AS saved_count,
             (SELECT max(scanned_at)::text FROM eligible) AS latest_saved_at,
+            COALESCE((SELECT jsonb_agg(EXTRACT(EPOCH FROM (candle_at + $8 * interval '1 second')) * 1000)
+              FROM observations WHERE candle_at <= scanned_at AND scanned_at <= statement_timestamp()
+                AND candle_at >= statement_timestamp() - $8 * interval '1 second'), '[]'::jsonb) AS recent_until,
             (SELECT last_success_at::text FROM public.scanner_sync_state WHERE singleton) AS universe_synced_at,
             COALESCE((SELECT jsonb_agg(jsonb_build_object(
               'symbol', symbol, 'baseAsset', base_asset, 'eligible', base_asset IS NOT NULL,
               'watchlist', symbol = ANY($3::text[]), 'savedScanAt', scanned_at, 'candidate', candidate_json
             ) ORDER BY CASE WHEN $2 = 'saved' THEN scanned_at END DESC NULLS LAST, symbol) FROM result_page), '[]'::jsonb) AS rows`,
-    [input.timeframe, input.coverage, watchlist.symbols, input.symbol, input.rank, input.limit, (input.page - 1) * input.limit],
+    [input.timeframe, input.coverage, watchlist.symbols, input.symbol, input.rank, input.limit, (input.page - 1) * input.limit, input.maxAgeSeconds],
   );
   const row = result.rows[0];
   return { ...row, watchlist_count: watchlist.symbols.length };

@@ -102,8 +102,14 @@ export async function POST(request: NextRequest) {
       action.action === 'sync_now' || action.action === 'scan_now' ? 'sync' : 'write',
     );
     if (action.action === 'scan_now') {
+      const data = await runSignalScan('15m', { executeAutomaticTrades: false, deliverNotifications: false });
+      console.info('Admin scanner batch completed', {
+        endpoint: '/api/admin/scanner-management', action: 'scan_now',
+        deployment: process.env.VERCEL_DEPLOYMENT_ID ?? null, commit: process.env.VERCEL_GIT_COMMIT_SHA ?? null,
+        scannedAt: data.scannedAt, candidates: data.candidates, newSignals: data.newSignals,
+      });
       return NextResponse.json(
-        { data: await runSignalScan('15m', { executeAutomaticTrades: false, deliverNotifications: false }) },
+        { data },
         { headers: { 'Cache-Control': 'no-store' } },
       );
     }
@@ -137,7 +143,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({
       error: error instanceof AuthError || rateLimited || syncFailure || scanFailure
         ? message
-        : diagnosticMessage(error, 'Scanner management action could not be completed.'),
+        : 'Scanner management failed. Check the saved scan timestamp and History before retrying.',
     }, { status, headers: { 'Cache-Control': 'no-store' } });
   }
 }

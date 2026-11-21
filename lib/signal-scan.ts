@@ -1,4 +1,4 @@
-import { BinanceFuturesMarketsService } from '../smartexit/apps/api/src/services/binance-futures-markets';
+import { BinanceFuturesMarketsService, BinanceMarketDataError } from '../smartexit/apps/api/src/services/binance-futures-markets';
 import { BinanceMarketScannerService, recommendedMaxAgeSeconds } from '../smartexit/apps/api/src/services/market-scanner';
 import { loadMarketResearchProvider } from './market-research-settings';
 import {
@@ -36,13 +36,19 @@ export async function runSignalScan(
   timeframeOverride?: typeof timeframes[number],
   options: SignalScanOptions = {},
 ) {
+  const startedAt = new Date().toISOString();
   const syncState = await getScannerSyncState();
   const lastAttempt = syncState?.last_attempt_at ? Date.parse(syncState.last_attempt_at) : 0;
   if (!lastAttempt || Date.now() - lastAttempt >= SYMBOL_SYNC_INTERVAL_MS) {
     await syncBinanceScannerUniverse(null);
   }
   const settings = await getNotificationSystemSettings();
-  const marketSnapshot = await markets.list();
+  const marketSnapshot = await markets.list().catch((error: unknown) => {
+    if (error instanceof BinanceMarketDataError) {
+      throw new SignalScanError('Binance exchange metadata or ticker acquisition failed. Check provider access before retrying.');
+    }
+    throw error;
+  });
   const enabledSymbols = await getEnabledScannerSymbols();
   if (enabledSymbols.length === 0) {
     throw new SignalScanError('No enabled Binance USDT perpetual pairs were found. Sync the coin universe in Admin and retry.');
@@ -86,6 +92,10 @@ export async function runSignalScan(
     await flushSignalNotifications();
   }
   return {
+    startedAt,
+    completedAt: new Date().toISOString(),
+    exchange: result.exchange,
+    source: result.source,
     timeframe,
     scannerStatus: result.status,
     candidates: result.candidates.length,
@@ -93,5 +103,16 @@ export async function runSignalScan(
     batchSize: symbols.length,
     newSignals: persisted.created,
     scannedAt: result.updatedAt,
+    rows: symbols.map(symbol => {
+      const candidate = result.candidates.find(item => item.symbol === symbol);
+      return {
+        symbol, status: candidate?.status ?? 'DATA_UNAVAILABLE',
+        side: candidate?.side ?? 'WAIT',
+        candleCloseAt: candidate?.lastCandleCloseAt ?? null,
+        reason: candidate?.warnings.find(warning => !warning.startsWith('EMA trend is based')) ??
+          candidate?.rationale ?? 'No eligible provider market was returned for this symbol.',
+        setup: candidate?.status === 'READY' ? candidate.setup : null,
+      };
+    }),
   };
 }

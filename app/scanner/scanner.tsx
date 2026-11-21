@@ -6,7 +6,7 @@ import { HighRiskScalping } from './high-risk-scalping';
 import { ScannerTabs } from './scanner-tabs';
 import type { MarketScannerCandidate as ScannerCandidate } from '../../smartexit/apps/api/src/services/market-scanner';
 import { recommendedMaxAgeSeconds } from '../../smartexit/apps/api/src/services/market-scanner';
-import { applyScannerSignalValidity, savedScannerCacheStatus, savedScannerCandidate } from '../../lib/scanner-snapshot';
+import { applyScannerSignalValidity, savedScannerCandidate } from '../../lib/scanner-snapshot';
 import { SignalCountdown } from '../countdown';
 import { scannerSymbolPrefix, type SavedScannerResponse, type ScannerCoverage, type ScannerRank } from '../../lib/scanner-universe';
 
@@ -162,23 +162,23 @@ function StandardSignals({
   const shortSignals = ready.filter((item) => item.side === 'SHORT').length;
   const persistedSetups = ready.filter((item) => signalMetadata?.signals[item.symbol]).length;
   const pageCount = data ? Math.max(1, Math.ceil(data.matchingCount / data.selection.limit)) : 1;
-  const cacheStatus = data && savedScannerCacheStatus(data.savedCount, data.updatedAt, data.configuration.maxAgeSeconds, signalNow);
-  const degraded = cacheStatus === 'STALE_CACHE' || stale > 0 || unavailable > 0;
+  const recentCount = data?.recentUntil?.filter(expiry => Number.isFinite(expiry) && expiry >= signalNow).length ?? 0;
+  const degraded = Boolean(data && recentCount < data.eligibleCount) || stale > 0 || unavailable > 0;
   const statusLabel = !data ? (error ? 'Results unavailable' : 'Loading saved results') :
-    cacheStatus === 'NO_SAVED_RESULTS' ? 'Awaiting first saved scan' : degraded ? 'Stale or partial cache' : 'Recent cached results';
-  const healthLabel = cacheStatus === 'NO_SAVED_RESULTS' ? 'WAITING' : degraded ? 'STALE / PARTIAL' : data ? 'RECENT CACHE' : '—';
+    `${recentCount} / ${data.eligibleCount} eligible recently scanned`;
+  const latestScanLabel = data?.updatedAt ? `Newest saved scan ${new Date(data.updatedAt).toLocaleString()}` : 'No saved scan';
   return <main className="shell">
     <ScannerTabs active={activeTab} onChange={onTabChange} />
     <header className="topbar"><Link className="brand" href="/">ETHCRYPTOHUB</Link><nav className="links"><Link href="/scanner/successful">Successful Signals</Link><Link href="/scanner/history">Signal History</Link><Link href="/scanner/performance">Performance</Link><Link href="/dashboard">Dashboard</Link><Link href="/settings">Settings</Link>{isAdmin && <Link href="/admin">Admin</Link>}<button className="scanner-refresh" onClick={() => void load()} disabled={loading}><span aria-hidden="true">{loading ? '↻' : '⟳'}</span> {loading ? 'Loading…' : 'Refresh results'}</button></nav></header>
     <section className="hero scanner-hero">
       <div className="scanner-eyebrow"><span className={`scanner-live-dot ${degraded ? 'is-warning' : ''}`} />PUBLIC PERPETUAL FUTURES <span className="scanner-eyebrow-divider">/</span> {data ? `${data.exchange} · ${data.market}` : 'SAVED SCANNER RESULTS'}</div>
-      <div className="scanner-heading-row"><div><h1>Market scanner</h1><p className="muted">High-conviction technical setups with transparent market context.</p></div><div className={`scanner-status ${degraded ? 'is-warning' : ''}`}>{statusLabel}</div></div>
+      <div className="scanner-heading-row"><div><h1>Market scanner</h1><p className="muted">High-conviction technical setups with transparent market context.</p></div><div className={`scanner-status ${degraded ? 'is-warning' : ''}`}><span>{statusLabel}{data && <small>{latestScanLabel}</small>}</span></div></div>
     </section>
     <section className="scanner-overview" aria-label="Scanner summary">
       <article className="scanner-stat-card scanner-stat-primary"><span className="scanner-stat-label">Qualified setups on this page</span><strong>{data && coverage !== 'eligible' ? ready.length : '—'}</strong><span className="scanner-stat-foot">{coverage === 'eligible' ? 'Instrument directory' : `${longSignals} long · ${shortSignals} short · ${persistedSetups} stored signals`}</span></article>
       <article className="scanner-stat-card"><span className="scanner-stat-label">Eligible instruments at last sync</span><strong>{data?.eligibleCount ?? '—'}</strong><span className="scanner-stat-foot">{data?.universeSyncedAt ? `Last universe sync ${new Date(data.universeSyncedAt).toLocaleString()}` : 'No verified universe sync time'}</span></article>
       <article className="scanner-stat-card"><span className="scanner-stat-label">Pairs with saved scans</span><strong>{data?.savedCount ?? '—'}</strong><span className="scanner-stat-foot">{timeframe} timeframe · {data?.watchlistCount ?? '—'} fixed research symbols</span></article>
-      <article className="scanner-stat-card"><span className="scanner-stat-label">Saved market data</span><strong className={`scanner-health-value ${degraded ? 'is-warning' : ''}`}>{healthLabel}</strong><span className="scanner-stat-foot">{data?.updatedAt ? `Last saved scan ${new Date(data.updatedAt).toLocaleString()}` : 'No saved scan'}</span></article>
+      <article className="scanner-stat-card"><span className="scanner-stat-label">Recently scanned with valid saved candles</span><strong className={`scanner-health-value ${degraded ? 'is-warning' : ''}`}>{data ? `${recentCount} / ${data.eligibleCount}` : '—'}</strong><span className="scanner-stat-foot">{latestScanLabel}</span></article>
     </section>
     <section className="card stack scanner-panel">
       <div className="scanner-panel-header"><div><h2>Scanner coverage</h2><p className="muted">Browse configured pairs, the fixed research list or saved scans. Changing the view does not start a scan.</p><p className="scanner-research-target" role="note">Standard research target: 95% win rate · unverified objective, not an achieved result.</p><p className="muted" role="status">{lastCheckedAt ? `Saved results checked ${new Date(lastCheckedAt).toLocaleTimeString()}` : 'Checking saved results…'}</p></div>

@@ -24,6 +24,7 @@ const messages: Record<string, string> = {
 export function ScannerEvaluation() {
   const [gate, setGate] = useState<'checking' | 'closed' | 'ready' | 'unavailable'>('checking');
   const [symbols, setSymbols] = useState('BTCUSDT');
+  const [mode, setMode] = useState<'both' | 'high_risk'>('both');
   const [running, setRunning] = useState(false);
   const [error, setError] = useState('');
   const [result, setResult] = useState<Result | null>(null);
@@ -49,7 +50,7 @@ export function ScannerEvaluation() {
       if (!response.ok || !csrf) throw new Error('Secure Admin session is unavailable.');
       const evaluation = await fetch(endpoint, {
         method: 'POST', headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrf },
-        body: JSON.stringify({ symbols: symbols.toUpperCase().split(/[\s,]+/).filter(Boolean) }),
+        body: JSON.stringify({ symbols: symbols.toUpperCase().split(/[\s,]+/).filter(Boolean), mode }),
       });
       const body = await evaluation.json() as { data?: Result; error?: string; providerStatus?: number };
       if (!evaluation.ok || !body.data) {
@@ -68,8 +69,11 @@ export function ScannerEvaluation() {
   return <div className="card stack">
     <h3>On-demand strategy evaluation</h3>
     <p className="muted">Evaluate Standard and High-Risk on closed 5-minute Binance candles. Results stay in this page and are not added to Signal History.</p>
+    <label>Strategy<select value={mode} disabled={running} onChange={event => setMode(event.target.value === 'high_risk' ? 'high_risk' : 'both')}>
+      <option value="both">Standard and High-Risk</option><option value="high_risk">High-Risk only</option>
+    </select></label>
     <label>Symbols, up to three<input value={symbols} maxLength={85} disabled={running} onChange={event => setSymbols(event.target.value)} /></label>
-    <button type="button" disabled={gate !== 'ready' || running} onClick={() => void run()}>Evaluate both strategies</button>
+    <button type="button" disabled={gate !== 'ready' || running} onClick={() => void run()}>Run 5-minute evaluation</button>
     {gate === 'closed' && <p className="muted">Preview market access requires separate approval.</p>}
     {gate === 'unavailable' && <p role="alert">Evaluation readiness is unavailable.</p>}
     {running && <p role="status">Collecting and validating market data for this batch…</p>}
@@ -78,8 +82,10 @@ export function ScannerEvaluation() {
       <p>Evaluated {result.completed} of {result.total} symbols. Started {result.startedAt}. Evaluated {result.evaluatedAt}. Ticker source time {result.quoteObservedAt}.</p>
       {result.rows.map(row => <article key={row.symbol}>
         <h4>{row.symbol}</h4><p>Closed candle {row.candleCloseAt}</p>
-        <p>Standard · {row.standard.status} · {row.standard.reason}</p>
+        {row.standard && <p>Standard · {row.standard.status} · {row.standard.reason}</p>}
         <p>High-Risk · {row.highRisk.status} · {row.highRisk.reason}</p>
+        {row.highRisk.setup && <p>{row.highRisk.setup.side} · Entry zone {row.highRisk.setup.entryZoneLow}–{row.highRisk.setup.entryZoneHigh}
+          {' · '}SL {row.highRisk.setup.stop} · TP1 {row.highRisk.setup.tp1} · TP2 {row.highRisk.setup.tp2}</p>}
       </article>)}
     </div>}
   </div>;

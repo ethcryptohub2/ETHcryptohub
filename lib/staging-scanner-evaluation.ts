@@ -65,10 +65,11 @@ type EvaluationOptions = {
   signal: AbortSignal;
   request?: typeof fetch;
   now?: () => number;
+  mode?: 'both' | 'high_risk';
 };
 
 export async function evaluateStagingScanner(options: EvaluationOptions) {
-  const { symbols, minimumScore, highRisk, signal, request = fetch, now = Date.now } = options;
+  const { symbols, minimumScore, highRisk, signal, request = fetch, now = Date.now, mode = 'both' } = options;
   if (!symbols.length || symbols.length > scannerEvaluationBatchLimit ||
       new Set(symbols).size !== symbols.length || symbols.some(symbol => !/^[A-Z0-9]{1,20}USDT$/.test(symbol))) {
     throw new ScannerEvaluationFailure('INVALID_SYMBOL_BATCH');
@@ -144,26 +145,27 @@ export async function evaluateStagingScanner(options: EvaluationOptions) {
     const url = new URL(String(input));
     return Response.json(rawCandles.get(url.searchParams.get('symbol') ?? '') ?? []);
   }, () => evaluatedAt);
-  const standard = await scanner.scan({
+  const standard = mode === 'both' ? await scanner.scan({
     quoteAsset: 'USDT', timeframe: '5m', symbols, minimumVolume: 10_000_000,
     limit: scannerEvaluationBatchLimit, atrPeriod: 10, multiplier: 3, maxAgeSeconds: 300, minimumScore,
-  });
+  }) : null;
   return {
     startedAt, evaluatedAt: new Date(evaluatedAt).toISOString(), quoteObservedAt: market.updatedAt,
     completed: symbols.length, total: symbols.length, timeframe: '5m' as const,
     rows: symbols.map(symbol => {
       const quote = quotes.get(symbol)!;
       const candles = validated.get(symbol)!;
-      const candidate = standard.candidates.find(item => item.symbol === symbol);
+      const candidate = standard?.candidates.find(item => item.symbol === symbol);
       const setup = quote.volume >= highRisk.minimumQuoteVolume
         ? analyzeHighRiskScalpingSetup({ symbol, timeframe: '5m', candles, price: quote.price, btcDirection, settings: highRisk, now: evaluatedAt })
         : null;
       return { symbol, candleCloseAt: new Date(candles.at(-1)!.closeTime).toISOString(),
-        standard: { status: candidate?.status === 'READY' && candidate.setup ? 'QUALIFIED' : 'WAIT',
+        standard: standard && { status: candidate?.status === 'READY' && candidate.setup ? 'QUALIFIED' : 'WAIT',
           reason: candidate?.rationale ?? 'Standard evaluation returned no candidate', score: candidate?.score.value ?? null,
           setup: candidate?.status === 'READY' ? candidate.setup : null },
         highRisk: { status: setup ? 'QUALIFIED' : 'WAIT', score: setup?.score ?? null, setup,
-          reason: setup ? 'High-Risk qualification passed' : 'High-Risk qualification or volume threshold was not met' } };
+          reason: setup ? 'High-Risk qualification passed' : quote.volume < highRisk.minimumQuoteVolume
+            ? '24-hour quote volume is below the High-Risk minimum' : 'High-Risk breakout, trend, momentum, or score did not qualify' } };
     }),
   };
 }
