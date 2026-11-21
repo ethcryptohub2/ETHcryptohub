@@ -1,0 +1,25 @@
+.controls,
+.fields,
+.markets {
+  display: grid;
+  min-width: 0;
+  gap: 1rem;
+}
+
+.controls { grid-template-columns: repeat(auto-fit, minmax(min(100%, 12rem), 1fr)); align-items: end; }
+.fields { grid-template-columns: repeat(auto-fit, minmax(min(100%, 9rem), 1fr)); }
+.markets { grid-template-columns: repeat(auto-fit, minmax(min(100%, 23rem), 1fr)); }
+
+.controls label { display: grid; gap: .35rem; min-width: 0; }
+.controls input, .controls select { min-width: 0; width: 100%; }
+.controls .watchFilter { display: flex; align-items: center; min-height: 44px; }
+.watchFilter input { width: auto; }
+
+.tokenHeading { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: start; gap: .75rem; }
+.tokenHeading button { min-height: 44px; }
+.contract, .fields dd, .sources a { overflow-wrap: anywhere; }
+.fields dt { color: var(--text-muted); font-size: .85rem; }
+.fields dd { margin: 0; }
+
+.sources { display: grid; gap: .75rem; margin: 0; padding: 0; list-style: none; }
+.sources p { margin: .25rem 0; }

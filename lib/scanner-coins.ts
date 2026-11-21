@@ -1,4 +1,5 @@
 import { pool, query } from './db';
+import type { PoolClient } from 'pg';
 import { TABLE_PAGE_SIZE } from './pagination';
 import {
   fetchBinanceUsdtPerpetuals,
@@ -326,8 +327,8 @@ export async function getScannerCoinUniverse(): Promise<ScannerCoin[]> {
   return result.rows;
 }
 
-export async function getEnabledScannerSymbols(): Promise<string[]> {
-  const coins = await query<ScannerCoin>(
+export async function getEnabledScannerSymbols(queryDb = query): Promise<string[]> {
+  const coins = await queryDb<ScannerCoin>(
     `SELECT id::text, symbol, base_asset, quote_asset, exchange, contract_type,
             trading_status, is_enabled, is_admin_disabled, disable_reason,
             first_listed_at, last_synced_at, updated_at
@@ -470,24 +471,28 @@ export async function saveScannerCandidates(candidates: MarketScannerCandidate[]
   const client = await pool().connect();
   try {
     await client.query('BEGIN');
-    for (const candidate of candidates) {
-      await client.query(
-        `INSERT INTO public.scanner_candidate_snapshots
-          (symbol, timeframe, exchange, candidate_json, scanned_at)
-         VALUES ($1, $2, 'BINANCE', $3::jsonb, NOW())
-         ON CONFLICT (symbol, timeframe) DO UPDATE SET
-           exchange = EXCLUDED.exchange,
-           candidate_json = EXCLUDED.candidate_json,
-           scanned_at = NOW()`,
-        [candidate.symbol, candidate.timeframe, JSON.stringify(candidate)],
-      );
-    }
+    await upsertScannerCandidates(client, candidates);
     await client.query('COMMIT');
   } catch (error) {
     await client.query('ROLLBACK');
     throw error;
   } finally {
     client.release();
+  }
+}
+
+export async function upsertScannerCandidates(client: PoolClient, candidates: MarketScannerCandidate[]) {
+  for (const candidate of candidates) {
+    await client.query(
+      `INSERT INTO public.scanner_candidate_snapshots
+        (symbol, timeframe, exchange, candidate_json, scanned_at)
+       VALUES ($1, $2, 'BINANCE', $3::jsonb, NOW())
+       ON CONFLICT (symbol, timeframe) DO UPDATE SET
+         exchange = EXCLUDED.exchange,
+         candidate_json = EXCLUDED.candidate_json,
+         scanned_at = EXCLUDED.scanned_at`,
+      [candidate.symbol, candidate.timeframe, JSON.stringify(candidate)],
+    );
   }
 }
 

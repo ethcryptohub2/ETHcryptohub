@@ -3,7 +3,9 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { HighRiskScalping } from './high-risk-scalping';
-import { ScannerTabs } from './scanner-tabs';
+import { ScannerTabs, type ScannerTab } from './scanner-tabs';
+import { AlphaIntelligence } from './alpha-intelligence';
+import type { AlphaSnapshot } from '../../lib/alpha-intelligence';
 import type { MarketScannerCandidate as ScannerCandidate } from '../../smartexit/apps/api/src/services/market-scanner';
 import { recommendedMaxAgeSeconds } from '../../smartexit/apps/api/src/services/market-scanner';
 import { applyScannerSignalValidity, savedScannerCandidate } from '../../lib/scanner-snapshot';
@@ -25,12 +27,22 @@ function formatPrice(value: number): string {
   return value.toLocaleString(undefined, { maximumSignificantDigits: 8 });
 }
 
-export function Scanner({ isAdmin, initialTab }: { isAdmin: boolean; initialTab: 'standard' | 'scalping' }) {
-  const [tab, setTab] = useState<'standard' | 'scalping'>(initialTab);
-  const changeTab = useCallback((nextTab: 'standard' | 'scalping') => {
+export function Scanner({ isAdmin, initialTab, alphaSnapshot }: { isAdmin: boolean; initialTab: ScannerTab; alphaSnapshot: AlphaSnapshot }) {
+  const [tab, setTab] = useState<ScannerTab>(initialTab);
+  const [watchlist, setWatchlist] = useState<string[]>([]);
+  const [savedAlpha, setSavedAlpha] = useState(alphaSnapshot);
+  const changeTab = useCallback((nextTab: ScannerTab) => {
     setTab(nextTab);
-    window.history.replaceState(null, '', nextTab === 'scalping' ? '/scanner?tab=scalping' : '/scanner');
+    window.history.replaceState(null, '', nextTab === 'standard' ? '/scanner' : `/scanner?tab=${nextTab}`);
   }, []);
+  const toggleWatchlist = useCallback((id: string) => {
+    setWatchlist(previous => previous.includes(id) ? previous.filter(entry => entry !== id) : [...previous, id]);
+  }, []);
+  if (tab === 'alpha') return <main className="shell">
+    <ScannerTabs active={tab} onChange={changeTab} />
+    <AlphaIntelligence snapshot={savedAlpha} watchlist={watchlist} isAdmin={isAdmin}
+      onSnapshot={setSavedAlpha} onToggleWatchlist={toggleWatchlist} />
+  </main>;
   return tab === 'standard'
     ? <StandardSignals isAdmin={isAdmin} activeTab={tab} onTabChange={changeTab} />
     : <HighRiskScalping activeTab={tab} onTabChange={changeTab} isAdmin={isAdmin} />;
@@ -42,8 +54,8 @@ function StandardSignals({
   onTabChange,
 }: {
   isAdmin: boolean;
-  activeTab: 'standard' | 'scalping';
-  onTabChange: (tab: 'standard' | 'scalping') => void;
+  activeTab: ScannerTab;
+  onTabChange: (tab: ScannerTab) => void;
 }) {
   const [savedData, setData] = useState<SavedScannerResponse | null>(null);
   const [signalMetadata, setSignalMetadata] = useState<SignalMetadata | null>(null);

@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { TABLE_PAGE_SIZE } from '../../lib/pagination';
 import { TablePagination } from './table-pagination';
 import { ScannerEvaluation } from './scanner-evaluation';
+import { ScannerPilotStatus } from './scanner-pilot-status';
 import type { runSignalScan } from '../../lib/signal-scan';
 
 type ScanResult = Awaited<ReturnType<typeof runSignalScan>>;
@@ -188,6 +189,7 @@ export function AdminScannerManagement() {
       </li>)}</ul>
     </section>}
     <ScannerEvaluation />
+    <ScannerPilotStatus />
     {error && <p className="error" role="alert">{error}</p>}
     {notice && <p className="success" role="status">{notice}</p>}
     {!state && !error && <p className="muted">Loading scanner universe…</p>}

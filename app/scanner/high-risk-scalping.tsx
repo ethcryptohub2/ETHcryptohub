@@ -6,7 +6,7 @@ import type { StoredScalpingSignal } from '../../lib/high-risk-scalping-types';
 import { SCALPING_TIMEFRAMES } from '../../lib/high-risk-scalping-types';
 import { formatSignalStatusText, highRiskEntryWindowOpen } from '../../lib/high-risk-scalping-status';
 import { TABLE_PAGE_SIZE } from '../../lib/pagination';
-import { ScannerTabs } from './scanner-tabs';
+import { ScannerTabs, type ScannerTab } from './scanner-tabs';
 
 type Data = {
   active: StoredScalpingSignal[];
@@ -34,8 +34,8 @@ export function HighRiskScalping({
   onTabChange,
   isAdmin,
 }: {
-  activeTab: 'standard' | 'scalping';
-  onTabChange: (tab: 'standard' | 'scalping') => void;
+  activeTab: ScannerTab;
+  onTabChange: (tab: ScannerTab) => void;
   isAdmin: boolean;
 }) {
   const [data, setData] = useState<Data | null>(null);

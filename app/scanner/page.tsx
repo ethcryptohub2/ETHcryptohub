@@ -4,6 +4,8 @@ import { currentUser } from '../../lib/auth';
 import { getSubscriptionEntitlement } from '../../lib/subscriptions';
 import { Scanner } from './scanner';
 import { SubscriptionPanel } from '../subscription-panel';
+import { disabledAlphaSnapshot } from '../../lib/alpha-intelligence';
+import type { ScannerTab } from './scanner-tabs';
 
 export const dynamic = 'force-dynamic';
 export default async function ScannerPage({ searchParams }: { searchParams: Promise<{ tab?: string }> }) {
@@ -18,5 +20,6 @@ export default async function ScannerPage({ searchParams }: { searchParams: Prom
       <SubscriptionPanel paywall />
     </main>;
   }
-  return <Scanner isAdmin={user.role === 'admin'} initialTab={tab === 'scalping' ? 'scalping' : 'standard'} />;
+  const initialTab: ScannerTab = tab === 'scalping' || tab === 'alpha' ? tab : 'standard';
+  return <Scanner isAdmin={user.role === 'admin'} initialTab={initialTab} alphaSnapshot={disabledAlphaSnapshot()} />;
 }

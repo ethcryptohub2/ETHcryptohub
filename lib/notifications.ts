@@ -94,8 +94,8 @@ export function defaultNotificationSystemSettings(): NotificationSystemSettings 
   };
 }
 
-export async function getNotificationSystemSettings(): Promise<NotificationSystemSettings> {
-  const result = await query<{
+export async function getNotificationSystemSettings(queryDb = query): Promise<NotificationSystemSettings> {
+  const result = await queryDb<{
     enabled: boolean;
     validity_minutes: Record<string, unknown>;
     minimum_setup_score: number;
@@ -202,7 +202,7 @@ function stableSignalKey(candidate: MarketScannerCandidate) {
   return `${candidate.symbol}:${candidate.timeframe}:${candidate.side}:${closeAt}`;
 }
 
-async function insertSignal(
+export async function insertSignal(
   client: PoolClient,
   candidate: MarketScannerCandidate,
   settings: NotificationSystemSettings,

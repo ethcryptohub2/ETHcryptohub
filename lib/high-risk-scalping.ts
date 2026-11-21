@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import type { PoolClient } from 'pg';
 import { sendNotification, setVapidDetails } from 'web-push';
 import { pool, query, recordSignalPersistenceFailure, retryDatabaseWrite } from './db';
 import {
@@ -70,8 +71,8 @@ export function defaultHighRiskScalpingSettings(): HighRiskScalpingSettings {
   };
 }
 
-export async function getHighRiskScalpingSettings(): Promise<HighRiskScalpingSettings> {
-  const result = await query<SettingsRow>(
+export async function getHighRiskScalpingSettings(queryDb = query): Promise<HighRiskScalpingSettings> {
+  const result = await queryDb<SettingsRow>(
     `SELECT enabled, enabled_timeframes, minimum_setup_score, minimum_quote_volume,
             minimum_relative_volume, entry_validity_minutes, signal_validity_minutes
        FROM public.high_risk_scalping_settings WHERE singleton = TRUE`,
@@ -307,6 +308,98 @@ async function notifyNewSignal(signalId: string, setup: ScalpingSetup) {
   }));
 }
 
+export async function insertHighRiskSignal(
+  client: PoolClient,
+  setup: NonNullable<ReturnType<typeof analyzeHighRiskScalpingSetup>>,
+  settings: HighRiskScalpingSettings,
+) {
+  const { symbol, timeframe } = setup;
+  const central = await client.query<{ id: string }>(
+    `INSERT INTO public.market_signals (
+       signal_key, scanner_type, exchange, strategy_name, symbol, timeframe, side, setup_score,
+       entry_price, entry_zone_low, entry_zone_high, initial_stop, tp1, tp2, tp3,
+       latest_price, last_candle_close_at, candle_open_at, expires_at, entry_expires_at, entry_status,
+       research_snapshot, source_metadata
+     ) VALUES ($1, 'HIGH_RISK', 'BINANCE', 'HIGH_RISK_SCALPING', $2, $3, $4, $5,
+               $6, $7, $8, $9, $10, $11, NULL, $12, $18, $13,
+               NOW() + ($14 * INTERVAL '1 minute'),
+               NOW() + ($15 * INTERVAL '1 minute'), 'OPEN', $16::JSONB, $17::JSONB)
+     ON CONFLICT DO NOTHING RETURNING id::text`,
+    [
+      `HIGH_RISK:${setup.signalKey}`, symbol, timeframe, setup.side, setup.score,
+      setup.entryPrice, setup.entryZoneLow, setup.entryZoneHigh, setup.stop,
+      setup.tp1, setup.tp2, setup.lastPrice, setup.candleOpenAt,
+      settings.signalValidityMinutes[timeframe], settings.entryValidityMinutes[timeframe],
+      JSON.stringify(setup.context),
+      JSON.stringify({ priceSource: 'BINANCE_USDM_TICKER_LAST_PRICE', market: 'USD-M_PERPETUAL' }),
+      setup.lastCandleCloseAt,
+    ],
+  );
+  if (!central.rowCount) return null;
+  const centralId = central.rows[0]!.id;
+  const legacy = await client.query<{ id: string }>(
+    `INSERT INTO public.high_risk_scalping_signals (
+       signal_key, symbol, timeframe, side, setup_score, entry_price,
+       entry_zone_low, entry_zone_high, initial_stop, tp1, tp2, last_price,
+       candle_open_at, entry_expires_at, expires_at, setup_context
+     ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,
+               NOW() + ($14 * INTERVAL '1 minute'),
+               NOW() + ($15 * INTERVAL '1 minute'), $16::JSONB)
+     ON CONFLICT DO NOTHING RETURNING id::text`,
+    [
+      setup.signalKey, symbol, timeframe, setup.side, setup.score,
+      setup.entryPrice, setup.entryZoneLow, setup.entryZoneHigh, setup.stop,
+      setup.tp1, setup.tp2, setup.lastPrice, setup.candleOpenAt,
+      settings.entryValidityMinutes[timeframe], settings.signalValidityMinutes[timeframe],
+      JSON.stringify(setup.context),
+    ],
+  );
+  if (!legacy.rowCount) throw new Error('Legacy scalping compatibility record could not be persisted.');
+  const legacyId = legacy.rows[0]!.id;
+  await client.query(
+    'UPDATE public.market_signals SET legacy_scalping_signal_id = $2 WHERE id = $1',
+    [centralId, legacyId],
+  );
+  const payload = JSON.stringify({
+    scannerType: 'HIGH_RISK',
+    symbol,
+    timeframe,
+    side: setup.side,
+    score: setup.score,
+  });
+  await client.query(
+    `INSERT INTO public.signal_events (
+       signal_id, idempotency_key, event_type, payload, event_price, metadata
+     ) VALUES
+       ($1, $2, 'SIGNAL_GENERATED', $4::JSONB, $5, $6::JSONB),
+       ($1, $3, 'ENTRY_OPEN', $4::JSONB, $5, $6::JSONB)
+     ON CONFLICT (idempotency_key) DO NOTHING`,
+    [
+      centralId,
+      `HIGH_RISK:${setup.signalKey}:SIGNAL_GENERATED`,
+      `HIGH_RISK:${setup.signalKey}:ENTRY_OPEN`,
+      payload,
+      setup.entryPrice,
+      JSON.stringify({ priceSource: 'BINANCE_USDM_TICKER_LAST_PRICE' }),
+    ],
+  );
+  await client.query(
+    `INSERT INTO public.signal_research_snapshots (
+       signal_id, indicator_snapshot, volume_snapshot, market_structure_snapshot,
+       derivatives_snapshot, sentiment_snapshot, data_sources
+     ) VALUES ($1, $2::JSONB, $3::JSONB, $4::JSONB, '{}'::JSONB, '{}'::JSONB, $5::JSONB)
+     ON CONFLICT (signal_id) DO NOTHING`,
+    [
+      centralId,
+      JSON.stringify(setup.context),
+      JSON.stringify({ relativeVolume: setup.context.relativeVolume }),
+      JSON.stringify({ breakoutLevel: setup.context.breakoutLevel, timeframe, side: setup.side }),
+      JSON.stringify(['BINANCE_USDM_TICKER_LAST_PRICE', 'BINANCE_USDM_KLINES']),
+    ],
+  );
+  return { centralId, legacyId };
+}
+
 export async function runHighRiskScalpingScan(
   request: typeof fetch = globalThis.fetch, now = Date.now(), options: { deliverNotifications?: boolean } = {},
 ) {
@@ -365,97 +458,18 @@ export async function runHighRiskScalpingScan(
             const client = await pool().connect();
             try {
               await client.query('BEGIN');
-              const central = await client.query<{ id: string }>(
-                `INSERT INTO public.market_signals (
-                   signal_key, scanner_type, exchange, strategy_name, symbol, timeframe, side, setup_score,
-                   entry_price, entry_zone_low, entry_zone_high, initial_stop, tp1, tp2, tp3,
-                   latest_price, last_candle_close_at, candle_open_at, expires_at, entry_expires_at, entry_status,
-                   research_snapshot, source_metadata
-                 ) VALUES ($1, 'HIGH_RISK', 'BINANCE', 'HIGH_RISK_SCALPING', $2, $3, $4, $5,
-                           $6, $7, $8, $9, $10, $11, NULL, $12, $18, $13,
-                           NOW() + ($14 * INTERVAL '1 minute'),
-                           NOW() + ($15 * INTERVAL '1 minute'), 'OPEN', $16::JSONB, $17::JSONB)
-                 ON CONFLICT DO NOTHING RETURNING id::text`,
-                [
-                  `HIGH_RISK:${setup.signalKey}`, symbol, timeframe, setup.side, setup.score,
-                  setup.entryPrice, setup.entryZoneLow, setup.entryZoneHigh, setup.stop,
-                  setup.tp1, setup.tp2, setup.lastPrice, setup.candleOpenAt,
-                  settings.signalValidityMinutes[timeframe], settings.entryValidityMinutes[timeframe],
-                  JSON.stringify(setup.context),
-                  JSON.stringify({ priceSource: 'BINANCE_USDM_TICKER_LAST_PRICE', market: 'USD-M_PERPETUAL' }),
-                  setup.lastCandleCloseAt,
-                ],
-              );
-              if (central.rowCount) {
-                centralId = central.rows[0]!.id;
-                const legacy = await client.query<{ id: string }>(
-                  `INSERT INTO public.high_risk_scalping_signals (
-                     signal_key, symbol, timeframe, side, setup_score, entry_price,
-                     entry_zone_low, entry_zone_high, initial_stop, tp1, tp2, last_price,
-                     candle_open_at, entry_expires_at, expires_at, setup_context
-                   ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,
-                             NOW() + ($14 * INTERVAL '1 minute'),
-                             NOW() + ($15 * INTERVAL '1 minute'), $16::JSONB)
-                   ON CONFLICT DO NOTHING RETURNING id::text`,
-              [
-                setup.signalKey, symbol, timeframe, setup.side, setup.score,
-                setup.entryPrice, setup.entryZoneLow, setup.entryZoneHigh, setup.stop,
-                setup.tp1, setup.tp2, setup.lastPrice, setup.candleOpenAt,
-                settings.entryValidityMinutes[timeframe], settings.signalValidityMinutes[timeframe],
-                JSON.stringify(setup.context),
-                ],
-              );
-              if (!legacy.rowCount) throw new Error('Legacy scalping compatibility record could not be persisted.');
-              legacyId = legacy.rows[0]!.id;
-              await client.query(
-                'UPDATE public.market_signals SET legacy_scalping_signal_id = $2 WHERE id = $1',
-                [centralId, legacyId],
-              );
-              const payload = JSON.stringify({
-                scannerType: 'HIGH_RISK',
-                symbol,
-                timeframe,
-                side: setup.side,
-                score: setup.score,
-              });
-              await client.query(
-                `INSERT INTO public.signal_events (
-                   signal_id, idempotency_key, event_type, payload, event_price, metadata
-                 ) VALUES
-                   ($1, $2, 'SIGNAL_GENERATED', $4::JSONB, $5, $6::JSONB),
-                   ($1, $3, 'ENTRY_OPEN', $4::JSONB, $5, $6::JSONB)
-                 ON CONFLICT (idempotency_key) DO NOTHING`,
-                [
-                  centralId,
-                  `HIGH_RISK:${setup.signalKey}:SIGNAL_GENERATED`,
-                  `HIGH_RISK:${setup.signalKey}:ENTRY_OPEN`,
-                  payload,
-                  setup.entryPrice,
-                  JSON.stringify({ priceSource: 'BINANCE_USDM_TICKER_LAST_PRICE' }),
-                ],
-              );
-              await client.query(
-                `INSERT INTO public.signal_research_snapshots (
-                   signal_id, indicator_snapshot, volume_snapshot, market_structure_snapshot,
-                   derivatives_snapshot, sentiment_snapshot, data_sources
-                 ) VALUES ($1, $2::JSONB, $3::JSONB, $4::JSONB, '{}'::JSONB, '{}'::JSONB, $5::JSONB)
-                 ON CONFLICT (signal_id) DO NOTHING`,
-                [
-                  centralId,
-                  JSON.stringify(setup.context),
-                  JSON.stringify({ relativeVolume: setup.context.relativeVolume }),
-                  JSON.stringify({ breakoutLevel: setup.context.breakoutLevel, timeframe, side: setup.side }),
-                  JSON.stringify(['BINANCE_USDM_TICKER_LAST_PRICE', 'BINANCE_USDM_KLINES']),
-                ],
-              );
-              await client.query(
-                `INSERT INTO public.signal_user_entries (user_id, signal_id, entered_at)
-                 SELECT old.user_id, $1, old.updated_at
-                   FROM public.high_risk_scalping_user_states old
-                  WHERE old.signal_id = $2
-                 ON CONFLICT (user_id, signal_id) DO NOTHING`,
-                [centralId, legacyId],
-              );
+              const persisted = await insertHighRiskSignal(client, setup, settings);
+              centralId = persisted?.centralId ?? null;
+              legacyId = persisted?.legacyId ?? null;
+              if (persisted) {
+                await client.query(
+                  `INSERT INTO public.signal_user_entries (user_id, signal_id, entered_at)
+                   SELECT old.user_id, $1, old.updated_at
+                     FROM public.high_risk_scalping_user_states old
+                    WHERE old.signal_id = $2
+                   ON CONFLICT (user_id, signal_id) DO NOTHING`,
+                  [persisted.centralId, persisted.legacyId],
+                );
               }
               await client.query('COMMIT');
             } catch (error) {

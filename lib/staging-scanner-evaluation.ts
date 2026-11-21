@@ -1,4 +1,4 @@
-import { BinanceMarketScannerService, parseCandles } from '../smartexit/apps/api/src/services/market-scanner';
+import { BinanceMarketScannerService, parseCandles, type MarketScannerCandidate } from '../smartexit/apps/api/src/services/market-scanner';
 import type { FuturesMarketSnapshot } from '../smartexit/apps/api/src/services/binance-futures-markets';
 import { analyzeHighRiskScalpingSetup } from './high-risk-scalping';
 import type { HighRiskScalpingSettings } from './high-risk-scalping-types';
@@ -66,6 +66,7 @@ type EvaluationOptions = {
   request?: typeof fetch;
   now?: () => number;
   mode?: 'both' | 'high_risk';
+  onStandardCandidates?: (candidates: MarketScannerCandidate[]) => void;
 };
 
 export async function evaluateStagingScanner(options: EvaluationOptions) {
@@ -149,6 +150,7 @@ export async function evaluateStagingScanner(options: EvaluationOptions) {
     quoteAsset: 'USDT', timeframe: '5m', symbols, minimumVolume: 10_000_000,
     limit: scannerEvaluationBatchLimit, atrPeriod: 10, multiplier: 3, maxAgeSeconds: 300, minimumScore,
   }) : null;
+  if (standard) options.onStandardCandidates?.(standard.candidates);
   return {
     startedAt, evaluatedAt: new Date(evaluatedAt).toISOString(), quoteObservedAt: market.updatedAt,
     completed: symbols.length, total: symbols.length, timeframe: '5m' as const,
