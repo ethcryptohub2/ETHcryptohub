@@ -7,6 +7,7 @@ import { SCALPING_TIMEFRAMES } from '../../lib/high-risk-scalping-types';
 import { formatSignalStatusText, highRiskEntryWindowOpen } from '../../lib/high-risk-scalping-status';
 import { TABLE_PAGE_SIZE } from '../../lib/pagination';
 import { ScannerTabs, type ScannerTab } from './scanner-tabs';
+import { SavedResultsRefresh, useSavedResultsPolling, type RefreshMinutes } from './saved-results-refresh';
 
 type Data = {
   active: StoredScalpingSignal[];
@@ -33,10 +34,14 @@ export function HighRiskScalping({
   activeTab,
   onTabChange,
   isAdmin,
+  refreshMinutes,
+  onRefreshChange,
 }: {
   activeTab: ScannerTab;
   onTabChange: (tab: ScannerTab) => void;
   isAdmin: boolean;
+  refreshMinutes: RefreshMinutes;
+  onRefreshChange: (minutes: RefreshMinutes) => void;
 }) {
   const [data, setData] = useState<Data | null>(null);
   const [pushEnabled, setPushEnabled] = useState<boolean | null>(null);
@@ -54,19 +59,20 @@ export function HighRiskScalping({
   const request = useRef<AbortController | null>(null);
   const now = clock.serverAt + clock.elapsed;
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (replace = false) => {
+    if (request.current && !replace) return;
     request.current?.abort();
     const controller = new AbortController();
     request.current = controller;
+    const timeout = window.setTimeout(() => controller.abort(new DOMException('Saved signals request timed out.', 'TimeoutError')), 12_000);
     setLoading(true);
     setLoadError('');
     const startedAt = performance.now();
     try {
       const response = await fetch('/api/scalping', { credentials: 'same-origin', cache: 'no-store', signal: controller.signal });
       const body = await response.json() as { data?: Data; error?: string; code?: string };
-      if (controller.signal.aborted) return;
+      if (controller.signal.aborted) throw controller.signal.reason;
       if (!response.ok || !body.data || !Number.isSafeInteger(body.data.serverNow) || body.data.serverNow <= 0) {
-        if (response.status === 401 || response.status === 403) setData(null);
         if (body.code === 'SUBSCRIPTION_REQUIRED') throw new Error('An active trial or premium subscription is required for scalping signals.');
         throw new Error(body.error ?? 'High-risk scalping data is unavailable.');
       }
@@ -75,12 +81,14 @@ export function HighRiskScalping({
       setData(body.data);
       setLoadError('');
     } catch (reason) {
-      if (controller.signal.aborted) return;
+      if (controller.signal.aborted && controller.signal.reason?.name !== 'TimeoutError') return;
+      setData(null);
       setLoadError(reason instanceof Error ? reason.message : 'Scalping refresh failed.');
     } finally {
+      window.clearTimeout(timeout);
       if (request.current === controller) {
         request.current = null;
-        if (!controller.signal.aborted) setLoading(false);
+        setLoading(false);
       }
     }
   }, []);
@@ -107,11 +115,13 @@ export function HighRiskScalping({
     document.addEventListener('visibilitychange', updateClock);
     return () => {
       request.current?.abort();
+      request.current = null;
       window.clearTimeout(initial);
       window.clearInterval(clockTimer);
       document.removeEventListener('visibilitychange', updateClock);
     };
   }, [load, loadPreference]);
+  useSavedResultsPolling(load, refreshMinutes);
 
   async function markEntered(signalId: string) {
     setBusy(signalId);
@@ -129,7 +139,7 @@ export function HighRiskScalping({
       });
       const body = await response.json() as { error?: string };
       if (!response.ok) throw new Error(body.error ?? 'Entry status could not be saved.');
-      await load();
+      await load(true);
       setNotice('Marked as entered for your account. No order was placed.');
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : 'Entry status could not be saved.');
@@ -227,6 +237,7 @@ export function HighRiskScalping({
       <div className="links">
         {data && <p className="muted">{data.settings.enabled ? `Enabled timeframes: ${SCALPING_TIMEFRAMES.filter((timeframe) => data.settings.enabledTimeframes.includes(timeframe)).join(', ') || 'none'}` : 'Scalping signal generation is disabled in the saved settings.'}</p>}
         <button type="button" className="button-secondary" disabled={loading} onClick={() => void load()}>{loading ? 'Loading saved signals…' : 'Refresh saved signals'}</button>
+        <SavedResultsRefresh minutes={refreshMinutes} onChange={onRefreshChange} />
         <button type="button" className="button-secondary" disabled={busy !== '' || pushEnabled === null} onClick={() => void togglePush()}>
           {pushEnabled === null ? 'Scalping alert preference unavailable' : pushEnabled ? 'Disable scalping alerts' : 'Enable scalping alerts'}
         </button>

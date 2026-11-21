@@ -11,6 +11,7 @@ import { recommendedMaxAgeSeconds } from '../../smartexit/apps/api/src/services/
 import { applyScannerSignalValidity, savedScannerCandidate } from '../../lib/scanner-snapshot';
 import { SignalCountdown } from '../countdown';
 import { scannerSymbolPrefix, type SavedScannerResponse, type ScannerCoverage, type ScannerRank } from '../../lib/scanner-universe';
+import { SavedResultsRefresh, useSavedResultsPolling, type RefreshMinutes } from './saved-results-refresh';
 
 type SignalMetadata = {
   signals: Record<string, {
@@ -21,14 +22,13 @@ type SignalMetadata = {
 };
 type SignalClock = { serverNow: string; receivedAt: number };
 
-const AUTO_REFRESH_INTERVAL_MS = 30_000;
-
 function formatPrice(value: number): string {
   return value.toLocaleString(undefined, { maximumSignificantDigits: 8 });
 }
 
 export function Scanner({ isAdmin, initialTab, alphaSnapshot }: { isAdmin: boolean; initialTab: ScannerTab; alphaSnapshot: AlphaSnapshot }) {
   const [tab, setTab] = useState<ScannerTab>(initialTab);
+  const [refreshMinutes, setRefreshMinutes] = useState<RefreshMinutes>(2);
   const [watchlist, setWatchlist] = useState<string[]>([]);
   const [savedAlpha, setSavedAlpha] = useState(alphaSnapshot);
   const changeTab = useCallback((nextTab: ScannerTab) => {
@@ -44,18 +44,22 @@ export function Scanner({ isAdmin, initialTab, alphaSnapshot }: { isAdmin: boole
       onSnapshot={setSavedAlpha} onToggleWatchlist={toggleWatchlist} />
   </main>;
   return tab === 'standard'
-    ? <StandardSignals isAdmin={isAdmin} activeTab={tab} onTabChange={changeTab} />
-    : <HighRiskScalping activeTab={tab} onTabChange={changeTab} isAdmin={isAdmin} />;
+    ? <StandardSignals isAdmin={isAdmin} activeTab={tab} onTabChange={changeTab} refreshMinutes={refreshMinutes} onRefreshChange={setRefreshMinutes} />
+    : <HighRiskScalping activeTab={tab} onTabChange={changeTab} isAdmin={isAdmin} refreshMinutes={refreshMinutes} onRefreshChange={setRefreshMinutes} />;
 }
 
 function StandardSignals({
   isAdmin,
   activeTab,
   onTabChange,
+  refreshMinutes,
+  onRefreshChange,
 }: {
   isAdmin: boolean;
   activeTab: ScannerTab;
   onTabChange: (tab: ScannerTab) => void;
+  refreshMinutes: RefreshMinutes;
+  onRefreshChange: (minutes: RefreshMinutes) => void;
 }) {
   const [savedData, setData] = useState<SavedScannerResponse | null>(null);
   const [signalMetadata, setSignalMetadata] = useState<SignalMetadata | null>(null);
@@ -142,23 +146,18 @@ function StandardSignals({
       if (document.visibilityState === 'visible') void load();
     };
     const initial = window.setTimeout(refreshWhenVisible, 0);
-    const timer = window.setInterval(refreshWhenVisible, AUTO_REFRESH_INTERVAL_MS);
     // Age the displayed cache even while a request is slow or never completes.
     const freshnessTimer = window.setInterval(() => {
       if (document.visibilityState === 'visible') setFreshnessNow(performance.now());
     }, 1000);
-    document.addEventListener('visibilitychange', refreshWhenVisible);
-    window.addEventListener('focus', refreshWhenVisible);
     return () => {
       requestInFlight.current?.abort();
       requestInFlight.current = null;
       window.clearTimeout(initial);
-      window.clearInterval(timer);
       window.clearInterval(freshnessTimer);
-      document.removeEventListener('visibilitychange', refreshWhenVisible);
-      window.removeEventListener('focus', refreshWhenVisible);
     };
   }, [load]);
+  useSavedResultsPolling(load, refreshMinutes);
   const signalNow = signalClock
     ? Date.parse(signalClock.serverNow) + Math.max(0, freshnessNow - signalClock.receivedAt)
     : 0;
@@ -195,6 +194,7 @@ function StandardSignals({
     <section className="card stack scanner-panel">
       <div className="scanner-panel-header"><div><h2>Scanner coverage</h2><p className="muted">Browse configured pairs, the fixed research list or saved scans. Changing the view does not start a scan.</p><p className="scanner-research-target" role="note">Standard research target: 95% win rate · unverified objective, not an achieved result.</p><p className="muted" role="status">{lastCheckedAt ? `Saved results checked ${new Date(lastCheckedAt).toLocaleTimeString()}` : 'Checking saved results…'}</p></div>
         <div className="scanner-controls">
+          <SavedResultsRefresh minutes={refreshMinutes} onChange={onRefreshChange} />
           <label>Timeframe<select value={timeframe} onChange={(event) => { setTimeframe(event.target.value as ScannerCandidate['timeframe']); setSelection({ ...selection, page: 1 }); }}><option value="5m">5 minutes</option><option value="15m">15 minutes</option><option value="1h">1 hour</option><option value="4h">4 hours</option></select></label>
           <label>Coverage<select value={coverage} onChange={(event) => setSelection({ ...selection, coverage: event.target.value as ScannerCoverage, rank: null, page: 1 })}><option value="saved">Saved scans</option><option value="eligible">All eligible instruments</option><option value="watchlist">Fixed research watchlist</option></select></label>
           {coverage === 'saved' && <label>Rank at saved scan<select value={rank ?? ''} onChange={(event) => setSelection({ ...selection, rank: (event.target.value || null) as ScannerRank | null, page: 1 })}><option value="">All saved ranks</option><option value="TOP_VOLUME">Top volume</option><option value="TOP_GAINER">Top gainers</option><option value="TOP_LOSER">Top losers</option></select></label>}
