@@ -14,7 +14,7 @@ const scope = z.object({
   environment: z.enum(['DEMO', 'TESTNET']),
 }).strict();
 
-const inputSchema = z.object({
+export const demoRiskAdmissionInputSchema = z.object({
   scope,
   now: timestamp,
   policy: z.object({
@@ -53,6 +53,8 @@ const inputSchema = z.object({
   }).strict(),
 }).strict();
 
+export type DemoRiskInput = z.infer<typeof demoRiskAdmissionInputSchema>;
+
 export type DemoRiskAdmission = { allowed: boolean; reasons: string[] };
 
 const unit = 10n ** 12n;
@@ -69,7 +71,7 @@ function units(value: string): bigint {
  * A future caller must lock and reserve its account limits atomically before dispatch.
  */
 export function evaluateDemoRiskAdmission(candidate: unknown): DemoRiskAdmission {
-  const parsed = inputSchema.safeParse(candidate);
+  const parsed = demoRiskAdmissionInputSchema.safeParse(candidate);
   if (!parsed.success) return { allowed: false, reasons: ['INVALID_OR_INCOMPLETE_RISK_EVIDENCE'] };
   const { account, policy, intent, scope: expected, now } = parsed.data;
   const limit = { notional: units(policy.maximumNotional), dailyLoss: units(policy.maximumDailyLoss) };

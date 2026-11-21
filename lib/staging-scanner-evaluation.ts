@@ -67,6 +67,7 @@ type EvaluationOptions = {
   now?: () => number;
   mode?: 'both' | 'high_risk';
   onStandardCandidates?: (candidates: MarketScannerCandidate[]) => void;
+  beforeProviderRequest?: () => Promise<void>;
 };
 
 export async function evaluateStagingScanner(options: EvaluationOptions) {
@@ -79,7 +80,11 @@ export async function evaluateStagingScanner(options: EvaluationOptions) {
     throw new ScannerEvaluationFailure('HIGH_RISK_5M_DISABLED');
   }
   const startedAt = new Date(now()).toISOString();
-  const tickers = await marketJson(new URL('/fapi/v1/ticker/24hr', origin), request, signal);
+  async function readMarket(url: URL) {
+    await options.beforeProviderRequest?.();
+    return marketJson(url, request, signal);
+  }
+  const tickers = await readMarket(new URL('/fapi/v1/ticker/24hr', origin));
   if (!Array.isArray(tickers) || tickers.length > 5000) throw new ScannerEvaluationFailure('INVALID_PROVIDER_DATA');
   const receivedAt = now();
   const wanted = new Set([...symbols, 'BTCUSDT']);
@@ -104,7 +109,7 @@ export async function evaluateStagingScanner(options: EvaluationOptions) {
   for (const symbol of symbols) {
     const url = new URL('/fapi/v1/klines', origin);
     url.search = new URLSearchParams({ symbol, interval: '5m', limit: String(candleLimit) }).toString();
-    const data = await marketJson(url, request, signal);
+    const data = await readMarket(url);
     const candles = parseCandles(data);
     if (!Array.isArray(data) || data.length > candleLimit || !candles ||
       !data.every((row, index) => Array.isArray(row) && row[0] === candles[index]?.openTime &&

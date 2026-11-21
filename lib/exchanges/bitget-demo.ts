@@ -126,22 +126,43 @@ const orderResponse = z.object({
   cumExecQty: nonnegative,
   price: z.union([nonnegative, z.literal('')]),
 });
-const cancellationResponse = z.object({ orderId, clientOid: z.string().max(128) });
+const orderAcknowledgment = z.object({ orderId, clientOid: z.string().max(128) });
+const accountSettings = z.object({ accountMode: z.string(), holdMode: z.string() });
+
+function amount(value: string) {
+  const [integer, fraction = ''] = value.split('.');
+  return { units: BigInt(integer + fraction), scale: fraction.length };
+}
+
+function align(left: ReturnType<typeof amount>, right: ReturnType<typeof amount>) {
+  const scale = Math.max(left.scale, right.scale);
+  return [left.units * 10n ** BigInt(scale - left.scale), right.units * 10n ** BigInt(scale - right.scale)] as const;
+}
 
 function compareAmounts(left: string, right: string) {
-  const [leftInteger, leftFraction = ''] = left.split('.');
-  const [rightInteger, rightFraction = ''] = right.split('.');
-  const scale = Math.max(leftFraction.length, rightFraction.length);
-  const leftUnits = BigInt(leftInteger + leftFraction.padEnd(scale, '0'));
-  const rightUnits = BigInt(rightInteger + rightFraction.padEnd(scale, '0'));
+  const [leftUnits, rightUnits] = align(amount(left), amount(right));
   return leftUnits < rightUnits ? -1 : leftUnits > rightUnits ? 1 : 0;
+}
+
+function isStepMultiple(value: string, step: string) {
+  const [units, stepUnits] = align(amount(value), amount(step));
+  return units % stepUnits === 0n;
+}
+
+function meetsMinimumNotional(quantity: string, price: string, minimum: string) {
+  const qty = amount(quantity);
+  const px = amount(price);
+  const [notional, required] = align({ units: qty.units * px.units, scale: qty.scale + px.scale }, amount(minimum));
+  return notional >= required;
 }
 
 const BITGET_FIXTURE_ROUTES = {
   balance: '/api/v3/account/assets',
+  settings: '/api/v3/account/settings',
   instruments: '/api/v3/market/instruments',
   positions: '/api/v3/position/current-position',
   order: '/api/v3/trade/order-info',
+  place: '/api/v3/trade/place-order',
   cancel: '/api/v3/trade/cancel-order',
 } as const;
 
@@ -158,13 +179,13 @@ type FixtureRequest = Readonly<{
 export function createBitgetDemoFixtureAdapter(
   credentials: ExchangeCredentials & { environment: ExchangeEnvironment },
   options: {
-    mode: 'MOCK_READY';
+    mode: 'MOCK_READY' | 'MOCK_LIMIT_LIFECYCLE';
     respond: (fixture: FixtureRequest) => Promise<{ status: number; body: unknown }>;
     now: () => number;
   },
 ) {
   if (
-    credentials?.environment !== 'DEMO' || options?.mode !== 'MOCK_READY' ||
+    credentials?.environment !== 'DEMO' || !options || !['MOCK_READY', 'MOCK_LIMIT_LIFECYCLE'].includes(options.mode) ||
     typeof options.respond !== 'function' || typeof options.now !== 'function' ||
     ![credentials.apiKey, credentials.apiSecret, credentials.passphrase].every(
       (value) => typeof value === 'string' && /^fixture-[a-z0-9-]{1,60}$/.test(value),
@@ -173,8 +194,9 @@ export function createBitgetDemoFixtureAdapter(
     throw new BitgetDemoError('Bitget fixtures require Demo mode and synthetic credentials.', 400);
   }
   const { apiKey, apiSecret, passphrase } = credentials;
-  const { respond, now } = options;
+  const { respond, now, mode } = options;
   const attemptedCancellations = new Set<string>();
+  const attemptedEntries = new Set<string>();
 
   async function request<T>(
     route: keyof typeof BITGET_FIXTURE_ROUTES,
@@ -188,7 +210,7 @@ export function createBitgetDemoFixtureAdapter(
     }
     const path = BITGET_FIXTURE_ROUTES[route];
     const timestamp = String(clock);
-    const method = route === 'cancel' ? 'POST' : 'GET';
+    const method = route === 'cancel' || route === 'place' ? 'POST' : 'GET';
     let response: Awaited<ReturnType<typeof respond>>;
     try {
       response = await respond({
@@ -257,6 +279,16 @@ export function createBitgetDemoFixtureAdapter(
     };
   }
 
+  async function reconcileOrder(expectedSymbol: string, id: string): Promise<ExchangeOrder | null> {
+    try {
+      return await lookupOrder(expectedSymbol, id, 'clientOid');
+    } catch (error) {
+      // Absence never authorizes retrying an ambiguous submission.
+      if (error instanceof BitgetDemoError && error.code === 'ORDER_NOT_FOUND') return null;
+      throw error;
+    }
+  }
+
   return {
     exchange: 'BITGET' as const,
     environment: 'DEMO' as const,
@@ -267,7 +299,7 @@ export function createBitgetDemoFixtureAdapter(
       instruments: true,
       positions: true,
       orderStatus: true,
-      orderSubmission: false,
+      orderSubmission: mode === 'MOCK_LIMIT_LIFECYCLE',
       cancellation: true,
       protection: false,
       reconciliation: true,
@@ -313,6 +345,59 @@ export function createBitgetDemoFixtureAdapter(
       }));
     },
     getOrderStatus: (expectedSymbol: string, id: string) => lookupOrder(expectedSymbol, id, 'orderId'),
+    ...(mode === 'MOCK_LIMIT_LIFECYCLE' ? { async placeLimitOrder(input: {
+      symbol: string; side: 'BUY' | 'SELL'; quantity: string; price: string;
+      clientOrderId: string; reduceOnly?: boolean;
+    }) {
+      const { symbol: expectedSymbol, side, quantity, price, clientOrderId: id, reduceOnly } = input;
+      if (!symbol.safeParse(expectedSymbol).success || !clientOrderId.safeParse(id).success ||
+          (side !== 'BUY' && side !== 'SELL') || (reduceOnly !== undefined && reduceOnly !== false) ||
+          !positive.safeParse(quantity).success || !positive.safeParse(price).success) {
+        throw new BitgetDemoError('Invalid Bitget fixture limit entry.', 400);
+      }
+      function matches(order: ExchangeOrder | null): order is ExchangeOrder {
+        return order !== null && order.side === side && order.type === 'LIMIT' && order.price !== null &&
+          compareAmounts(order.quantity, quantity) === 0 && compareAmounts(order.price, price) === 0;
+      }
+      const existing = await reconcileOrder(expectedSymbol, id);
+      if (existing) {
+        if (!matches(existing)) throw new BitgetDemoError('Bitget client order ID belongs to a different payload.', 409);
+        return existing;
+      }
+      const settings = await request('settings', '', accountSettings);
+      if (settings.accountMode !== 'unified' || settings.holdMode !== 'one_way_mode') {
+        throw new BitgetDemoError('Bitget fixture entry requires Unified Account and one-way mode.', 409);
+      }
+      const instruments = (await request('instruments', `category=${category}`, instrumentsResponse))
+        .filter(item => item.symbol === expectedSymbol);
+      const instrument = instruments[0];
+      if (instruments.length !== 1 || !instrument || instrument.status !== 'online' ||
+          !isStepMultiple(quantity, instrument.quantityMultiplier) || !isStepMultiple(price, instrument.priceMultiplier) ||
+          compareAmounts(quantity, instrument.minOrderQty) < 0 ||
+          compareAmounts(instrument.maxOrderQty, '0') <= 0 || compareAmounts(quantity, instrument.maxOrderQty) > 0 ||
+          !meetsMinimumNotional(quantity, price, instrument.minOrderAmount)) {
+        throw new BitgetDemoError('Bitget fixture entry violates verified instrument filters.', 422);
+      }
+      if (attemptedEntries.has(id)) {
+        throw new BitgetDemoError('Bitget fixture entry was already attempted. Reconcile the original order.', 409);
+      }
+      attemptedEntries.add(id);
+      try {
+        const body = JSON.stringify({
+          category, symbol: expectedSymbol, side: side === 'BUY' ? 'buy' : 'sell',
+          orderType: 'limit', timeInForce: 'gtc', qty: quantity, price, clientOid: id, reduceOnly: 'no',
+        });
+        const accepted = await request('place', '', orderAcknowledgment, body);
+        if (accepted.clientOid === id) {
+          const confirmed = await reconcileOrder(expectedSymbol, id);
+          if (matches(confirmed) && confirmed.exchangeOrderId === accepted.orderId) return confirmed;
+        }
+      } catch (error) {
+        throw new BitgetDemoError('Bitget fixture entry could not be confirmed. Reconcile the original order.',
+          error instanceof BitgetDemoError && error.status === 429 ? 429 : 502);
+      }
+      throw new BitgetDemoError('Bitget fixture entry could not be confirmed. Reconcile the original order.', 409);
+    } } : {}),
     async cancelOrder(expectedSymbol: string, id: string): Promise<void> {
       const original = await lookupOrder(expectedSymbol, id, 'orderId');
       if (original.status === 'cancelled') return;
@@ -325,7 +410,7 @@ export function createBitgetDemoFixtureAdapter(
       attemptedCancellations.add(id);
       try {
         const body = JSON.stringify({ orderId: id, category });
-        const accepted = await request('cancel', '', cancellationResponse, body);
+        const accepted = await request('cancel', '', orderAcknowledgment, body);
         if (accepted.orderId === id && (accepted.clientOid || null) === original.clientOrderId) {
           const terminal = await lookupOrder(expectedSymbol, id, 'orderId');
           if (terminal.status === 'cancelled' && terminal.clientOrderId === original.clientOrderId &&
@@ -341,14 +426,6 @@ export function createBitgetDemoFixtureAdapter(
       }
       throw new BitgetDemoError('Bitget fixture cancellation could not be confirmed. Reconcile the original order.', 409);
     },
-    async reconcileOrder(expectedSymbol: string, id: string): Promise<ExchangeOrder | null> {
-      try {
-        return await lookupOrder(expectedSymbol, id, 'clientOid');
-      } catch (error) {
-        // An absent client ID is still unresolved, including after an ambiguous submission.
-        if (error instanceof BitgetDemoError && error.code === 'ORDER_NOT_FOUND') return null;
-        throw error;
-      }
-    },
+    reconcileOrder,
   };
 }

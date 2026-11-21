@@ -206,7 +206,7 @@ export type AdminDemoProviderRepository = {
     provider: AdminDemoProvider,
     credential: AdminDemoProviderCredentialInput,
   ): Promise<AdminDemoProviderCredentialStatus>;
-  revokeCredential(adminUserId: number, provider: AdminDemoProvider): Promise<boolean>;
+  revokeCredential(adminUserId: number, provider: AdminDemoProvider, options?: { erase?: boolean }): Promise<boolean>;
   listSessions(
     adminUserId: number,
     provider: AdminDemoProvider,

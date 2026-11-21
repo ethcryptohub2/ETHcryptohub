@@ -205,20 +205,21 @@ type OkxDemoAdapter = ExchangeAdapter & {
 export function createOkxDemoAdapter(
   credentials: ExchangeCredentials,
   transport?: typeof fetch,
-  fixtureMode?: 'MOCK_CANCELLATION',
+  fixtureMode?: 'MOCK_CANCELLATION' | 'MOCK_LIMIT_LIFECYCLE',
 ): OkxDemoAdapter {
   assertCredential(credentials?.apiKey, 'API key');
   assertCredential(credentials?.apiSecret, 'API secret');
   assertCredential(credentials?.passphrase, 'API passphrase');
   if (fixtureMode !== undefined && (
-    fixtureMode !== 'MOCK_CANCELLATION' || !transport || transport === fetch ||
+    !['MOCK_CANCELLATION', 'MOCK_LIMIT_LIFECYCLE'].includes(fixtureMode) || !transport || transport === fetch ||
     ![credentials.apiKey, credentials.apiSecret, credentials.passphrase].every(
       (value) => /^fixture-[a-z0-9-]{1,60}$/.test(value),
     )
   )) {
-    throw new OkxDemoError('OKX mock cancellation requires synthetic credentials and an injected transport.', 422);
+    throw new OkxDemoError('OKX mock lifecycle requires synthetic credentials and an injected transport.', 422);
   }
   const attemptedCancellations = new Set<string>();
+  const attemptedEntries = new Set<string>();
 
   async function request(
     method: 'GET' | 'POST',
@@ -342,7 +343,7 @@ export function createOkxDemoAdapter(
     };
   }
 
-  return {
+  const adapter: OkxDemoAdapter = {
     exchange: 'OKX',
     environment: 'DEMO',
     capabilities: OKX_DEMO_CAPABILITIES,
@@ -463,9 +464,59 @@ export function createOkxDemoAdapter(
     async getExecutionHistory() { return unsupported('execution-history reads'); },
     async setLeverage() { return unsupported('leverage changes'); },
     async placeMarketOrder() { return unsupported('market entries'); },
-    async placeLimitOrder() { return unsupported('limit entries'); },
+    async placeLimitOrder(input) {
+      if (fixtureMode !== 'MOCK_LIMIT_LIFECYCLE') return unsupported('limit entries');
+      const { symbol, side, quantity, price, clientOrderId: id, reduceOnly } = input;
+      if (!swapId.safeParse(symbol).success || !clientOrderId.safeParse(id).success ||
+          (side !== 'BUY' && side !== 'SELL') || (reduceOnly !== undefined && reduceOnly !== false) ||
+          !orderAmount.safeParse(quantity).success || !orderAmount.safeParse(price).success ||
+          !isPositiveDecimal(quantity) || !isPositiveDecimal(price)) {
+        throw new OkxDemoError('Invalid OKX fixture limit entry.', 422);
+      }
+      function matches(order: ExchangeOrder | null): order is ExchangeOrder {
+        return order !== null && order.side === side && order.type === 'LIMIT' && order.price !== null &&
+          compareDecimals(order.quantity, quantity) === 0 && compareDecimals(order.price, price) === 0;
+      }
+      const existing = await lookupOrder(symbol, id, 'clOrdId');
+      if (existing) {
+        if (!matches(existing)) throw new OkxDemoError('OKX client order ID belongs to a different payload.', 409);
+        return existing;
+      }
+      const configuration = await getRawAccountConfiguration();
+      if (configuration.acctLv !== '2' || configuration.posMode !== 'net_mode') {
+        throw new OkxDemoError('OKX fixture entry requires Futures account and net position mode.', 409);
+      }
+      const instruments = (await adapter.getMarketInstruments()).filter(item => item.exchangeSymbol === symbol);
+      const instrument = instruments[0];
+      if (instruments.length !== 1 || !instrument || instrument.status !== 'live' ||
+          instrument.quoteAsset !== 'USDT' || !instrument.maximumQuantity ||
+          !isStepMultiple(quantity, instrument.quantityStep) || !isStepMultiple(price, instrument.tickSize) ||
+          compareDecimals(quantity, instrument.minimumQuantity) === -1 ||
+          compareDecimals(quantity, instrument.maximumQuantity) === 1) {
+        throw new OkxDemoError('OKX fixture entry violates verified instrument filters.', 422);
+      }
+      if (attemptedEntries.has(id)) {
+        throw new OkxDemoError('OKX fixture entry was already attempted. Reconcile the original order.', 409);
+      }
+      attemptedEntries.add(id);
+      try {
+        const rows = await request('POST', '/api/v5/trade/order', {
+          instId: symbol, tdMode: 'cross', posSide: 'net', side: side === 'BUY' ? 'buy' : 'sell',
+          ordType: 'limit', px: price, sz: quantity, clOrdId: id,
+        }, true);
+        const acknowledged = cancellationAcknowledgment.safeParse(rows[0]);
+        if (rows.length === 1 && acknowledged.success && acknowledged.data.clOrdId === id) {
+          const confirmed = await lookupOrder(symbol, id, 'clOrdId');
+          if (matches(confirmed) && confirmed.exchangeOrderId === acknowledged.data.ordId) return confirmed;
+        }
+      } catch (error) {
+        throw new OkxDemoError('OKX fixture entry could not be confirmed. Reconcile the original order.',
+          error instanceof OkxDemoError && error.status === 429 ? 429 : 502);
+      }
+      throw new OkxDemoError('OKX fixture entry could not be confirmed. Reconcile the original order.', 409);
+    },
     async cancelOrder(symbol, orderId) {
-      if (fixtureMode !== 'MOCK_CANCELLATION') return unsupported('order cancellation');
+      if (fixtureMode !== 'MOCK_CANCELLATION' && fixtureMode !== 'MOCK_LIMIT_LIFECYCLE') return unsupported('order cancellation');
       const original = await lookupOrder(symbol, orderId, 'ordId');
       if (original?.status === 'CANCELED' || original?.status === 'MMP_CANCELED') return;
       if (!original || !['LIVE', 'PARTIALLY_FILLED'].includes(original.status)) {
@@ -506,4 +557,5 @@ export function createOkxDemoAdapter(
     // A null result is an unresolved lookup, never authority to resubmit.
     reconcileOrder: (symbol, orderId) => lookupOrder(symbol, orderId, 'clOrdId'),
   };
+  return adapter;
 }

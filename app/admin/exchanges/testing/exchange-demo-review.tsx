@@ -8,6 +8,7 @@ import {
   type AdminDemoProvider,
 } from '../../../../lib/admin-demo-provider-contract';
 import styles from './exchange-demo-review.module.css';
+import { DemoCredentialStorage } from './demo-credential-storage';
 
 const providerDetails = {
   BINANCE: { name: 'Binance USD-M', passphrase: false, fixtures: 'Account, instruments, order and protection lifecycle' },
@@ -58,23 +59,7 @@ export function ExchangeDemoReview() {
       </section>
 
       <div className={styles.columns}>
-        <section className="card" aria-labelledby="demo-credentials-heading">
-          <h2 id="demo-credentials-heading">Credentials</h2>
-          <p id="demo-credential-reason" className="muted">
-            Blocked pending encrypted storage verification and {name} credential setup approval.
-          </p>
-          <fieldset disabled className={styles.credentialFields} aria-describedby="demo-credential-reason">
-            <legend className={styles.visuallyHidden}>{name} {environment} credentials</legend>
-            <label className={styles.field}>API key<input type="password" autoComplete="off" /></label>
-            <label className={styles.field}>API secret<input type="password" autoComplete="off" /></label>
-            {passphrase && <label className={styles.field}>Passphrase<input type="password" autoComplete="off" /></label>}
-            <div className={styles.actions}>
-              <button type="button">Save credentials</button>
-              <button type="button" className="button-secondary">Disable credential</button>
-              <button type="button" className="button-secondary">Remove credential</button>
-            </div>
-          </fieldset>
-        </section>
+        <DemoCredentialStorage key={provider} provider={provider} environment={environment} name={name} passphrase={passphrase} />
 
         <section className="card" aria-labelledby="demo-approvals-heading">
           <h2 id="demo-approvals-heading">{name} approvals</h2>

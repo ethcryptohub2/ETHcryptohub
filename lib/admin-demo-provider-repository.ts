@@ -335,7 +335,7 @@ function sanitizeAuditDetails(
       if (permitted.length > 0) safe.permittedActions = permitted;
       continue;
     }
-    if (['existingProtectionRetained', 'partialExitSubmitted', 'protectionRemovalRequested'].includes(key) &&
+    if (['existingProtectionRetained', 'partialExitSubmitted', 'protectionRemovalRequested', 'encryptedValuesRemoved'].includes(key) &&
         typeof value === 'boolean') {
       safe[key] = value;
       continue;
@@ -668,10 +668,46 @@ export function createAdminDemoProviderRepository(
       return getCredentialStatus(adminUserId, provider);
     },
 
-    async revokeCredential(adminUserId, provider) {
+    async revokeCredential(adminUserId, provider, options) {
       assertAdmin(adminUserId);
       const environment = assertProvider(provider);
       return transaction(async (tx) => {
+        if (options?.erase) {
+          const identity = await tx<{ is_active: boolean } & Record<string, unknown>>(
+            `SELECT is_active FROM public.admin_demo_identities
+              WHERE admin_user_id = $1 AND admin_scope = 'ADMIN' FOR UPDATE`, [adminUserId],
+          );
+          if (!identity.rows[0]?.is_active) throw new Error('Admin Demo identity is unavailable or inactive.');
+          const open = await tx(
+            `SELECT 1 FROM public.admin_demo_exchange_sessions
+              WHERE admin_user_id = $1 AND admin_scope = 'ADMIN'
+                AND provider = $2::public.admin_demo_provider AND environment = $3
+                AND session_status IN ('CREATED', 'AUTHORIZED', 'RUNNING', 'RECONCILIATION_REQUIRED')
+              UNION ALL
+             SELECT 1 FROM public.admin_demo_exchange_executions
+              WHERE admin_user_id = $1 AND admin_scope = 'ADMIN'
+                AND provider = $2::public.admin_demo_provider AND environment = $3
+                AND execution_status NOT IN ('CLOSED', 'FAILED', 'REVOKED')
+              LIMIT 1`, [adminUserId, provider, environment],
+          );
+          if (open.rows.length) throw new Error('Settle active sessions and executions before removing credentials.');
+          const erased = await tx(
+            `UPDATE public.admin_demo_exchange_credentials
+                SET api_key_ciphertext = '', secret_key_ciphertext = '', passphrase_ciphertext = NULL,
+                    is_enabled = FALSE, revoked_at = COALESCE(revoked_at, CURRENT_TIMESTAMP),
+                    updated_at = CURRENT_TIMESTAMP
+              WHERE admin_user_id = $1 AND admin_scope = 'ADMIN'
+                AND provider = $2::public.admin_demo_provider AND environment = $3
+                AND (revoked_at IS NULL OR api_key_ciphertext <> '' OR secret_key_ciphertext <> ''
+                     OR passphrase_ciphertext IS NOT NULL)`, [adminUserId, provider, environment],
+          );
+          if (!erased.rowCount) return false;
+          await appendAuditWith(tx, {
+            adminUserId, provider, environment, eventType: 'CREDENTIAL_REVOKED',
+            eventStatus: 'SUCCEEDED', safeDetails: { environment, encryptedValuesRemoved: true },
+          });
+          return true;
+        }
         const result = await tx<{ id: string } & Record<string, unknown>>(
           `UPDATE public.admin_demo_exchange_credentials
               SET is_enabled = FALSE, revoked_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP

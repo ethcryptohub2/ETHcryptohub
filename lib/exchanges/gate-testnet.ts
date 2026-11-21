@@ -13,7 +13,7 @@ const GATE_FUTURES_TESTNET_REST_URL = 'https://api-testnet.gateapi.io/api/v4';
 const SETTLE_CURRENCY = 'usdt';
 const REQUEST_TIMEOUT_MS = 10_000;
 const orderNotFound = Symbol('Gate order not found');
-type GateOrderRequestMethod = 'GET' | 'DELETE';
+type GateOrderRequestMethod = 'GET' | 'DELETE' | 'POST';
 
 export const GATE_TESTNET_DOCUMENTATION_URL = 'https://www.gate.com/docs/developers/apiv4/en/';
 export const GATE_TESTNET_ACCESS_URL_DOCUMENTATION =
@@ -58,6 +58,13 @@ const futuresSymbol = z.string().regex(/^[A-Z0-9]{1,24}_USDT$/);
 const exchangeOrderId = z.string().regex(/^[1-9]\d{0,18}$/);
 const clientOrderId = z.string().regex(/^t-[A-Za-z0-9_.-]{1,28}$/);
 const decimal = z.string().regex(/^-?\d{1,30}(?:\.\d{1,30})?$/);
+const fixtureEntrySchema = z.object({
+  symbol: futuresSymbol,
+  side: z.enum(['BUY', 'SELL']),
+  quantity: decimal,
+  price: decimal,
+  clientOrderId,
+}).strict();
 const orderSchema = z.object({
   id: exchangeOrderId,
   contract: futuresSymbol,
@@ -185,13 +192,14 @@ export type GateTestnetAdapter = {
   getOrderStatus(symbol: string, orderId: string): Promise<GateTestnetOrder | null>;
   reconcileOrder(symbol: string, clientOrderId: string): Promise<GateTestnetOrder | null>;
   cancelOrder?: (symbol: string, orderId: string) => Promise<GateTestnetOrder>;
+  placeFixtureLimitOrder?: (order: z.infer<typeof fixtureEntrySchema>) => Promise<GateTestnetOrder>;
 };
 
 export function createGateTestnetAdapter(
   credentials: ExchangeCredentials,
   environment: ExchangeEnvironment = 'TESTNET',
   transport?: typeof fetch,
-  fixtureMode?: 'MOCK_CANCELLATION',
+  fixtureMode?: 'MOCK_CANCELLATION' | 'MOCK_LIMIT_LIFECYCLE',
 ): GateTestnetAdapter {
   if (environment !== 'TESTNET') {
     throw new GateTestnetError('Gate adapter is pinned to TESTNET; Live and Demo environments are unavailable.', 422);
@@ -201,12 +209,13 @@ export function createGateTestnetAdapter(
     throw new GateTestnetError('Gate Futures Testnet API key and secret are required.', 422);
   }
   if (fixtureMode !== undefined && (
-    fixtureMode !== 'MOCK_CANCELLATION' || !transport || transport === fetch ||
+    !['MOCK_CANCELLATION', 'MOCK_LIMIT_LIFECYCLE'].includes(fixtureMode) || !transport || transport === fetch ||
     ![credentials.apiKey, credentials.apiSecret].every((value) => /^fixture-[a-z0-9-]{1,60}$/.test(value))
   )) {
-    throw new GateTestnetError('Gate Futures Testnet mock cancellation requires synthetic credentials and an injected transport.', 422);
+    throw new GateTestnetError('Gate Futures Testnet mock orders require synthetic credentials and an injected transport.', 422);
   }
   const attemptedCancellations = new Set<string>();
+  const attemptedEntries = new Set<string>();
 
   async function request(
     path: string,
@@ -214,6 +223,8 @@ export function createGateTestnetAdapter(
     privateRequest = true,
     isOrderLookup = false,
     method: GateOrderRequestMethod = 'GET',
+    body?: string,
+    decimalSize = isOrderLookup,
   ) {
     const queryString = sortedQuery(params);
     const requestPath = `/api/v4${path}`;
@@ -222,7 +233,7 @@ export function createGateTestnetAdapter(
       Accept: 'application/json',
       'Content-Type': 'application/json',
     };
-    if (isOrderLookup) headers['X-Gate-Size-Decimal'] = '1';
+    if (decimalSize) headers['X-Gate-Size-Decimal'] = '1';
     if (privateRequest) {
       const timestamp = Math.floor(Date.now() / 1000).toString();
       headers.KEY = credentials.apiKey;
@@ -233,6 +244,7 @@ export function createGateTestnetAdapter(
         requestPath,
         queryString,
         timestamp,
+        body,
       );
     }
 
@@ -240,6 +252,7 @@ export function createGateTestnetAdapter(
     try {
       response = await (transport ?? fetch)(url, {
         method,
+        body,
         headers,
         cache: 'no-store',
         redirect: 'error',
@@ -298,6 +311,10 @@ export function createGateTestnetAdapter(
     }
     const data = await request(`/futures/${SETTLE_CURRENCY}/orders/${identifier}`, {}, true, true, method);
     if (data === orderNotFound) return null;
+    return decodeOrder(data, symbol, identifier, kind);
+  }
+
+  function decodeOrder(data: unknown, symbol: string, identifier: string, kind: 'id' | 'text'): GateTestnetOrder {
     const parsed = orderSchema.safeParse(data);
     if (!parsed.success || parsed.data.contract !== symbol || parsed.data[kind] !== identifier) {
       throw new GateTestnetError('Gate Futures Testnet order response could not be matched to the request.', 502);
@@ -325,6 +342,66 @@ export function createGateTestnetAdapter(
       finishReason: order.finish_as || null,
       reduceOnly: order.is_reduce_only ?? null,
     };
+  }
+
+  async function placeFixtureLimitOrder(input: z.infer<typeof fixtureEntrySchema>) {
+    const parsed = fixtureEntrySchema.safeParse(input);
+    if (!parsed.success || compareAmounts(parsed.data.quantity, '0') <= 0 || compareAmounts(parsed.data.price, '0') <= 0) {
+      throw new GateTestnetError('Invalid Gate Futures Testnet mock limit-entry intent.', 422);
+    }
+    const { symbol, side, quantity, price, clientOrderId: clientId } = parsed.data;
+    const matches = (order: GateTestnetOrder | null): order is GateTestnetOrder => !!order &&
+      order.clientOrderId === clientId && order.side === side && order.type === 'LIMIT' &&
+      order.reduceOnly === false && order.price !== null && compareAmounts(order.price, price) === 0 &&
+      compareAmounts(order.quantity, quantity) === 0;
+    const existing = await lookupOrder(symbol, clientId, 'text');
+    if (existing) {
+      if (!matches(existing)) throw new GateTestnetError('Gate Futures Testnet mock limit-entry replay conflicts with the original intent.', 409);
+      return existing;
+    }
+    if (attemptedEntries.has(clientId)) {
+      throw new GateTestnetError('Gate Futures Testnet mock entry was already attempted. Reconcile the original order.', 409);
+    }
+    const account = await getAccount();
+    if (account.currency !== 'USDT' || account.in_dual_mode !== false) {
+      throw new GateTestnetError('Gate Futures Testnet mock limit entry requires an explicitly verified one-way USDT account.', 409);
+    }
+    const contract = contractSchema.safeParse(await request(
+      `/futures/${SETTLE_CURRENCY}/contracts/${symbol}`, {}, false, false, 'GET', undefined, true,
+    ));
+    if (!contract.success || contract.data.name !== symbol || contract.data.in_delisting !== false ||
+        contract.data.trade_status !== 'tradable' ||
+        !decimal.safeParse(contract.data.order_price_round).success ||
+        !decimal.safeParse(contract.data.order_size_min).success || !decimal.safeParse(contract.data.order_size_max).success) {
+      throw new GateTestnetError('Gate Futures Testnet mock contract limits are unavailable.', 409);
+    }
+    const [priceUnits, tick] = scaledAmounts(price, contract.data.order_price_round);
+    if (tick <= 0n || priceUnits % tick !== 0n ||
+        compareAmounts(quantity, contract.data.order_size_min) < 0 ||
+        compareAmounts(quantity, contract.data.order_size_max!) > 0 ||
+        (contract.data.enable_decimal !== true && !/^\d+$/.test(quantity))) {
+      throw new GateTestnetError('Gate Futures Testnet mock order violates contract bounds or precision.', 422);
+    }
+    // The Set check after awaiting metadata is the in-instance dispatch fence for parallel fixture submissions.
+    if (attemptedEntries.has(clientId)) throw new GateTestnetError('Gate Futures Testnet mock entry was already attempted.', 409);
+    attemptedEntries.add(clientId);
+    const body = JSON.stringify({
+      contract: symbol, size: side === 'SELL' ? `-${quantity}` : quantity, price,
+      tif: 'gtc', text: clientId, reduce_only: false,
+    });
+    try {
+      const acknowledged = decodeOrder(await request(
+        `/futures/${SETTLE_CURRENCY}/orders`, {}, true, true, 'POST', body,
+      ), symbol, clientId, 'text');
+      const confirmed = await lookupOrder(symbol, acknowledged.exchangeOrderId, 'id');
+      if (matches(acknowledged) && matches(confirmed) && compareAmounts(confirmed.filledQuantity, acknowledged.filledQuantity) >= 0) {
+        return confirmed;
+      }
+    } catch (error) {
+      throw new GateTestnetError('Gate Futures Testnet mock entry could not be confirmed. Reconcile the original order.',
+        error instanceof GateTestnetError ? error.status : 502);
+    }
+    throw new GateTestnetError('Gate Futures Testnet mock entry lacked matching evidence. Reconcile the original order.', 409);
   }
 
   async function cancelOrder(symbol: string, orderId: string): Promise<GateTestnetOrder> {
@@ -424,6 +501,7 @@ export function createGateTestnetAdapter(
     getOrderStatus: (symbol, orderId) => lookupOrder(symbol, orderId, 'id'),
     // Gate's lookup retention can hide a cancelled order. Never treat null as safe to resubmit.
     reconcileOrder: (symbol, orderId) => lookupOrder(symbol, orderId, 'text'),
-    ...(fixtureMode === 'MOCK_CANCELLATION' ? { cancelOrder } : {}),
+    ...(fixtureMode ? { cancelOrder } : {}),
+    ...(fixtureMode === 'MOCK_LIMIT_LIFECYCLE' ? { placeFixtureLimitOrder } : {}),
   };
 }
