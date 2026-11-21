@@ -50,11 +50,11 @@ export function accountHistoricalReplay(
   const unknownFundingTrades = trades.filter(trade => trade.net === null).length;
   if (unknownFundingTrades) return { trades, unknownFundingTrades, realized: null };
   const byExit = new Map<number, number>();
-  let winning = 0, losing = 0;
+  let winning = 0, losing = 0, wins = 0, losses = 0;
   for (const trade of trades) {
     const net = trade.net!;
-    if (net > 0) winning += net;
-    if (net < 0) losing -= net;
+    if (net > 0) { winning += net; wins++; }
+    if (net < 0) { losing -= net; losses++; }
     byExit.set(trade.exitedAt, (byExit.get(trade.exitedAt) ?? 0) + net);
   }
   let equity = startingEquity, peak = startingEquity, maxDrawdown = 0;
@@ -67,6 +67,12 @@ export function accountHistoricalReplay(
   if (![equity, winning, losing, maxDrawdown].every(Number.isFinite)) throw new RangeError('Portfolio amounts exceed numeric limits.');
   return { trades, unknownFundingTrades, realized: {
     net: equity - startingEquity,
+    tradeCount: trades.length,
+    wins,
+    losses,
+    breakEven: trades.length - wins - losses,
+    winRate: trades.length ? wins / trades.length : null,
+    expectancy: trades.length ? (equity - startingEquity) / trades.length : null,
     profitFactor: losing > 0 ? winning / losing : null,
     maxDrawdown,
     equityCurve,
