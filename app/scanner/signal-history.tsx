@@ -40,10 +40,13 @@ function price(value: string | null) {
   return Number.isFinite(parsed) ? parsed.toLocaleString(undefined, { maximumSignificantDigits: 8 }) : '—';
 }
 
-export function SignalHistory({ successfulOnly = false }: { successfulOnly?: boolean }) {
+export function SignalHistory({ successfulOnly = false, initialScannerType = '' }: {
+  successfulOnly?: boolean;
+  initialScannerType?: '' | 'STANDARD' | 'HIGH_RISK';
+}) {
   const [data, setData] = useState<HistoryData | null>(null);
   const [page, setPage] = useState(1);
-  const [scannerType, setScannerType] = useState('');
+  const [scannerType, setScannerType] = useState<string>(initialScannerType);
   const [side, setSide] = useState('');
   const [status, setStatus] = useState('');
   const [symbol, setSymbol] = useState('');

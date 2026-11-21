@@ -391,15 +391,21 @@ export async function getPersistedSignalMetadata(candidates: MarketScannerCandid
     generated_at: string;
     expires_at: string;
     status: SignalStatus;
+    entry_zone_low: string;
+    entry_zone_high: string;
   }>(
-    `SELECT signal_key, id, generated_at, expires_at, status
+    `SELECT signal_key, id, generated_at, expires_at, status, entry_zone_low, entry_zone_high
        FROM public.market_signals WHERE signal_key = ANY($1::VARCHAR[])`,
     [keys],
   );
-  return Object.fromEntries(result.rows.map((row) => [
-    row.signal_key,
-    { id: row.id, generatedAt: row.generated_at, expiresAt: row.expires_at, status: row.status },
-  ]));
+  return Object.fromEntries(result.rows.map((row) => {
+    const low = Number(row.entry_zone_low);
+    const high = Number(row.entry_zone_high);
+    return [row.signal_key, {
+      id: row.id, generatedAt: row.generated_at, expiresAt: row.expires_at, status: row.status,
+      entryZone: Number.isFinite(low) && Number.isFinite(high) && low > 0 && high >= low ? { low, high } : null,
+    }];
+  }));
 }
 
 export async function processSignalLifecycle(snapshot: FuturesMarketSnapshot) {

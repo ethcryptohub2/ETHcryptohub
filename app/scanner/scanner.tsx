@@ -11,7 +11,10 @@ import { SignalCountdown } from '../countdown';
 import { scannerSymbolPrefix, type SavedScannerResponse, type ScannerCoverage, type ScannerRank } from '../../lib/scanner-universe';
 
 type SignalMetadata = {
-  signals: Record<string, { id: string; generatedAt: string; expiresAt: string; status: string } | null>;
+  signals: Record<string, {
+    id: string; generatedAt: string; expiresAt: string; status: string;
+    entryZone: { low: number; high: number } | null;
+  } | null>;
   serverNow: string;
 };
 type SignalClock = { serverNow: string; receivedAt: number };
@@ -173,7 +176,7 @@ function StandardSignals({
     </section>
     <section className="scanner-overview" aria-label="Scanner summary">
       <article className="scanner-stat-card scanner-stat-primary"><span className="scanner-stat-label">Qualified setups on this page</span><strong>{data && coverage !== 'eligible' ? ready.length : '—'}</strong><span className="scanner-stat-foot">{coverage === 'eligible' ? 'Instrument directory' : `${longSignals} long · ${shortSignals} short · ${persistedSetups} stored signals`}</span></article>
-      <article className="scanner-stat-card"><span className="scanner-stat-label">Eligible saved instruments</span><strong>{data?.eligibleCount ?? '—'}</strong><span className="scanner-stat-foot">{data?.universeSyncedAt ? `Last universe sync ${new Date(data.universeSyncedAt).toLocaleString()}` : 'No verified universe sync time'}</span></article>
+      <article className="scanner-stat-card"><span className="scanner-stat-label">Eligible instruments at last sync</span><strong>{data?.eligibleCount ?? '—'}</strong><span className="scanner-stat-foot">{data?.universeSyncedAt ? `Last universe sync ${new Date(data.universeSyncedAt).toLocaleString()}` : 'No verified universe sync time'}</span></article>
       <article className="scanner-stat-card"><span className="scanner-stat-label">Pairs with saved scans</span><strong>{data?.savedCount ?? '—'}</strong><span className="scanner-stat-foot">{timeframe} timeframe · {data?.watchlistCount ?? '—'} fixed research symbols</span></article>
       <article className="scanner-stat-card"><span className="scanner-stat-label">Saved market data</span><strong className={`scanner-health-value ${degraded ? 'is-warning' : ''}`}>{healthLabel}</strong><span className="scanner-stat-foot">{data?.updatedAt ? `Last saved scan ${new Date(data.updatedAt).toLocaleString()}` : 'No saved scan'}</span></article>
     </section>
@@ -212,7 +215,13 @@ function StandardSignals({
         <span role="status">Page {page} of {pageCount} · {data.matchingCount} matches</span>
         <button type="button" disabled={page >= pageCount || loading} onClick={() => setSelection({ ...selection, page: page + 1 })}>Next page</button>
       </nav>}
-      {candidates.length > 0 && <div className="scanner-signal-list">{candidates.map((item) => <article className={`scanner-signal-card ${item.status === 'READY' ? item.side === 'LONG' ? 'is-long' : 'is-short' : 'is-wait'} `} key={item.symbol}>
+      {candidates.length > 0 && <div className="scanner-signal-list">{candidates.map((item) => {
+        const signal = signalMetadata?.signals[item.symbol];
+        const entryZone = item.setup && signal?.entryZone;
+        const candleCloseTime = Date.parse(item.lastCandleCloseAt ?? '');
+        const lifecycleLabel = signal && Date.parse(signal.expiresAt) <= signalNow &&
+          ['ACTIVE', 'TP1_HIT', 'TP2_HIT'].includes(signal.status) ? 'EXPIRED' : signal?.status;
+        return <article className={`scanner-signal-card ${item.status === 'READY' ? item.side === 'LONG' ? 'is-long' : 'is-short' : 'is-wait'} `} key={item.symbol}>
         <div className="scanner-signal-header">
           <div className="scanner-market-title">
             <span className="scanner-coin-mark">{item.symbol.replace(/USDT$/, '').slice(0, 1)}</span>
@@ -220,16 +229,18 @@ function StandardSignals({
           </div>
           <div className="scanner-card-meta">
             <span className={`scanner-signal-badge ${item.status === 'READY' ? item.side === 'LONG' ? 'is-long' : 'is-short' : 'is-wait'}`}><span aria-hidden="true">{item.status === 'READY' ? item.side === 'LONG' ? '↗' : '↘' : '•'}</span>{item.status === 'READY' ? item.side : item.status === 'STALE' || item.status === 'DATA_UNAVAILABLE' ? (item.status === 'STALE' ? 'STALE CACHE' : 'NO DATA') : 'WAIT'}</span>
-            <div className="scanner-card-score"><span>SETUP SCORE</span><strong>{item.score.value === null ? '—' : `${item.score.value}`}<small>/100</small></strong><small>{item.scannedAt ? `Scanned ${new Date(item.scannedAt).toLocaleString()}` : 'Scan pending'}</small></div>
+            <div className="scanner-card-score"><span>SETUP SCORE</span><strong>{item.score.value === null ? '—' : `${item.score.value}`}<small>/100</small></strong><small>{item.scannedAt ? `Scanned ${new Date(item.scannedAt).toLocaleString()}` : 'Scan pending'}</small>{Number.isFinite(candleCloseTime) && candleCloseTime <= signalNow && <small>Candle closed {new Date(candleCloseTime).toLocaleString()}</small>}</div>
           </div>
         </div>
-        {item.status === 'READY' && signalMetadata?.signals[item.symbol] && <div className="scanner-expiry-row">
-          <span>Signal validity · generated {new Date(signalMetadata.signals[item.symbol]!.generatedAt).toLocaleTimeString()}</span>
-          <SignalCountdown expiresAt={signalMetadata.signals[item.symbol]!.expiresAt} serverNow={signalMetadata.serverNow} status={signalMetadata.signals[item.symbol]!.status} />
+        {item.status === 'READY' && signal && signalMetadata && <div className="scanner-expiry-row">
+          <span>Signal validity · generated {new Date(signal.generatedAt).toLocaleTimeString()}</span>
+          <SignalCountdown expiresAt={signal.expiresAt} serverNow={signalMetadata.serverNow} status={signal.status} />
         </div>}
+        {item.status !== 'READY' && lifecycleLabel && <p className="muted">Stored signal status · {lifecycleLabel.replaceAll('_', ' ')}</p>}
+        {item.status === 'WAIT' && item.rationale && <p className="muted">{item.rationale}</p>}
         <div className="scanner-price-grid">
           <div className="scanner-price-cell"><span>Price at scan</span><strong>{item.price === null ? '—' : formatPrice(item.price)}</strong><small className={`scanner-change ${item.priceChangePercent24h !== null && item.priceChangePercent24h < 0 ? 'is-negative' : ''}`}>{item.priceChangePercent24h === null ? '24h change unavailable' : `${item.priceChangePercent24h >= 0 ? '+' : ''}${item.priceChangePercent24h.toFixed(2)}% at scan`}</small></div>
-          <div className="scanner-price-cell is-entry"><span>Planned entry</span><strong>{item.setup ? formatPrice(item.setup.entryPrice) : '—'}</strong><small>{item.setup ? 'Reference entry price' : 'No confirmed setup'}</small></div>
+          <div className="scanner-price-cell is-entry"><span>{entryZone ? 'Entry zone' : 'Planned entry'}</span><strong>{entryZone ? `${formatPrice(entryZone.low)} – ${formatPrice(entryZone.high)}` : item.setup ? formatPrice(item.setup.entryPrice) : '—'}</strong><small>{entryZone ? 'Stored signal entry range' : item.setup ? 'Reference entry price' : 'No confirmed setup'}</small></div>
           <div className="scanner-price-cell is-stop"><span>Stop loss</span><strong>{item.setup ? formatPrice(item.setup.initialStop) : '—'}</strong><small>{item.setup ? 'Initial reference stop' : 'Available when ready'}</small></div>
         </div>
         <div className="scanner-target-section"><div className="scanner-target-heading"><span>PROFIT TARGETS</span><span>Risk multiples from entry</span></div><div className="scanner-target-grid">
@@ -256,7 +267,8 @@ function StandardSignals({
             {item.research.news.data?.stories.map((story) => <a className="scanner-news-link" key={story.url} href={story.url} target="_blank" rel="noreferrer">{story.title} ↗</a>)}
           </div>
         </details>}
-      </article>)}</div>}
+      </article>;
+      })}</div>}
       <p className="scanner-disclaimer">Research feeds provide context, not certainty. Exchange netflow is not verified smart-wallet attribution; news votes are community signals. Setups are informational and do not place orders.</p>
     </section>
   </main>;

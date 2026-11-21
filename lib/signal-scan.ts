@@ -22,6 +22,7 @@ const markets = new BinanceFuturesMarketsService();
 
 export type SignalScanOptions = {
   executeAutomaticTrades?: boolean;
+  deliverNotifications?: boolean;
 };
 
 export class SignalScanError extends Error {
@@ -79,7 +80,9 @@ export async function runSignalScan(
   if (options.executeAutomaticTrades !== false) {
     await processNewAutomaticTrades(persisted.createdSignalIds);
   }
-  await flushSignalNotifications();
+  if (options.deliverNotifications !== false) {
+    await flushSignalNotifications();
+  }
   return {
     timeframe,
     scannerStatus: result.status,

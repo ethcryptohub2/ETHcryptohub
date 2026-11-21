@@ -103,7 +103,7 @@ export async function POST(request: NextRequest) {
     );
     if (action.action === 'scan_now') {
       return NextResponse.json(
-        { data: await runSignalScan('15m', { executeAutomaticTrades: false }) },
+        { data: await runSignalScan('15m', { executeAutomaticTrades: false, deliverNotifications: false }) },
         { headers: { 'Cache-Control': 'no-store' } },
       );
     }

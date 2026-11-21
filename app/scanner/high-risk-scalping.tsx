@@ -5,6 +5,7 @@ import Link from 'next/link';
 import type { StoredScalpingSignal } from '../../lib/high-risk-scalping-types';
 import { SCALPING_TIMEFRAMES } from '../../lib/high-risk-scalping-types';
 import { formatSignalStatusText, highRiskEntryWindowOpen } from '../../lib/high-risk-scalping-status';
+import { TABLE_PAGE_SIZE } from '../../lib/pagination';
 import { ScannerTabs } from './scanner-tabs';
 
 type Data = {
@@ -23,7 +24,9 @@ function countdown(target: number, now: number) {
 }
 
 function formatPrice(value: number) {
-  return value.toLocaleString(undefined, { maximumSignificantDigits: 8 });
+  return Number.isFinite(value) && value > 0
+    ? value.toLocaleString(undefined, { maximumSignificantDigits: 8 })
+    : 'Unavailable';
 }
 
 export function HighRiskScalping({
@@ -42,6 +45,12 @@ export function HighRiskScalping({
   const [error, setError] = useState('');
   const [loadError, setLoadError] = useState('');
   const [notice, setNotice] = useState('');
+  const [loading, setLoading] = useState(true);
+  const [view, setView] = useState<'active' | 'entered' | 'history'>('active');
+  const [symbol, setSymbol] = useState('');
+  const [timeframe, setTimeframe] = useState('');
+  const [direction, setDirection] = useState('');
+  const [page, setPage] = useState(1);
   const request = useRef<AbortController | null>(null);
   const now = clock.serverAt + clock.elapsed;
 
@@ -49,12 +58,15 @@ export function HighRiskScalping({
     request.current?.abort();
     const controller = new AbortController();
     request.current = controller;
+    setLoading(true);
+    setLoadError('');
     const startedAt = performance.now();
     try {
       const response = await fetch('/api/scalping', { credentials: 'same-origin', cache: 'no-store', signal: controller.signal });
       const body = await response.json() as { data?: Data; error?: string; code?: string };
       if (controller.signal.aborted) return;
       if (!response.ok || !body.data || !Number.isSafeInteger(body.data.serverNow) || body.data.serverNow <= 0) {
+        if (response.status === 401 || response.status === 403) setData(null);
         if (body.code === 'SUBSCRIPTION_REQUIRED') throw new Error('An active trial or premium subscription is required for scalping signals.');
         throw new Error(body.error ?? 'High-risk scalping data is unavailable.');
       }
@@ -64,10 +76,12 @@ export function HighRiskScalping({
       setLoadError('');
     } catch (reason) {
       if (controller.signal.aborted) return;
-      setData(null);
       setLoadError(reason instanceof Error ? reason.message : 'Scalping refresh failed.');
     } finally {
-      if (request.current === controller) request.current = null;
+      if (request.current === controller) {
+        request.current = null;
+        if (!controller.signal.aborted) setLoading(false);
+      }
     }
   }, []);
 
@@ -85,9 +99,6 @@ export function HighRiskScalping({
         setError(reason instanceof Error ? reason.message : 'Scalping alert preference is unavailable.'),
       );
     }, 0);
-    const refresh = window.setInterval(() => {
-      void load();
-    }, 30_000);
     const updateClock = () => {
       const current = performance.now();
       setClock((previous) => ({ ...previous, elapsed: current - previous.receivedAt }));
@@ -97,7 +108,6 @@ export function HighRiskScalping({
     return () => {
       request.current?.abort();
       window.clearTimeout(initial);
-      window.clearInterval(refresh);
       window.clearInterval(clockTimer);
       document.removeEventListener('visibilitychange', updateClock);
     };
@@ -153,26 +163,42 @@ export function HighRiskScalping({
     }
   }
 
-  function signalCard(signal: StoredScalpingSignal, entered = false) {
+  function signalCard(signal: StoredScalpingSignal) {
+    const generatedAt = Date.parse(signal.generatedAt);
+    const age = Number.isFinite(generatedAt) && now >= generatedAt
+      ? `${Math.floor((now - generatedAt) / 60_000)}m ago`
+      : null;
+    const context = signal.context;
+    const status = view === 'history' && signal.lifecycleStatus === 'ACTIVE'
+      ? 'Entry unavailable'
+      : formatSignalStatusText(signal.lifecycleStatus);
+    const indicators = [
+      Number.isFinite(context?.rsi) && `RSI ${context.rsi.toFixed(1)}`,
+      Number.isFinite(context?.relativeVolume) && `Relative volume ${context.relativeVolume.toFixed(2)}×`,
+      Number.isFinite(context?.adx) && `ADX ${context.adx.toFixed(1)}`,
+      context?.btcDirection && `BTC ${context.btcDirection}`,
+    ].filter(Boolean);
     return <article className={`scanner-signal-card ${signal.side === 'LONG' ? 'is-long' : 'is-short'}`} key={signal.id}>
       <div className="scanner-signal-header">
         <div><p className="mono">HIGH RISK · {signal.timeframe}</p><h3>{signal.symbol} · {signal.side}</h3></div>
         <div className="scanner-card-meta">
-          <div className="scanner-card-score"><span>STATUS · {formatSignalStatusText(signal.lifecycleStatus)}</span><small>Generated {new Date(signal.generatedAt).toLocaleString()}</small></div>
+          <div className="scanner-card-score"><span>STATUS · {status}</span><small>Generated {new Date(signal.generatedAt).toLocaleString()}{age && ` · ${age}`}</small></div>
           <strong className="scanner-signal-badge">{signal.score}/100</strong>
         </div>
       </div>
       <p className="error">HIGH RISK · Informational research only. No orders are placed; a score does not guarantee results.</p>
       <div className="scanner-price-grid">
+        <div className="scanner-price-cell"><span>Last recorded market price</span><strong>{formatPrice(signal.lastPrice)}</strong></div>
         <div className="scanner-price-cell"><span>Entry reference</span><strong>{formatPrice(signal.entryPrice)}</strong><small>{formatPrice(signal.entryZoneLow)} – {formatPrice(signal.entryZoneHigh)}</small></div>
         <div className="scanner-price-cell is-stop"><span>Invalidation / stop reference</span><strong>{formatPrice(signal.stop)}</strong></div>
-        <div className="scanner-price-cell"><span>Targets · TP1 1R / TP2 1.5R</span><strong>{formatPrice(signal.tp1)} / {formatPrice(signal.tp2)}</strong><small>TP3 is not configured.</small></div>
+        <div className="scanner-price-cell"><span>Targets · TP1 / TP2</span><strong>{formatPrice(signal.tp1)} / {formatPrice(signal.tp2)}</strong><small>TP3 · {signal.tp3 == null ? 'Not recorded' : formatPrice(signal.tp3)}</small></div>
       </div>
-      <p className="muted">RSI {signal.context.rsi.toFixed(1)} · Relative volume {signal.context.relativeVolume.toFixed(2)}× · ADX {signal.context.adx.toFixed(1)} · BTC {signal.context.btcDirection}</p>
-      {entered
+      {indicators.length > 0 && <p className="muted">{indicators.join(' · ')}</p>}
+      <p className="muted">Signal expiry {new Date(signal.expiresAt).toLocaleString()}</p>
+      {view === 'entered'
         ? <p className="success">{signal.userState === 'CLOSED' ? 'This recorded entry is closed.' : 'Marked entered by you.'}</p>
-        : <div className="links"><span className="muted">Entry window {countdown(Math.min(Date.parse(signal.entryExpiresAt), Date.parse(signal.expiresAt)), now)} · signal expiry {new Date(signal.expiresAt).toLocaleTimeString()}</span>
-          <button type="button" disabled={busy !== ''} onClick={() => void markEntered(signal.id)}>
+        : view === 'active' && <div className="links"><span className="muted">Entry window {countdown(Math.min(Date.parse(signal.entryExpiresAt), Date.parse(signal.expiresAt)), now)}</span>
+          <button type="button" disabled={busy !== '' || !!loadError || loading} onClick={() => void markEntered(signal.id)}>
             {busy === signal.id ? 'Saving…' : 'Mark as entered'}
           </button>
         </div>}
@@ -181,40 +207,52 @@ export function HighRiskScalping({
 
   const active = data?.active.filter((signal) => highRiskEntryWindowOpen(signal, now)) ?? [];
   const recentlyClosed = data?.active.filter((signal) => !highRiskEntryWindowOpen(signal, now)) ?? [];
-  const history = [...recentlyClosed, ...(data?.history ?? [])];
+  const history = [...recentlyClosed, ...(data?.history ?? [])].sort((a, b) => Date.parse(b.generatedAt) - Date.parse(a.generatedAt));
+  const results = (view === 'active' ? active : view === 'entered' ? data?.entered ?? [] : history)
+    .filter((signal) => signal.symbol.startsWith(symbol.trim().toUpperCase()) &&
+      (!timeframe || timeframe === signal.timeframe) && (!direction || direction === signal.side));
+  const totalPages = Math.max(1, Math.ceil(results.length / TABLE_PAGE_SIZE));
+  const currentPage = Math.min(page, totalPages);
+  const visibleSignals = results.slice((currentPage - 1) * TABLE_PAGE_SIZE, currentPage * TABLE_PAGE_SIZE);
 
   return <main className="shell">
     <ScannerTabs active={activeTab} onChange={onTabChange} />
-    <header className="topbar"><Link className="brand" href="/">ETHCRYPTOHUB</Link><nav className="links"><Link href="/scanner/successful">Successful Signals</Link><Link href="/scanner/history">Signal History</Link><Link href="/scanner/performance">Performance</Link><Link href="/dashboard">Dashboard</Link><Link href="/settings">Settings</Link>{isAdmin && <Link href="/admin">Admin</Link>}</nav></header>
+    <header className="topbar"><Link className="brand" href="/">ETHCRYPTOHUB</Link><nav className="links"><Link href="/scanner/successful">Successful Signals</Link><Link href="/scanner/history?scannerType=HIGH_RISK">High-Risk Signal History</Link><Link href="/scanner/performance">Performance</Link><Link href="/dashboard">Dashboard</Link><Link href="/settings">Settings</Link>{isAdmin && <Link href="/admin">Admin</Link>}</nav></header>
     <section className="hero scanner-hero">
-      <p className="mono">SEPARATE STRATEGY · SERVERLESS BEST-EFFORT SCANS</p>
+      <p className="mono">HIGH RISK · SAVED SIGNALS</p>
       <h1>High-Risk Scalping</h1>
       <p className="muted">Independent short-timeframe research from saved scanner results. Short-lived opportunities may expire between scans.</p>
-      <p className="scanner-research-target" role="note">High-Risk research target: 95% win rate · unverified objective, not an achieved result.</p>
     </section>
     <section className="card stack">
       <div className="links">
-        <p className="muted">{!data ? 'Scalping settings unavailable.' : data.settings.enabled ? `Enabled timeframes: ${SCALPING_TIMEFRAMES.filter((timeframe) => data.settings.enabledTimeframes.includes(timeframe)).join(', ') || 'none'}` : 'Scalping signals are disabled by an administrator.'}</p>
+        {data && <p className="muted">{data.settings.enabled ? `Enabled timeframes: ${SCALPING_TIMEFRAMES.filter((timeframe) => data.settings.enabledTimeframes.includes(timeframe)).join(', ') || 'none'}` : 'Scalping signal generation is disabled in the saved settings.'}</p>}
+        <button type="button" className="button-secondary" disabled={loading} onClick={() => void load()}>{loading ? 'Loading saved signals…' : 'Refresh saved signals'}</button>
         <button type="button" className="button-secondary" disabled={busy !== '' || pushEnabled === null} onClick={() => void togglePush()}>
           {pushEnabled === null ? 'Scalping alert preference unavailable' : pushEnabled ? 'Disable scalping alerts' : 'Enable scalping alerts'}
         </button>
       </div>
       <p className="scanner-warning"><strong>Saved signal status</strong><span>Entry controls close at the expiry time. The recorded lifecycle can update on a later scan.</span></p>
-      {loadError && <p className="error" role="alert">{loadError}</p>}
+      {loadError && <p className="error" role="alert">{loadError}{data && ' Showing the last loaded records.'}</p>}
       {error && <p className="error" role="alert">{error}</p>}
       {notice && <p className="success" role="status">{notice}</p>}
       {!data && !loadError && <p className="muted">Loading scalping opportunities…</p>}
     </section>
-    {data && <>
-      <section className="stack scalping-signal-section"><h2>Active opportunities <span className="mono">{active.length}</span></h2>
-        {active.length ? active.map((signal) => signalCard(signal)) : <p className="scanner-empty"><strong>No active setups</strong><span>A setup appears only after the configured breakout, trend, momentum and volume checks pass.</span></p>}
-      </section>
-      {data.entered.length > 0 && <section className="stack scalping-signal-section"><h2>Recorded entries</h2>{data.entered.map((signal) => signalCard(signal, true))}</section>}
-      <details className="card stack"><summary>Scalping history · {history.length}</summary>
-        {history.length
-            ? history.map((signal) => <p key={signal.id}>{signal.symbol} {signal.side} · {signal.timeframe} · Entry unavailable · Last recorded status {formatSignalStatusText(signal.lifecycleStatus)} · {new Date(signal.generatedAt).toLocaleString()}</p>)
-          : <p className="muted">No closed scalping signals yet.</p>}
-      </details>
-    </>}
+    <section className="card stack"><h2>High-Risk setups</h2>
+      <p className="muted">Browse the latest 200 saved High-Risk signal records. Refresh reads saved records without requesting new market data.</p>
+      <div className="links">
+        <label>View<select value={view} onChange={(event) => { setPage(1); setView(event.target.value as typeof view); }}><option value="active">Active opportunities</option><option value="entered">Recorded entries</option><option value="history">Inactive and expired</option></select></label>
+        <label>Symbol<input value={symbol} maxLength={25} onChange={(event) => { setPage(1); setSymbol(event.target.value); }} /></label>
+        <label>Timeframe<select value={timeframe} onChange={(event) => { setPage(1); setTimeframe(event.target.value); }}><option value="">All timeframes</option>{SCALPING_TIMEFRAMES.map((value) => <option key={value}>{value}</option>)}</select></label>
+        <label>Direction<select value={direction} onChange={(event) => { setPage(1); setDirection(event.target.value); }}><option value="">Both directions</option><option>LONG</option><option>SHORT</option></select></label>
+      </div>
+    </section>
+    {data && <section className="stack scalping-signal-section">
+      {visibleSignals.length > 0 ? visibleSignals.map(signalCard) : <p className="scanner-empty"><strong>{view === 'active' && active.length === 0 ? 'No qualified setups' : 'No matching saved records'}</strong><span>{view === 'active' && active.length === 0 ? 'No saved High-Risk setup has an open entry window.' : 'Choose a different view or adjust the filters.'}</span></p>}
+      {visibleSignals.length > 0 && <nav className="links" aria-label="High-Risk setup pagination">
+        <button type="button" disabled={currentPage === 1} onClick={() => setPage(currentPage - 1)}>Previous</button>
+        <span>Page {currentPage} of {totalPages} · {results.length} matching records</span>
+        <button type="button" disabled={currentPage === totalPages} onClick={() => setPage(currentPage + 1)}>Next</button>
+      </nav>}
+    </section>}
   </main>;
 }

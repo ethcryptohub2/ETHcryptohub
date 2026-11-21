@@ -42,6 +42,7 @@ export interface ScalpingSetup {
 
 export interface StoredScalpingSignal extends ScalpingSetup {
   id: string;
+  tp3: number | null;
   generatedAt: string;
   entryExpiresAt: string;
   expiresAt: string;

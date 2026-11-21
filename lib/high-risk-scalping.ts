@@ -485,20 +485,20 @@ export async function listHighRiskScalpingSignals(userId: number) {
     id: string; signal_key: string; legacy_scalping_signal_id: string | null;
     symbol: string; timeframe: ScalpingTimeframe; side: ScalpingSide;
     setup_score: number; entry_price: string; entry_zone_low: string; entry_zone_high: string;
-    initial_stop: string; tp1: string; tp2: string; last_price: string; candle_open_at: string;
+    initial_stop: string; tp1: string; tp2: string; tp3: string | null; last_price: string; candle_open_at: string;
     generated_at: string; entry_expires_at: string; expires_at: string; lifecycle_status: StoredScalpingSignal['lifecycleStatus'];
     setup_context: ScalpingSetup['context']; user_state: 'ENTERED' | 'CLOSED' | null;
   }>(
     `SELECT s.id::text, s.signal_key, s.legacy_scalping_signal_id::text, s.symbol,
             s.timeframe, s.side, s.setup_score, s.entry_price::text, s.entry_zone_low::text,
-            s.entry_zone_high::text, s.initial_stop::text, s.tp1::text, s.tp2::text,
+            s.entry_zone_high::text, s.initial_stop::text, s.tp1::text, s.tp2::text, s.tp3::text,
             s.latest_price::text AS last_price, s.candle_open_at,
             s.generated_at, s.entry_expires_at, s.expires_at, s.status AS lifecycle_status,
             s.research_snapshot AS setup_context, e.status AS user_state
        FROM public.market_signals s
        LEFT JOIN public.signal_user_entries e ON e.signal_id = s.id AND e.user_id = $1
       WHERE s.scanner_type = 'HIGH_RISK'
-      ORDER BY s.generated_at DESC LIMIT 200`,
+      ORDER BY s.generated_at DESC, s.id DESC LIMIT 200`,
     [userId],
   );
   const signals = result.rows.map((row): StoredScalpingSignal => ({
@@ -514,6 +514,7 @@ export async function listHighRiskScalpingSignals(userId: number) {
     stop: Number(row.initial_stop),
     tp1: Number(row.tp1),
     tp2: Number(row.tp2),
+    tp3: row.tp3 == null ? null : Number(row.tp3),
     lastPrice: Number(row.last_price),
     candleOpenAt: row.candle_open_at,
     generatedAt: row.generated_at,

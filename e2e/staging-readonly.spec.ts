@@ -31,7 +31,8 @@ for (const viewport of [{ width: 1440, height: 900 }, { width: 390, height: 844 
       await expect(page).toHaveURL(`${target.origin}/signup`);
       await expect(page.locator('input[name="email"]')).toBeVisible();
       await expect(page.locator('input[name="password"]')).toBeVisible();
-      for (const route of ['/dashboard', '/admin', '/admin/exchanges/testing', '/scanner']) {
+      for (const route of ['/dashboard', '/admin', '/admin/exchanges/testing', '/scanner',
+        '/scanner?tab=scalping', '/scanner/history?scannerType=HIGH_RISK']) {
         const response = await page.goto(`${target.origin}${route}`);
         expect(response?.status(), route).toBe(200);
         await expect(page, route).toHaveURL(`${target.origin}/login`);

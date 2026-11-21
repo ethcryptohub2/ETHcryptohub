@@ -1,0 +1,15 @@
+# Staging scanner recovery
+
+## Engine and ingestion
+
+The deployed Production source at `37a0a6b2ebec350b0aa6d3d40a1fc94adafe9aa5` and the Staging baseline at `706062ca06ebefe107b9d2cf0a00a6ce80d8d666` share the market adapter and Standard engine under `smartexit/apps/api/src/services`. The Standard path uses Binance market discovery and closed candles for technical indicators, scoring, and setup levels. High-Risk reuses market input with its own scoring, qualification, expiry, and history. The scanner routes read saved database records. The strategy entry points in `lib/signal-scan.ts` and `lib/high-risk-scalping.ts` perform the ingestion work.
+
+Both manifests select `bom1`. Production declares daily Standard and High-Risk jobs at 00:00 and 00:30 UTC. Staging omits those schedules, rejects scheduled scans in Preview, and gates Admin manual refresh. `CRON_SECRET` authorizes scheduled requests and `SMARTEXIT_ADMIN_SCANNER_REFRESH_ENABLED` gates the approved-target Admin Standard refresh. The separate ticker diagnostic uses `SMARTEXIT_PUBLIC_REST_SNAPSHOT_ENABLED` and the approved Staging project reference and target. No configuration values or secret material were retrieved. All 14 inspected scanner dependencies exist in Staging, including discovery, snapshot, settings, signal and event tables.
+
+Read-only aggregate checks at approximately 08:58 UTC on 21 November 2026 found 522 eligible instruments in each database. Staging stored 20 old 15-minute WAIT snapshots and zero signals. Production held 14 Standard and 165 High-Risk historical signals and zero open entry windows. The newest Standard signal was 13 November at 22:28:51 UTC and the newest High-Risk signal was 20 November at 00:55:04 UTC. Production's latest 4-hour snapshot was 21 November at 00:47:18 UTC and was already more than eight hours old. These are stored aggregates and do not identify which job wrote a record or establish current market connectivity.
+
+## Finite market access approval
+
+The existing Admin ticker diagnostic can be considered separately for one approved Preview request. It makes one unsigned GET to `https://fapi.binance.com/fapi/v1/ticker/24hr` without a symbol parameter (40 IP request weight) and retains only the fixed 20-symbol watchlist. It allows five seconds and 1 MiB, rejects redirects, and makes no retries. Stop after provider denial or a shared used-weight reading at or above 300. This checks quotes only.
+
+Approval must identify the exact Staging deployment, confirm provider access and data-use eligibility for its actual egress, and authorize the one diagnostic request and its temporary Preview gate. The manifest's `bom1` is a configured function region and does not independently establish egress eligibility. Keep the diagnostic gate disabled pending approval. Strategy evaluation with live candle input and any snapshot, signal, or lifecycle writes are separate operations. The Admin Standard scan suppresses automatic trades and outbound notification delivery, but still writes scan state and can invoke configured research. It is outside the ticker-only approval.

@@ -27,6 +27,15 @@ const querySchema = marketScannerQuerySchema.extend({
 }).strict();
 const noStore = { 'Cache-Control': 'no-store' };
 
+function hasValidSetup(candidate: MarketScannerCandidate) {
+  if (!candidate.setup || candidate.side === 'WAIT') return false;
+  const { initialStop, entryPrice, tp1, tp2, tp3 } = candidate.setup;
+  const levels = [initialStop, entryPrice, tp1, tp2, tp3];
+  if (!levels.every((level) => Number.isFinite(level) && level > 0)) return false;
+  const direction = candidate.side === 'LONG' ? 1 : -1;
+  return levels.slice(1).every((level, index) => direction * (level - levels[index]!) > 0);
+}
+
 export async function GET(request: NextRequest) {
   try {
     await requirePremiumUser({ reconcile: false });
@@ -58,6 +67,7 @@ export async function GET(request: NextRequest) {
       candidate && savedScanAt ? [savedScannerCandidate(candidate, savedScanAt, configuration.maxAgeSeconds, now)] : []);
     let signalMap: Record<string, Awaited<ReturnType<typeof getPersistedSignalMetadata>>[string] | null> = {};
     let lifecycleUnavailable = false;
+    let qualificationUnavailable = false;
     const ready = candidates.filter((candidate) => candidate.status === 'READY' && candidate.side !== 'WAIT' && candidate.lastCandleCloseAt);
     if (ready.length) {
       const [configurationResult, metadataResult] = await Promise.allSettled([
@@ -65,6 +75,7 @@ export async function GET(request: NextRequest) {
         getPersistedSignalMetadata(ready),
       ]);
       if (configurationResult.status === 'fulfilled') settings = configurationResult.value;
+      else qualificationUnavailable = true;
       lifecycleUnavailable = metadataResult.status === 'rejected';
       if (metadataResult.status === 'fulfilled') {
         signalMap = Object.fromEntries(ready.map((candidate) =>
@@ -72,15 +83,20 @@ export async function GET(request: NextRequest) {
         ));
       }
       if (lifecycleUnavailable) notificationWarning = 'Signal validity could not be verified. Saved prices may be shown while setup levels are withheld.';
-      else if (configurationResult.status === 'rejected') notificationWarning = 'Signal notification settings could not be checked.';
+      else if (qualificationUnavailable) notificationWarning = 'Signal qualification settings could not be checked. Saved prices may be shown while setup levels are withheld.';
     }
     const serverNow = Date.now();
     const minimumScore = Math.max(configuration.minimumScore, settings.minimumSetupScore);
     const displayedCandidates = candidates.map((candidate) => {
       const aged = savedScannerCandidate(candidate, candidate.scannedAt ?? '', configuration.maxAgeSeconds, serverNow);
-      if (aged.status === 'READY' && (lifecycleUnavailable || (aged.score.value ?? -1) < minimumScore)) {
+      if (aged.status !== 'READY') return aged;
+      if (!hasValidSetup(aged)) {
         return { ...aged, status: 'WAIT' as const, side: 'WAIT' as const, setup: null,
-          rationale: lifecycleUnavailable ? 'Signal validity could not be verified.' : 'Saved setup score is below the selected minimum.' };
+          rationale: 'The saved setup has invalid reference levels.' };
+      }
+      if (lifecycleUnavailable || qualificationUnavailable || !Number.isFinite(aged.score.value) || (aged.score.value ?? -1) < minimumScore) {
+        return { ...aged, status: 'WAIT' as const, side: 'WAIT' as const, setup: null,
+          rationale: notificationWarning || 'Saved setup score is below the selected minimum.' };
       }
       return applyScannerSignalValidity(aged, signalMap[candidate.symbol], serverNow);
     });

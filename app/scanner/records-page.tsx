@@ -6,7 +6,10 @@ import { SubscriptionPanel } from '../subscription-panel';
 import { SignalHistory } from './signal-history';
 import { SignalPerformance } from './signal-performance';
 
-export async function SignalRecordsPage({ mode }: { mode: 'successful' | 'history' | 'performance' }) {
+export async function SignalRecordsPage({ mode, initialScannerType }: {
+  mode: 'successful' | 'history' | 'performance';
+  initialScannerType?: '' | 'STANDARD' | 'HIGH_RISK';
+}) {
   const user = await currentUser();
   if (!user) redirect('/login');
   const subscription = await getSubscriptionEntitlement(user.id, { reconcile: false });
@@ -18,5 +21,5 @@ export async function SignalRecordsPage({ mode }: { mode: 'successful' | 'histor
     </main>;
   }
   if (mode === 'performance') return <SignalPerformance />;
-  return <SignalHistory successfulOnly={mode === 'successful'} />;
+  return <SignalHistory successfulOnly={mode === 'successful'} initialScannerType={initialScannerType} />;
 }
