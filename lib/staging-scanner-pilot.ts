@@ -130,6 +130,7 @@ export async function runStagingScannerPilot(approval: Approval, signal: AbortSi
           [approval.slotAt, JSON.stringify({ ...evaluation, standardCreated, highRiskCreated,
             sources: ['BINANCE_USDM_TICKER_24HR', 'BINANCE_USDM_KLINES'] })],
         );
+        await requireActivePilot();
         await client.query('COMMIT');
         return { state: 'COMPLETED' as const, slotAt: approval.slotAt, standardCreated, highRiskCreated };
       } catch (error) {

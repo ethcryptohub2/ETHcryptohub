@@ -45,6 +45,7 @@ export async function readOptionalJson(request: NextRequest): Promise<unknown> {
 }
 
 function sanitizeResponse(value: unknown): unknown {
+  if (value instanceof Date) return Number.isFinite(value.getTime()) ? value.toISOString() : null;
   if (Array.isArray(value)) return value.map(sanitizeResponse);
   if (!value || typeof value !== 'object') return value;
   const result: Record<string, unknown> = {};

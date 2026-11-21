@@ -21,7 +21,7 @@ export type BacktestSignal = {
   stop: number;
   tp1: number;
   tp2: number;
-  tp3: number;
+  tp3: number | null;
 };
 
 export type BacktestEvent = {
@@ -33,7 +33,7 @@ export type BacktestEvent = {
 export type BacktestResult = {
   signalId: string;
   strategy: BacktestSignal['strategy'];
-  status: 'OPEN' | 'WAITING_ENTRY' | 'TP3_HIT' | 'STOP_LOSS_HIT' |
+  status: 'OPEN' | 'WAITING_ENTRY' | 'TP2_HIT' | 'TP3_HIT' | 'STOP_LOSS_HIT' |
     'MISSED' | 'ENTRY_INVALIDATED' | 'EXPIRED' | 'AMBIGUOUS' | 'DATA_INCOMPLETE';
   events: BacktestEvent[];
   simulatedEntry: number | null;
@@ -47,8 +47,8 @@ const validTimestamp = (value: number) => Number.isSafeInteger(value) && value >
 const validPrice = (value: number) => Number.isFinite(value) && value > 0;
 
 /**
- * Research uses TP1/TP2 milestones and a full TP3 exit for either strategy.
- * This policy is independent of the live High-Risk TP2 lifecycle.
+ * An explicitly supplied TP3 closes the research position.
+ * High-Risk strategy parity uses TP2 as the final target.
  */
 export function evaluateHistoricalSignal(
   signal: BacktestSignal, candles: readonly BacktestCandle[], asOf: number,
@@ -61,7 +61,9 @@ export function evaluateHistoricalSignal(
     throw new RangeError('Invalid historical signal scope or time window.');
   }
   const direction = signal.side === 'LONG' ? 1 : -1;
-  const directionalLevels = [signal.stop, signal.entryPrice, signal.tp1, signal.tp2, signal.tp3];
+  if (signal.tp3 === null && signal.strategy !== 'HIGH_RISK') throw new RangeError('Standard requires TP3.');
+  const targetPrices = signal.tp3 === null ? [signal.tp1, signal.tp2] : [signal.tp1, signal.tp2, signal.tp3];
+  const directionalLevels = [signal.stop, signal.entryPrice, ...targetPrices];
   if (![...directionalLevels, signal.entryZoneLow, signal.entryZoneHigh].every(validPrice) ||
       signal.entryZoneLow > signal.entryPrice || signal.entryPrice > signal.entryZoneHigh ||
       directionalLevels.some((level, index) => index > 0 && direction * (level - directionalLevels[index - 1]!) <= 0) ||
@@ -74,8 +76,8 @@ export function evaluateHistoricalSignal(
   const events: BacktestEvent[] = [];
   let simulatedEntry: number | null = null;
   let reached = 0;
-  const targetPrices = [signal.tp1, signal.tp2, signal.tp3];
   const targetEvents = ['TP1_HIT', 'TP2_HIT', 'TP3_HIT'] as const;
+  const finalTarget = signal.tp3 === null ? 'TP2_HIT' : 'TP3_HIT';
   function finish(status: BacktestResult['status'], reason: string, simulatedExit: number | null = null): BacktestResult {
     const difference = simulatedEntry !== null && simulatedExit !== null
       ? direction * (simulatedExit - simulatedEntry) : null;
@@ -133,7 +135,7 @@ export function evaluateHistoricalSignal(
       const type = targetEvents[reached]!;
       events.push({ type, price, observedAt: candle.openTime });
       reached++;
-      if (type === 'TP3_HIT') return finish(type, 'TP3 closed the entire simulated position at its target after an opening gap.', price);
+      if (type === finalTarget) return finish(type, 'The final target closed the simulated position after an opening gap.', price);
     }
     const unrecordedTarget = targetPrices.slice(reached).some(target => targetTouched(candle, target));
     if (stop && unrecordedTarget && !stopGap) {
@@ -149,7 +151,7 @@ export function evaluateHistoricalSignal(
       const type = targetEvents[reached]!;
       events.push({ type, price: target, observedAt: candle.closeTime });
       reached++;
-      if (type === 'TP3_HIT') return finish(type, 'TP3 closed the entire simulated position. TP1 and TP2 were milestones.', target);
+      if (type === finalTarget) return finish(type, 'The final target closed the simulated position.', target);
     }
   }
 

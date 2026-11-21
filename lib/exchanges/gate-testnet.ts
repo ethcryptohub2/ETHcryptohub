@@ -65,6 +65,20 @@ const fixtureEntrySchema = z.object({
   price: decimal,
   clientOrderId,
 }).strict();
+const fixtureStopSchema = z.object({
+  symbol: futuresSymbol,
+  triggerOrderId: exchangeOrderId,
+  positionSide: z.enum(['LONG', 'SHORT']),
+  triggerPrice: decimal,
+}).strict();
+const priceOrderFixtureSchema = z.object({
+  id: exchangeOrderId,
+  status: z.literal('open'),
+  initial: z.object({ contract: futuresSymbol, close: z.literal(true), reduce_only: z.literal(true),
+    size: numericValue.pipe(decimal), price: decimal }),
+  trigger: z.object({ strategy_type: z.literal(0), price_type: z.literal(1),
+    rule: z.union([z.literal(1), z.literal(2)]), price: decimal }),
+});
 const orderSchema = z.object({
   id: exchangeOrderId,
   contract: futuresSymbol,
@@ -193,13 +207,14 @@ export type GateTestnetAdapter = {
   reconcileOrder(symbol: string, clientOrderId: string): Promise<GateTestnetOrder | null>;
   cancelOrder?: (symbol: string, orderId: string) => Promise<GateTestnetOrder>;
   placeFixtureLimitOrder?: (order: z.infer<typeof fixtureEntrySchema>) => Promise<GateTestnetOrder>;
+  verifyFixtureStop?: (order: z.infer<typeof fixtureStopSchema>) => Promise<void>;
 };
 
 export function createGateTestnetAdapter(
   credentials: ExchangeCredentials,
   environment: ExchangeEnvironment = 'TESTNET',
   transport?: typeof fetch,
-  fixtureMode?: 'MOCK_CANCELLATION' | 'MOCK_LIMIT_LIFECYCLE',
+  fixtureMode?: 'MOCK_CANCELLATION' | 'MOCK_LIMIT_LIFECYCLE' | 'MOCK_PROTECTION_READBACK',
 ): GateTestnetAdapter {
   if (environment !== 'TESTNET') {
     throw new GateTestnetError('Gate adapter is pinned to TESTNET; Live and Demo environments are unavailable.', 422);
@@ -209,7 +224,8 @@ export function createGateTestnetAdapter(
     throw new GateTestnetError('Gate Futures Testnet API key and secret are required.', 422);
   }
   if (fixtureMode !== undefined && (
-    !['MOCK_CANCELLATION', 'MOCK_LIMIT_LIFECYCLE'].includes(fixtureMode) || !transport || transport === fetch ||
+    !['MOCK_CANCELLATION', 'MOCK_LIMIT_LIFECYCLE', 'MOCK_PROTECTION_READBACK'].includes(fixtureMode) ||
+    !transport || transport === fetch ||
     ![credentials.apiKey, credentials.apiSecret].every((value) => /^fixture-[a-z0-9-]{1,60}$/.test(value))
   )) {
     throw new GateTestnetError('Gate Futures Testnet mock orders require synthetic credentials and an injected transport.', 422);
@@ -294,6 +310,23 @@ export function createGateTestnetAdapter(
     const parsed = accountSchema.safeParse(data);
     if (!parsed.success) throw new GateTestnetError('Gate Futures Testnet returned invalid account data.', 502);
     return parsed.data;
+  }
+
+  async function verifyFixtureStop(input: z.infer<typeof fixtureStopSchema>) {
+    const scope = fixtureStopSchema.safeParse(input);
+    if (!scope.success || compareAmounts(scope.data.triggerPrice, '0') <= 0) {
+      throw new GateTestnetError('Invalid Gate Testnet stop fixture scope.', 422);
+    }
+    const { symbol, triggerOrderId, positionSide, triggerPrice } = scope.data;
+    const result = priceOrderFixtureSchema.safeParse(await request(
+      `/futures/${SETTLE_CURRENCY}/price_orders/${triggerOrderId}`, {}, true, true,
+    ));
+    if (!result.success || result.data.id !== triggerOrderId || result.data.initial.contract !== symbol ||
+        compareAmounts(result.data.initial.size, '0') !== 0 || compareAmounts(result.data.initial.price, '0') !== 0 ||
+        result.data.trigger.rule !== (positionSide === 'LONG' ? 2 : 1) ||
+        compareAmounts(result.data.trigger.price, triggerPrice) !== 0) {
+      throw new GateTestnetError('Gate fixture could not verify the requested full-position reduce-only stop.', 409);
+    }
   }
 
   async function lookupOrder(
@@ -501,7 +534,8 @@ export function createGateTestnetAdapter(
     getOrderStatus: (symbol, orderId) => lookupOrder(symbol, orderId, 'id'),
     // Gate's lookup retention can hide a cancelled order. Never treat null as safe to resubmit.
     reconcileOrder: (symbol, orderId) => lookupOrder(symbol, orderId, 'text'),
-    ...(fixtureMode ? { cancelOrder } : {}),
+    ...(fixtureMode === 'MOCK_CANCELLATION' || fixtureMode === 'MOCK_LIMIT_LIFECYCLE' ? { cancelOrder } : {}),
     ...(fixtureMode === 'MOCK_LIMIT_LIFECYCLE' ? { placeFixtureLimitOrder } : {}),
+    ...(fixtureMode === 'MOCK_PROTECTION_READBACK' ? { verifyFixtureStop } : {}),
   };
 }

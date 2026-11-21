@@ -451,14 +451,12 @@ function isEligibleForEvent(
   highConviction: boolean,
 ) {
   if (score < preferences.minimum_setup_score) return false;
-  if (eventType === 'NEW_SIGNAL') {
+  if (eventType === 'NEW_SIGNAL' || eventType === 'SIGNAL_GENERATED' || eventType === 'SIGNAL_UPDATED') {
     const directionEnabled = side === 'LONG' ? preferences.long_enabled : preferences.short_enabled;
     return directionEnabled || (highConviction && preferences.high_conviction_enabled);
   }
-  if (eventType === 'SIGNAL_UPDATED') {
-    const directionEnabled = side === 'LONG' ? preferences.long_enabled : preferences.short_enabled;
-    return directionEnabled || (highConviction && preferences.high_conviction_enabled);
-  }
+  // ENTRY_OPEN is a signal-lifecycle record. Execution events need authoritative venue evidence.
+  if (eventType === 'ENTRY_OPEN') return false;
   const setting = EVENT_PREFERENCE[eventType];
   return setting ? preferences[setting] === true : true;
 }
@@ -477,16 +475,21 @@ async function dispatchSignalEvents(settings: NotificationSystemSettings) {
     tp1: string;
     tp2: string;
     tp3: string;
+    legacy_signal_event: boolean;
   }>(
     `SELECT e.id, e.signal_id, e.event_type, e.payload, s.symbol, s.side, s.setup_score,
-            s.entry_price, s.initial_stop, s.tp1, s.tp2, s.tp3
+            s.entry_price, s.initial_stop, s.tp1, s.tp2, s.tp3,
+            e.event_type = 'SIGNAL_GENERATED' AND EXISTS (
+              SELECT 1 FROM public.signal_events legacy
+              WHERE legacy.signal_id = e.signal_id AND legacy.event_type = 'NEW_SIGNAL'
+            ) AS legacy_signal_event
        FROM public.signal_events e
        JOIN public.market_signals s ON s.id = e.signal_id
       WHERE e.processed_at IS NULL
       ORDER BY e.id ASC LIMIT 100`,
   );
   for (const event of events.rows) {
-    if (!settings.enabled) {
+    if (!settings.enabled || event.legacy_signal_event || event.event_type === 'ENTRY_OPEN') {
       await query('UPDATE public.signal_events SET processed_at = NOW() WHERE id = $1', [event.id]);
       continue;
     }

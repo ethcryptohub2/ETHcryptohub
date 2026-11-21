@@ -486,6 +486,16 @@ html:not([data-theme='dark']) .scanner-signal-badge.is-short { border-color:#fca
 .notification-empty { padding:20px; border:1px dashed #334155; border-radius:11px; color:#94a3b8; text-align:center; }
 .notification-toast { position:sticky; top:12px; z-index:2; display:flex; align-items:center; justify-content:space-between; gap:12px; padding:13px 15px; border:1px solid #0e7490; border-radius:11px; background:#08242df2; box-shadow:0 12px 35px #0008; }
 .notification-toast > div { display:grid; gap:5px; }
+.notification-toast { animation:notification-toast-fade 5s both; }
+.notification-toast.is-persistent { animation:none; }
+@keyframes notification-toast-fade {
+  0% { opacity:0; transform:translateX(12px); }
+  5%, 94% { opacity:1; transform:none; }
+  100% { opacity:0; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .notification-toast { animation:none; }
+}
 .notification-toast strong { color:#e0f2fe; font-size:12px; }
 .notification-toast span { color:#94a3b8; font-size:11px; }
 .notification-item { display:grid; gap:13px; padding:15px; border:1px solid #263449; border-radius:12px; background:#0a101a99; }

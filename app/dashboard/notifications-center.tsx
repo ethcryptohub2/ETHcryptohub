@@ -58,6 +58,19 @@ function eventLabel(event: NotificationItem) {
   return event.event_type.replaceAll('_', ' ');
 }
 
+function rememberDelivery(kind: 'toast' | 'sound', id: string) {
+  const key = `ethcryptohub-notification-${kind}-recent`;
+  try {
+    const stored: unknown = JSON.parse(localStorage.getItem(key) ?? '[]');
+    const ids = Array.isArray(stored) ? stored.filter(value => typeof value === 'string').slice(-199) : [];
+    if (ids.includes(id)) return false;
+    localStorage.setItem(key, JSON.stringify([...ids, id]));
+  } catch {
+    // Per-view deduplication still applies when browser storage is unavailable.
+  }
+  return true;
+}
+
 export function NotificationsCenter() {
   const router = useRouter();
   const [notifications, setNotifications] = useState<NotificationItem[]>([]);
@@ -69,8 +82,9 @@ export function NotificationsCenter() {
   const preferences = useRef<ClientPreferences | null>(null);
   const seen = useRef(new Set<string>());
   const initialized = useRef(false);
+  const inFlight = useRef<Promise<void> | null>(null);
 
-  const refresh = useCallback(async () => {
+  const load = useCallback(async () => {
     const [notificationResponse, preferencesResponse] = await Promise.all([
       fetch('/api/notifications', { cache: 'no-store' }),
       preferences.current ? Promise.resolve(null) : fetch('/api/notifications/preferences', { cache: 'no-store' }),
@@ -97,18 +111,12 @@ export function NotificationsCenter() {
     const current = notificationBody.data.notifications;
     if (initialized.current) {
       const newNotifications = current.filter((notification) => !seen.current.has(notification.id));
-      if (newNotifications[0]) {
-        const toastKey = `ethcryptohub-notification-toast:${newNotifications[0].id}`;
-        if (!localStorage.getItem(toastKey)) {
-          localStorage.setItem(toastKey, '1');
-          setToast(newNotifications[0]);
-        }
+      if (newNotifications[0] && rememberDelivery('toast', newNotifications[0].id)) {
+        setToast(newNotifications[0]);
       }
       for (const notification of current) {
         if (seen.current.has(notification.id)) continue;
-        const key = `ethcryptohub-notification-played:${notification.id}`;
-        if (notification.read_at === null && !localStorage.getItem(key)) {
-          localStorage.setItem(key, '1');
+        if (notification.read_at === null && rememberDelivery('sound', notification.id)) {
           const prefs = preferences.current;
           if (
             prefs?.sound_enabled &&
@@ -130,7 +138,15 @@ export function NotificationsCenter() {
         }
       }
     }
-    for (const notification of current) seen.current.add(notification.id);
+    for (const notification of [...current].reverse()) {
+      seen.current.delete(notification.id);
+      seen.current.add(notification.id);
+    }
+    while (seen.current.size > 500) {
+      const oldest = seen.current.values().next().value;
+      if (oldest === undefined) break;
+      seen.current.delete(oldest);
+    }
     initialized.current = true;
     setNotifications(current);
     setUnreadCount(notificationBody.data.unreadCount);
@@ -138,12 +154,13 @@ export function NotificationsCenter() {
     setError('');
   }, []);
 
+  const refresh = useCallback(() => {
+    inFlight.current ??= load().finally(() => { inFlight.current = null; });
+    return inFlight.current;
+  }, [load]);
+
   useEffect(() => {
     let active = true;
-    const onServiceWorkerMessage = (event: MessageEvent<{ type?: string }>) => {
-      if (event.data?.type === 'SIGNAL_NOTIFICATION') void refresh();
-    };
-    navigator.serviceWorker?.addEventListener('message', onServiceWorkerMessage);
     const run = async () => {
       try {
         await refresh();
@@ -153,6 +170,10 @@ export function NotificationsCenter() {
         if (active) setLoaded(true);
       }
     };
+    const onServiceWorkerMessage = (event: MessageEvent<{ type?: string }>) => {
+      if (event.data?.type === 'SIGNAL_NOTIFICATION') void run();
+    };
+    navigator.serviceWorker?.addEventListener('message', onServiceWorkerMessage);
     void run();
     const timer = window.setInterval(() => { void run(); }, 12_000);
     return () => {
@@ -164,7 +185,7 @@ export function NotificationsCenter() {
 
   useEffect(() => {
     if (!toast) return;
-    const timer = window.setTimeout(() => setToast(null), 7000);
+    const timer = window.setTimeout(() => setToast(null), 5000);
     return () => window.clearTimeout(timer);
   }, [toast]);
 
@@ -177,6 +198,7 @@ export function NotificationsCenter() {
         body: JSON.stringify({ action: 'mark_read', id }),
       });
       if (!response.ok) throw new Error('Could not mark notification as read.');
+      await inFlight.current?.catch(() => undefined);
       await refresh();
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : 'Could not mark notification as read.');
@@ -200,6 +222,7 @@ export function NotificationsCenter() {
         body: JSON.stringify({ action: 'mark_all_read' }),
       });
       if (!response.ok) throw new Error('Could not mark notifications as read.');
+      await inFlight.current?.catch(() => undefined);
       await refresh();
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : 'Could not mark notifications as read.');
@@ -207,7 +230,7 @@ export function NotificationsCenter() {
   }
 
   return <section id="notifications" className="card stack notification-center">
-    {toast && <div className="notification-toast" role="status">
+    {toast && <div key={toast.id} className="notification-toast" role="status">
       <div><strong>{eventLabel(toast)} · {toast.symbol}</strong><span>Score {toast.setup_score} · {toast.timeframe}</span></div>
       <Link href={`/signals/${toast.signal_id}`} onClick={(event) => {
         if (!toast.read_at) {

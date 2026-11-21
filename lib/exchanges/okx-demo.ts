@@ -79,6 +79,30 @@ const cancellationAcknowledgment = z.object({
   clOrdId: z.union([clientOrderId, z.literal('')]),
   sCode: z.literal('0'),
 });
+const protectionFixtureInput = z.object({
+  symbol: swapId,
+  algoId: exchangeOrderId,
+  positionSide: z.enum(['LONG', 'SHORT']),
+  quantity: orderAmount,
+  stop: orderAmount,
+  takeProfit: orderAmount,
+});
+const protectionFixtureRow = z.object({
+  instId: swapId,
+  algoId: exchangeOrderId,
+  side: z.enum(['buy', 'sell']),
+  posSide: z.literal('net'),
+  state: z.literal('live'),
+  ordType: z.literal('oco'),
+  reduceOnly: z.literal('true'),
+  sz: orderAmount,
+  slTriggerPx: orderAmount,
+  tpTriggerPx: orderAmount,
+  slTriggerPxType: z.literal('mark'),
+  tpTriggerPxType: z.literal('mark'),
+  slOrdPx: z.literal('-1'),
+  tpOrdPx: z.literal('-1'),
+});
 
 export type OkxDemoAccountConfiguration = {
   accountLevel: 'spot' | 'futures' | 'multi-currency-margin' | 'portfolio-margin';
@@ -200,18 +224,20 @@ type OkxDemoAdapter = ExchangeAdapter & {
   readonly capabilities: Readonly<AdminDemoProviderCapabilities>;
   getAccountConfiguration(): Promise<OkxDemoAccountConfiguration>;
   getOrderStatus(symbol: string, orderId: string): Promise<ExchangeOrder | null>;
+  verifyFixtureProtection(input: z.infer<typeof protectionFixtureInput>): Promise<void>;
 };
 
 export function createOkxDemoAdapter(
   credentials: ExchangeCredentials,
   transport?: typeof fetch,
-  fixtureMode?: 'MOCK_CANCELLATION' | 'MOCK_LIMIT_LIFECYCLE',
+  fixtureMode?: 'MOCK_CANCELLATION' | 'MOCK_LIMIT_LIFECYCLE' | 'MOCK_PROTECTION_READBACK',
 ): OkxDemoAdapter {
   assertCredential(credentials?.apiKey, 'API key');
   assertCredential(credentials?.apiSecret, 'API secret');
   assertCredential(credentials?.passphrase, 'API passphrase');
   if (fixtureMode !== undefined && (
-    !['MOCK_CANCELLATION', 'MOCK_LIMIT_LIFECYCLE'].includes(fixtureMode) || !transport || transport === fetch ||
+    !['MOCK_CANCELLATION', 'MOCK_LIMIT_LIFECYCLE', 'MOCK_PROTECTION_READBACK'].includes(fixtureMode) ||
+    !transport || transport === fetch ||
     ![credentials.apiKey, credentials.apiSecret, credentials.passphrase].every(
       (value) => /^fixture-[a-z0-9-]{1,60}$/.test(value),
     )
@@ -350,6 +376,25 @@ export function createOkxDemoAdapter(
 
     async testConnection() {
       await getRawAccountConfiguration();
+    },
+
+    async verifyFixtureProtection(input) {
+      if (fixtureMode !== 'MOCK_PROTECTION_READBACK') return unsupported('protection readback');
+      const parsed = protectionFixtureInput.safeParse(input);
+      if (!parsed.success) throw new OkxDemoError('Invalid OKX protection fixture scope.', 422);
+      const { symbol, algoId, positionSide, quantity, stop, takeProfit } = parsed.data;
+      const side = positionSide === 'LONG' ? 'sell' : 'buy';
+      if (![quantity, stop, takeProfit].every(isPositiveDecimal) ||
+          compareDecimals(stop, takeProfit) !== (side === 'sell' ? -1 : 1)) {
+        throw new OkxDemoError('Invalid OKX protection fixture size or trigger ordering.', 422);
+      }
+      const rows = await request('GET', '/api/v5/trade/order-algo', { algoId }, true);
+      const row = protectionFixtureRow.safeParse(rows[0]);
+      if (rows.length !== 1 || !row.success || row.data.instId !== symbol || row.data.algoId !== algoId ||
+          row.data.side !== side || compareDecimals(row.data.sz, quantity) !== 0 ||
+          compareDecimals(row.data.slTriggerPx, stop) !== 0 || compareDecimals(row.data.tpTriggerPx, takeProfit) !== 0) {
+        throw new OkxDemoError('OKX fixture could not verify the requested active reduce-only TP/SL pair.', 409);
+      }
     },
 
     async getAccountConfiguration() {

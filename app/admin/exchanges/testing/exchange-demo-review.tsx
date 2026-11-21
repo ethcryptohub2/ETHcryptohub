@@ -9,6 +9,7 @@ import {
 } from '../../../../lib/admin-demo-provider-contract';
 import styles from './exchange-demo-review.module.css';
 import { DemoCredentialStorage } from './demo-credential-storage';
+import { DemoExecutionNotices } from './demo-execution-notices';
 
 const providerDetails = {
   BINANCE: { name: 'Binance USD-M', passphrase: false, fixtures: 'Account, instruments, order and protection lifecycle' },
@@ -29,7 +30,7 @@ const accountPanels = [
   ['Test results', 'No remote test results available in this review.'],
 ] as const;
 
-export function ExchangeDemoReview() {
+export function ExchangeDemoReview({ auditMonitoring = false }: { auditMonitoring?: boolean }) {
   const [provider, setProvider] = useState<AdminDemoProvider>('BINANCE');
   const { name, passphrase, fixtures } = providerDetails[provider];
   const environment = ADMIN_DEMO_PROVIDER_ENVIRONMENTS[provider];
@@ -155,6 +156,7 @@ export function ExchangeDemoReview() {
           ))}
         </dl>
       </section>
+      {auditMonitoring && <DemoExecutionNotices key={provider} provider={provider} />}
     </div>
   );
 }
