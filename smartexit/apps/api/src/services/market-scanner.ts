@@ -441,7 +441,7 @@ export function calculateSupertrend(
   return { direction, atr };
 }
 
-function parseCandles(body: unknown): MarketCandle[] | null {
+export function parseCandles(body: unknown): MarketCandle[] | null {
   if (!Array.isArray(body)) return null;
   const candles: MarketCandle[] = [];
   for (const row of body) {

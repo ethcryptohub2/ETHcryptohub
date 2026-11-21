@@ -217,7 +217,7 @@ export function HighRiskScalping({
 
   return <main className="shell">
     <ScannerTabs active={activeTab} onChange={onTabChange} />
-    <header className="topbar"><Link className="brand" href="/">ETHCRYPTOHUB</Link><nav className="links"><Link href="/scanner/successful">Successful Signals</Link><Link href="/scanner/history?scannerType=HIGH_RISK">High-Risk Signal History</Link><Link href="/scanner/performance">Performance</Link><Link href="/dashboard">Dashboard</Link><Link href="/settings">Settings</Link>{isAdmin && <Link href="/admin">Admin</Link>}</nav></header>
+    <header className="topbar"><Link className="brand" href="/">ETHCRYPTOHUB</Link><nav className="links"><Link href="/scanner/successful">Successful Signals</Link><Link href="/dashboard">Dashboard</Link><Link href="/settings">Settings</Link>{isAdmin && <Link href="/admin">Admin</Link>}</nav></header>
     <section className="hero scanner-hero">
       <p className="mono">HIGH RISK · SAVED SIGNALS</p>
       <h1>High-Risk Scalping</h1>
@@ -239,6 +239,10 @@ export function HighRiskScalping({
     </section>
     <section className="card stack"><h2>High-Risk setups</h2>
       <p className="muted">Browse the latest 200 saved High-Risk signal records. Refresh reads saved records without requesting new market data.</p>
+      <nav className="links" aria-label="High-Risk signal records">
+        <Link href="/scanner/history?scannerType=HIGH_RISK">High-Risk Signal History</Link>
+        <Link href="/scanner/performance">Signal Performance</Link>
+      </nav>
       <div className="links">
         <label>View<select value={view} onChange={(event) => { setPage(1); setView(event.target.value as typeof view); }}><option value="active">Active opportunities</option><option value="entered">Recorded entries</option><option value="history">Inactive and expired</option></select></label>
         <label>Symbol<input value={symbol} maxLength={25} onChange={(event) => { setPage(1); setSymbol(event.target.value); }} /></label>

@@ -7,6 +7,7 @@ const selected = new Set(watchlist.symbols);
 
 /** A ticker snapshot has no book/trade continuity and is never ingested as a MarketObservation. */
 export async function fetchPublicRestSnapshot(signal: AbortSignal, transport: typeof fetch = fetch) {
+  const started = performance.now();
   const response = await transport(endpoint, {
     method: 'GET',
     cache: 'no-store',
@@ -19,7 +20,11 @@ export async function fetchPublicRestSnapshot(signal: AbortSignal, transport: ty
   const usedWeight = weightHeader !== null && /^\d+$/.test(weightHeader) ? Number(weightHeader) : NaN;
   if (response.status !== 200 || !Number.isSafeInteger(usedWeight) || usedWeight >= 300 || !response.body) {
     await response.body?.cancel().catch(() => {});
-    return { state: 'UNAVAILABLE' as const, status: response.status, quotes: [] };
+    const reasons: Record<number, string> = { 403: 'PROVIDER_DENIED', 418: 'PROVIDER_RATE_LIMIT',
+      429: 'PROVIDER_RATE_LIMIT', 451: 'PROVIDER_REGION_RESTRICTION' };
+    const reason = response.status === 200 ? 'WEIGHT_GUARD_OR_MISSING_BODY' : reasons[response.status] ?? 'PROVIDER_HTTP_ERROR';
+    return { state: 'UNAVAILABLE' as const, status: response.status, reason,
+      providerLatencyMs: Math.round(performance.now() - started), quoteCount: 0, quotes: [] };
   }
   const reader = response.body.getReader();
   const chunks: Uint8Array[] = [];
@@ -53,6 +58,8 @@ export async function fetchPublicRestSnapshot(signal: AbortSignal, transport: ty
   return {
     state: quotes.size === selected.size ? 'SNAPSHOT' as const : 'INCOMPLETE' as const,
     status: response.status,
+    providerLatencyMs: Math.round(performance.now() - started),
+    quoteCount: quotes.size,
     receivedAt,
     quotes: watchlist.symbols.flatMap(symbol => quotes.get(symbol) ?? []),
   };

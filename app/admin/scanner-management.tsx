@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { TABLE_PAGE_SIZE } from '../../lib/pagination';
 import { TablePagination } from './table-pagination';
+import { ScannerEvaluation } from './scanner-evaluation';
 
 type ScannerCoin = {
   id: string;
@@ -155,6 +156,7 @@ export function AdminScannerManagement() {
       </button>
     </div>
     {state && !state.marketRefreshEnabled && <p className="muted">Market refresh requires separate approval.</p>}
+    <ScannerEvaluation />
     {error && <p className="error" role="alert">{error}</p>}
     {notice && <p className="success" role="status">{notice}</p>}
     {!state && !error && <p className="muted">Loading scanner universe…</p>}

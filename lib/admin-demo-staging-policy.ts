@@ -69,3 +69,15 @@ export function isAdminDemoExecutionRequestApproved(
     isDisabled(env.BINANCE_DEMO_REMOTE_TESTS_AUTHORIZED) &&
     executionGateNames.every((name) => isDisabled(env[name]));
 }
+
+export function isPreviewMarketRequestApproved(
+  env: AdminDemoEnvironment, hostname: string, operation: 'PUBLIC_REST_SNAPSHOT' | 'SCANNER_EVALUATION',
+  now = Date.now(),
+) {
+  const sha = env[`SMARTEXIT_${operation}_APPROVED_SHA`];
+  const expires = Date.parse(env[`SMARTEXIT_${operation}_APPROVED_UNTIL`] ?? '');
+  return Boolean(sha && /^[a-f0-9]{40}$/.test(sha) && sha === env.VERCEL_GIT_COMMIT_SHA &&
+    hostname === env.VERCEL_URL && env.VERCEL_ENV === 'preview' &&
+    env.SMARTEXIT_STAGING_SUPABASE_PROJECT_REF === 'ghecpkpaxbrvehquhzkr' &&
+    expires > now && expires - now <= 15 * 60_000 && isApprovedAdminDemoStagingTarget(env));
+}
