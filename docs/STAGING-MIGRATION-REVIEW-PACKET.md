@@ -21,6 +21,21 @@ The linked files are the exact migration SQL. Preserve this order and pin the re
 
 ## Baseline and destructive-change review
 
+SHA-256 of the reviewed Windows checkout bytes at `f1ab47b2116a7ff3eafe7346ee646d092c724f58`, in the order above. Recompute against the bytes supplied to the approved migration mechanism. If checkout line endings differ, establish and verify a new manifest before approval.
+
+```text
+85860d5084540b3cbc20e9a47364b32e712ad7ff23b88744467273be5935cc6b  202611100003
+65abddc1982bb0fbade4dfa168036dbdebe8757efbc70d30e3beb4ec94ccec4c  202611100004
+833d803aedf0eac6092187ec56b1d4e544415c7102217cdec34fa534d195323b  202611110001
+4440232ed7016d82150f1e41372734df45535540b5c910aed38ed5d0472dd0b8  202611110002
+8962eeba1be17db1d08336646741e504217c8ba8c279d97a4ac20268e8b9e69b  202611110003
+eed08a665bc49ce2ef2b814bc1888678cd4d72b2a0f8c47049994a15ac9cb6a9  202611110004
+1373e5108a59379c421c99c540a9e0ae417cbb898ac56e31885e877a76d52240  202611110005
+3c72a71fe11b693bb8e49de1b2872e6e19693032e3455055d1935ba3315cce98  202611110006
+5336100befb393f5cbb2b38967791d23eceafb205989e784f63d0f13944255fa  202611110007
+057bfb8c78befc092d4da39dc6a6efb4eb5e45b49f572bb282c2dfeb61e9a0fc  202611140001
+```
+
 Read-only Staging aggregates showed two users, two legacy trading-settings rows, zero legacy credential rows, and zero executions. Incompatible environments, incompatible execution statuses, duplicate execution keys and unsafe legacy execution settings each counted zero. No user identifiers or credential values were inspected for the packet. Recheck the baseline at execution time.
 
 - The ten files contain no top-level table drop, truncate, or row deletion. They replace constraints and a strategy policy and perform row backfills and full-table safety updates. Index builds, constraint validation and policy replacement can hold locks. Choose an approved change window and lock/statement limits.
@@ -39,6 +54,8 @@ Read-only Staging catalog checks found 79 tables/sequences in `public`, one in `
 The Staging catalog showed `anon` and `authenticated` as non-login roles without RLS bypass. `service_role` was non-login with RLS bypass, and `postgres` was a login role with RLS bypass. None of the four had PostgreSQL superuser status. The restore should preserve the difference between browser access and privileged runtime access. Any elevated local fixture owner should be used only for restore setup.
 
 The approval must name Staging project `ghecpkpaxbrvehquhzkr`, database `postgres`, approved operator connection and restricted destination. Use the direct or session-mode connection with certificate verification and a securely supplied password file. Independently verify that the connection identifies Staging before it is used. A PostgreSQL 17 custom archive should cover data, sequences, definitions and ACLs for `public` and `supabase_migrations` in one consistent dump. Include `smartexit_private` as an additional schema only if a new catalog check finds it and approval names it. Capture the migration ledger's logical names and physical versions, role attributes and memberships without password hashes, ownership, grants, policy definitions, extension versions and publication membership as companion metadata. Cluster-wide roles, managed service settings and Storage blobs require their own recovery plan. [PostgreSQL pg_dump](https://www.postgresql.org/docs/17/app-pgdump.html)
+
+Suggested operator approval wording after selecting the destination and retention: “I approve one read-only PostgreSQL 17 logical export from Staging `ghecpkpaxbrvehquhzkr`, database `postgres`, using verified service `smartexit-staging-reviewed`. Export only `public` and `supabase_migrations` plus the listed companion metadata to the encrypted, access-restricted local directory `<absolute path>`. Retain it for `<duration>` with access limited to `<custodian>`. I approve restoring this archive to a disposable loopback-only PostgreSQL 17 instance for recovery verification. Migration execution, production access, uploading the archive and exporting managed Auth or Storage require separate approval.” Never include the service password or keys in the approval.
 
 The following is a command template for a separately approved export. `smartexit-staging-reviewed` must be an independently verified local PostgreSQL service definition. Do not place connection secrets in the command or shell history. `$BackupDirectory` must already resolve to a new encrypted, access-restricted directory outside the repository. The output can contain password hashes, session hashes, account identifiers and encrypted credential data.
 
@@ -70,5 +87,5 @@ Keep `BINANCE_CREDENTIALS_KEY`, app auth signing material and any managed Auth s
 
 - A fresh loopback-only PostgreSQL 17.12 cluster applied all 25 canonical files in order, including the ten pending Staging files, with synthetic credentials and settings at the legacy boundary. The disposable fixture passed with simulated Supabase roles, Auth helpers, and permissive service-role defaults. The cluster was stopped afterward. Managed Staging grants, dashboard behavior and a restore of actual Staging data remain separate checks.
 - Use the pre-migration section of the [Staging release verification SQL](../supabase/verification/functional-staging-release-readiness.sql) before applying anything. Run the labeled post-migration sections only once the chain is installed. Check exact migration names, affected row counts, encryption copy equality using counts only, zero unsafe defaults, RLS and effective role privileges.
-- The [disposable fixture](../supabase/verification/admin-demo-local-migration-fixture.sql) writes synthetic local data in a transaction rolled back by the fixture. It tests effective browser grants, RPC access, disabled execution defaults, credential backfill and timestamp semantics, wrong-role and cross-actor rejection, replay rejection, audit event creation, and rejection of audit mutation and parent deletion. Use it only in a fresh local rehearsal.
+- The [disposable fixture](../supabase/verification/admin-demo-local-migration-fixture.sql) writes synthetic local data in a transaction rolled back by the fixture. It tests effective browser grants, RPC access, disabled execution defaults, credential backfill and timestamp semantics, wrong-role and cross-actor rejection, replay rejection, audit event creation, and rejection of audit mutation and parent deletion. The 21 November 2026 recovery run re-applied all 25 files and passed this fixture on fresh loopback-only PostgreSQL 17.12. The cluster shut down successfully. Use the fixture only in a fresh local rehearsal.
 - After an approved deployment verify the intended Staging database identity independently. Keep remote exchange reads, Demo submission, scheduled jobs, worker ingestion, and notifications disabled until separately approved.

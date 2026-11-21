@@ -61,7 +61,7 @@ export function SubscriptionPanel({ paywall = false }: { paywall?: boolean }) {
 
   const load = useCallback(async () => {
     const [subscriptionResponse, historyResponse] = await Promise.all([
-      fetch('/api/subscription', { cache: 'no-store' }),
+      fetch('/api/subscription?mode=read-only', { cache: 'no-store' }),
       fetch('/api/subscription/history', { cache: 'no-store' }),
     ]);
     const body = await subscriptionResponse.json() as {

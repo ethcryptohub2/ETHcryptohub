@@ -10,7 +10,7 @@ export const dynamic = 'force-dynamic';
 
 export async function GET(_request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
-    const { user } = await requirePremiumUser();
+    const { user } = await requirePremiumUser({ reconcile: false });
     const { id } = await params;
     if (!/^\d{1,20}$/.test(id)) return NextResponse.json({ error: 'Signal not found.' }, { status: 404 });
     const result = await getSignalHistoryDetail(id, user.id);

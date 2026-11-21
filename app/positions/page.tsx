@@ -10,7 +10,7 @@ export const dynamic = 'force-dynamic';
 export default async function PositionsPage() {
   const user = await currentUser();
   if (!user) redirect('/login');
-  const subscription = await getSubscriptionEntitlement(user.id);
+  const subscription = await getSubscriptionEntitlement(user.id, { reconcile: false });
   if (!subscription.hasPremiumAccess) {
     return <main className="shell">
       <header className="topbar"><Link className="brand" href="/">ETHCRYPTOHUB</Link><nav className="links"><Link href="/dashboard">Dashboard</Link><Link href="/scanner">Scanner</Link></nav></header>

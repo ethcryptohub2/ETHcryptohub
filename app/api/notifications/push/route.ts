@@ -29,7 +29,7 @@ const endpointSchema = z.object({
 
 export async function GET() {
   try {
-    await requirePremiumUser();
+    await requirePremiumUser({ reconcile: false });
     const publicKey = process.env.VAPID_PUBLIC_KEY;
     if (!publicKey || !process.env.VAPID_PRIVATE_KEY) {
       return NextResponse.json({ error: 'Push notifications are not configured on this deployment.' }, { status: 503 });

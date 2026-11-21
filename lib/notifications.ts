@@ -171,10 +171,6 @@ export async function updateNotificationPreferences(
 }
 
 export async function getNotificationPreferences(userId: number) {
-  await query(
-    'INSERT INTO public.user_notification_preferences (user_id) VALUES ($1) ON CONFLICT (user_id) DO NOTHING',
-    [userId],
-  );
   const result = await query<NotificationPreferences>(
     `SELECT push_enabled, sound_enabled, long_enabled, short_enabled, high_conviction_enabled,
             tp1_enabled, tp2_enabled, tp3_enabled, stop_loss_enabled, expiry_enabled,
@@ -185,7 +181,18 @@ export async function getNotificationPreferences(userId: number) {
        FROM public.user_notification_preferences WHERE user_id = $1`,
     [userId],
   );
-  if (!result.rows[0]) throw new Error('Notification preferences could not be loaded.');
+  if (!result.rows[0]) {
+    // Match the defaults in 202611060002_signal_notifications.sql.
+    return {
+      push_enabled: false, sound_enabled: false,
+      long_enabled: true, short_enabled: true, high_conviction_enabled: true,
+      tp1_enabled: true, tp2_enabled: true, tp3_enabled: true,
+      stop_loss_enabled: true, expiry_enabled: true,
+      minimum_setup_score: 60, alarm_volume: 0.7, quiet_hours_enabled: false,
+      quiet_hours_start: '22:00', quiet_hours_end: '07:00',
+      quiet_hours_timezone: 'UTC', do_not_disturb: false,
+    };
+  }
   return { ...result.rows[0], alarm_volume: Number(result.rows[0].alarm_volume) };
 }
 

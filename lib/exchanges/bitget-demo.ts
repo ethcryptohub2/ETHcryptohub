@@ -53,11 +53,12 @@ export class BitgetDemoError extends Error {
 export function signBitgetDemoRequest(
   apiSecret: string,
   timestamp: string,
-  method: 'GET',
+  method: 'GET' | 'POST',
   requestPath: string,
   queryString = '',
+  body = '',
 ) {
-  const preimage = `${timestamp}${method}${requestPath}${queryString ? `?${queryString}` : ''}`;
+  const preimage = `${timestamp}${method}${requestPath}${queryString ? `?${queryString}` : ''}${body}`;
   return createHmac('sha256', apiSecret).update(preimage).digest('base64');
 }
 
@@ -125,19 +126,31 @@ const orderResponse = z.object({
   cumExecQty: nonnegative,
   price: z.union([nonnegative, z.literal('')]),
 });
+const cancellationResponse = z.object({ orderId, clientOid: z.string().max(128) });
+
+function compareAmounts(left: string, right: string) {
+  const [leftInteger, leftFraction = ''] = left.split('.');
+  const [rightInteger, rightFraction = ''] = right.split('.');
+  const scale = Math.max(leftFraction.length, rightFraction.length);
+  const leftUnits = BigInt(leftInteger + leftFraction.padEnd(scale, '0'));
+  const rightUnits = BigInt(rightInteger + rightFraction.padEnd(scale, '0'));
+  return leftUnits < rightUnits ? -1 : leftUnits > rightUnits ? 1 : 0;
+}
 
 const BITGET_FIXTURE_ROUTES = {
   balance: '/api/v3/account/assets',
   instruments: '/api/v3/market/instruments',
   positions: '/api/v3/position/current-position',
   order: '/api/v3/trade/order-info',
+  cancel: '/api/v3/trade/cancel-order',
 } as const;
 
 type FixtureRequest = Readonly<{
   origin: typeof BITGET_DEMO_REST_URL;
-  method: 'GET';
+  method: 'GET' | 'POST';
   path: (typeof BITGET_FIXTURE_ROUTES)[keyof typeof BITGET_FIXTURE_ROUTES];
   query: string;
+  body?: string;
   headers: Readonly<Record<string, string>>;
 }>;
 
@@ -161,11 +174,13 @@ export function createBitgetDemoFixtureAdapter(
   }
   const { apiKey, apiSecret, passphrase } = credentials;
   const { respond, now } = options;
+  const attemptedCancellations = new Set<string>();
 
-  async function read<T>(
+  async function request<T>(
     route: keyof typeof BITGET_FIXTURE_ROUTES,
     query: string,
     schema: z.ZodType<T>,
+    body?: string,
   ): Promise<T> {
     const clock = now();
     if (!Number.isSafeInteger(clock) || clock <= 0) {
@@ -173,19 +188,22 @@ export function createBitgetDemoFixtureAdapter(
     }
     const path = BITGET_FIXTURE_ROUTES[route];
     const timestamp = String(clock);
+    const method = route === 'cancel' ? 'POST' : 'GET';
     let response: Awaited<ReturnType<typeof respond>>;
     try {
       response = await respond({
         origin: BITGET_DEMO_REST_URL,
-        method: 'GET',
+        method,
         path,
         query,
+        ...(body !== undefined ? { body } : {}),
         headers: {
           'ACCESS-KEY': apiKey,
           'ACCESS-PASSPHRASE': passphrase!,
-          'ACCESS-SIGN': signBitgetDemoRequest(apiSecret, timestamp, 'GET', path, query),
+          'ACCESS-SIGN': signBitgetDemoRequest(apiSecret, timestamp, method, path, query, body),
           'ACCESS-TIMESTAMP': timestamp,
           paptrading: '1',
+          ...(method === 'POST' ? { 'Content-Type': 'application/json' } : {}),
         },
       });
     } catch {
@@ -215,9 +233,16 @@ export function createBitgetDemoFixtureAdapter(
       throw new BitgetDemoError('Invalid Bitget fixture order identifiers.', 400);
     }
     const query = new URLSearchParams({ [kind]: identifier }).toString();
-    const row = await read('order', query, orderResponse);
+    const row = await request('order', query, orderResponse);
     if (row[kind] !== identifier || row.symbol !== expectedSymbol) {
       throw new BitgetDemoError('Bitget fixture order response does not match the request.', 502);
+    }
+    const relativeFill = compareAmounts(row.cumExecQty, row.qty);
+    if (relativeFill > 0 ||
+        (row.orderStatus === 'filled' && relativeFill !== 0) ||
+        (row.orderStatus === 'partially_filled' &&
+          (relativeFill !== -1 || compareAmounts(row.cumExecQty, '0') === 0))) {
+      throw new BitgetDemoError('Bitget fixture returned inconsistent order quantities.', 502);
     }
     return {
       symbol: row.symbol,
@@ -243,15 +268,15 @@ export function createBitgetDemoFixtureAdapter(
       positions: true,
       orderStatus: true,
       orderSubmission: false,
-      cancellation: false,
+      cancellation: true,
       protection: false,
       reconciliation: true,
     }),
     async testConnection(): Promise<void> {
-      await read('balance', '', balanceResponse);
+      await request('balance', '', balanceResponse);
     },
     async getAccountBalance(): Promise<Omit<ExchangeBalance, 'unrealizedPnl'>[]> {
-      const { assets } = await read('balance', '', balanceResponse);
+      const { assets } = await request('balance', '', balanceResponse);
       return assets.map((row) => ({
         asset: row.coin,
         walletBalance: row.balance,
@@ -260,7 +285,7 @@ export function createBitgetDemoFixtureAdapter(
       }));
     },
     async getMarketInstruments() {
-      const rows = await read('instruments', `category=${category}`, instrumentsResponse);
+      const rows = await request('instruments', `category=${category}`, instrumentsResponse);
       return rows.map((row) => ({
         exchangeSymbol: row.symbol,
         smartExitSymbol: row.symbol,
@@ -275,7 +300,7 @@ export function createBitgetDemoFixtureAdapter(
       }));
     },
     async getPositions(): Promise<(ExchangePosition & { positionMode: string })[]> {
-      const { list } = await read('positions', `category=${category}`, positionsResponse);
+      const { list } = await request('positions', `category=${category}`, positionsResponse);
       return list.filter((row) => Number(row.total) > 0).map((row) => ({
         symbol: row.symbol,
         side: row.posSide === 'long' ? 'LONG' : 'SHORT',
@@ -288,6 +313,34 @@ export function createBitgetDemoFixtureAdapter(
       }));
     },
     getOrderStatus: (expectedSymbol: string, id: string) => lookupOrder(expectedSymbol, id, 'orderId'),
+    async cancelOrder(expectedSymbol: string, id: string): Promise<void> {
+      const original = await lookupOrder(expectedSymbol, id, 'orderId');
+      if (original.status === 'cancelled') return;
+      if (!['live', 'new', 'partially_filled'].includes(original.status)) {
+        throw new BitgetDemoError('Bitget fixture cancellation requires a confirmed open order.', 409);
+      }
+      if (attemptedCancellations.has(id)) {
+        throw new BitgetDemoError('Bitget fixture already attempted cancellation. Reconcile the original order.', 409);
+      }
+      attemptedCancellations.add(id);
+      try {
+        const body = JSON.stringify({ orderId: id, category });
+        const accepted = await request('cancel', '', cancellationResponse, body);
+        if (accepted.orderId === id && (accepted.clientOid || null) === original.clientOrderId) {
+          const terminal = await lookupOrder(expectedSymbol, id, 'orderId');
+          if (terminal.status === 'cancelled' && terminal.clientOrderId === original.clientOrderId &&
+              terminal.side === original.side && terminal.type === original.type &&
+              compareAmounts(terminal.quantity, original.quantity) === 0 &&
+              compareAmounts(terminal.filledQuantity, original.filledQuantity) >= 0) return;
+        }
+      } catch (error) {
+        throw new BitgetDemoError(
+          'Bitget fixture cancellation could not be confirmed. Reconcile the original order.',
+          error instanceof BitgetDemoError && error.status === 429 ? 429 : 502,
+        );
+      }
+      throw new BitgetDemoError('Bitget fixture cancellation could not be confirmed. Reconcile the original order.', 409);
+    },
     async reconcileOrder(expectedSymbol: string, id: string): Promise<ExchangeOrder | null> {
       try {
         return await lookupOrder(expectedSymbol, id, 'clientOid');

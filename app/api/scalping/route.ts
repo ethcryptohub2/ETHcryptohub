@@ -13,7 +13,7 @@ export const dynamic = 'force-dynamic';
 
 export async function GET() {
   try {
-    const { user } = await requirePremiumUser();
+    const { user } = await requirePremiumUser({ reconcile: false });
     return NextResponse.json({ data: await listHighRiskScalpingSignals(user.id) }, {
       headers: { 'Cache-Control': 'no-store' },
     });

@@ -37,7 +37,7 @@ function price(value: string) {
 export default async function SignalDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const user = await currentUser();
   if (!user) redirect('/login');
-  const subscription = await getSubscriptionEntitlement(user.id);
+  const subscription = await getSubscriptionEntitlement(user.id, { reconcile: false });
   const tradingSettings = await getTradingSettings(user.id);
   if (!subscription.hasPremiumAccess) {
     return <main className="shell">

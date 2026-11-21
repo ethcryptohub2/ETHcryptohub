@@ -3,7 +3,7 @@ import { AuthError } from '../../../lib/auth';
 import { marketScannerQuerySchema } from '../../../smartexit/apps/api/src/schemas';
 import { recommendedMaxAgeSeconds } from '../../../smartexit/apps/api/src/services/market-scanner';
 import type { MarketScannerCandidate } from '../../../smartexit/apps/api/src/services/market-scanner';
-import { applyScannerSignalValidity, savedScannerCandidate } from '../../../lib/scanner-snapshot';
+import { applyScannerSignalValidity, savedScannerCacheStatus, savedScannerCandidate } from '../../../lib/scanner-snapshot';
 import { scannerCoverageModes, scannerRanks, scannerSymbolPrefix, type SavedScannerResponse } from '../../../lib/scanner-universe';
 import {
   defaultNotificationSystemSettings,
@@ -29,7 +29,7 @@ const noStore = { 'Cache-Control': 'no-store' };
 
 export async function GET(request: NextRequest) {
   try {
-    await requirePremiumUser();
+    await requirePremiumUser({ reconcile: false });
   } catch (error) {
     return NextResponse.json(
       {
@@ -87,8 +87,7 @@ export async function GET(request: NextRequest) {
     const lastSavedAt = Date.parse(universe.latest_saved_at ?? '');
     const updatedAt = Number.isFinite(lastSavedAt) && lastSavedAt <= serverNow ? new Date(lastSavedAt).toISOString() : null;
     const lastUniverseSync = Date.parse(universe.universe_synced_at ?? '');
-    const universeStatus = !universe.saved_count ? 'NO_SAVED_RESULTS' :
-      updatedAt && serverNow - lastSavedAt <= configuration.maxAgeSeconds * 1000 ? 'RECENT_CACHE' : 'STALE_CACHE';
+    const universeStatus = savedScannerCacheStatus(universe.saved_count, updatedAt, configuration.maxAgeSeconds, serverNow);
     const result: SavedScannerResponse = {
       exchange: 'BINANCE',
       market: 'USDⓈ-M FUTURES',

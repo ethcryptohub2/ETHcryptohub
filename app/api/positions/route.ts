@@ -7,13 +7,13 @@ export const dynamic = 'force-dynamic';
 
 export async function GET() {
   try {
-    const { user } = await requirePremiumUser();
+    const { user } = await requirePremiumUser({ reconcile: false });
     return Response.json({ data: await listUserSignalEntries(user.id) }, {
       headers: { 'Cache-Control': 'no-store' },
     });
   } catch (error) {
     return Response.json(
-      { error: error instanceof Error ? error.message : 'Recorded positions are unavailable.' },
+      { error: error instanceof AuthError || error instanceof SubscriptionError ? error.message : 'Recorded positions are unavailable.' },
       { status: error instanceof AuthError || error instanceof SubscriptionError ? error.status : 503 },
     );
   }

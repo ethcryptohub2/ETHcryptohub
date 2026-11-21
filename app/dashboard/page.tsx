@@ -12,7 +12,7 @@ export const dynamic = 'force-dynamic';
 export default async function DashboardPage() {
   const user = await currentUser();
   if (!user) redirect('/login');
-  const subscription = await getSubscriptionEntitlement(user.id);
+  const subscription = await getSubscriptionEntitlement(user.id, { reconcile: false });
   return (
     <main className="shell">
       <header className="topbar"><Link className="brand" href="/">ETHCRYPTOHUB</Link><nav className="links"><Link href="/scanner">Market Scanner</Link><Link href="/settings">Settings</Link><Link href="/binance">Binance API</Link>{user.role === 'admin' && <Link href="/admin">Admin</Link>}</nav></header>

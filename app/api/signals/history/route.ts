@@ -23,7 +23,7 @@ const querySchema = z.object({
 
 export async function GET(request: NextRequest) {
   try {
-    await requirePremiumUser();
+    await requirePremiumUser({ reconcile: false });
     const parsed = querySchema.safeParse(Object.fromEntries(request.nextUrl.searchParams));
     if (!parsed.success) return NextResponse.json({ error: 'Invalid signal history filters.' }, { status: 422 });
     const { successful, ...filters } = parsed.data;

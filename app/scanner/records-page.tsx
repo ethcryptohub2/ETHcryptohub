@@ -9,7 +9,7 @@ import { SignalPerformance } from './signal-performance';
 export async function SignalRecordsPage({ mode }: { mode: 'successful' | 'history' | 'performance' }) {
   const user = await currentUser();
   if (!user) redirect('/login');
-  const subscription = await getSubscriptionEntitlement(user.id);
+  const subscription = await getSubscriptionEntitlement(user.id, { reconcile: false });
   if (!subscription.hasPremiumAccess) {
     return <main className="shell">
       <header className="topbar"><Link className="brand" href="/">ETHCRYPTOHUB</Link><nav className="links"><Link href="/scanner">Scanner</Link><Link href="/dashboard">Dashboard</Link></nav></header>
