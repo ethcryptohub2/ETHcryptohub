@@ -66,6 +66,8 @@ export async function runStagingScannerPilot(approval: Approval, signal: AbortSi
     const client = await pool.connect();
     const queryDb = <Row extends QueryResultRow>(sql: string, values: readonly unknown[] = []) =>
       client.query<Row>(sql, [...values]);
+    const canContinue = async () => !signal.aborted && stillApproved() &&
+      (await queryDb<{ stopped: boolean }>('SELECT stopped FROM public.scanner_pilot_control WHERE singleton')).rows[0]?.stopped === false;
     try {
       await client.query('BEGIN');
       await client.query("SET LOCAL statement_timeout = '5s'; SET LOCAL lock_timeout = '1s'; SET LOCAL idle_in_transaction_session_timeout = '20s'");
@@ -75,7 +77,7 @@ export async function runStagingScannerPilot(approval: Approval, signal: AbortSi
       }
       const lock = await client.query<{ acquired: boolean }>('SELECT pg_try_advisory_xact_lock(783121, 501) AS acquired');
       if (!lock.rows[0]?.acquired) return { state: 'BUSY' as const };
-      if (signal.aborted || !stillApproved()) return { state: 'STOPPED' as const };
+      if (!(await canContinue())) return { state: 'STOPPED' as const };
       const denial = await queryDb('SELECT 1 FROM public.scanner_pilot_runs WHERE slot_at >= $1 AND failure_code = ANY($2) LIMIT 1',
         [approval.startsAt, denialCodes]);
       if (denial.rowCount) return { state: 'PROVIDER_STOP_LATCHED' as const };
@@ -91,14 +93,14 @@ export async function runStagingScannerPilot(approval: Approval, signal: AbortSi
         const highRisk = await getHighRiskScalpingSettings(queryDb);
         const eligible = new Set(await getEnabledScannerSymbols(queryDb));
         if (approval.symbols.some(symbol => !eligible.has(symbol))) throw new ScannerEvaluationFailure('SYMBOL_NOT_ENABLED');
-        if (signal.aborted || !stillApproved()) throw new ScannerEvaluationFailure('APPROVAL_ENDED');
+        if (!(await canContinue())) throw new ScannerEvaluationFailure('APPROVAL_ENDED');
         let candidates: MarketScannerCandidate[] = [];
         const evaluation = await evaluateStagingScanner({
           symbols: approval.symbols, minimumScore: standard.minimumSetupScore, highRisk,
           signal: AbortSignal.any([signal, AbortSignal.timeout(15_000)]),
           onStandardCandidates: rows => { candidates = rows; },
         });
-        if (signal.aborted || !stillApproved()) throw new ScannerEvaluationFailure('APPROVAL_ENDED');
+        if (!(await canContinue())) throw new ScannerEvaluationFailure('APPROVAL_ENDED');
         if (candidates.length !== approval.symbols.length ||
             candidates.some(row => row.status !== 'READY' && row.status !== 'WAIT')) {
           throw new ScannerEvaluationFailure('STANDARD_EVIDENCE_INCOMPLETE');
@@ -112,7 +114,7 @@ export async function runStagingScannerPilot(approval: Approval, signal: AbortSi
         for (const row of evaluation.rows) {
           if (row.highRisk.setup && await insertHighRiskSignal(client, row.highRisk.setup, highRisk)) highRiskCreated++;
         }
-        if (signal.aborted || !stillApproved()) throw new ScannerEvaluationFailure('APPROVAL_ENDED');
+        if (!(await canContinue())) throw new ScannerEvaluationFailure('APPROVAL_ENDED');
         await queryDb(
           "UPDATE public.scanner_pilot_runs SET state = 'COMPLETED', finished_at = statement_timestamp(), report = $2::jsonb WHERE slot_at = $1",
           [approval.slotAt, JSON.stringify({ ...evaluation, standardCreated, highRiskCreated,

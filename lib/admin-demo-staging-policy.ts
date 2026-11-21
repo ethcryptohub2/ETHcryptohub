@@ -71,7 +71,7 @@ export function isAdminDemoExecutionRequestApproved(
 }
 
 export function isPreviewMarketRequestApproved(
-  env: AdminDemoEnvironment, hostname: string, operation: 'PUBLIC_REST_SNAPSHOT' | 'SCANNER_EVALUATION' | 'ALPHA_INTELLIGENCE',
+  env: AdminDemoEnvironment, hostname: string, operation: 'PUBLIC_REST_SNAPSHOT' | 'SCANNER_EVALUATION' | 'ALPHA_INTELLIGENCE' | 'ALPHA_HISTORY_WRITE',
   now = Date.now(),
 ) {
   const sha = env[`SMARTEXIT_${operation}_APPROVED_SHA`];

@@ -60,6 +60,28 @@
   gap: .5rem;
 }
 
+.automatic {
+  display: grid;
+  gap: .85rem;
+}
+
+.automaticHeader {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: .5rem 1rem;
+}
+
+.automaticHeader h2 {
+  margin: 0;
+}
+
+.automaticFields {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 12rem), 1fr));
+  gap: .75rem;
+}
+
 .capabilities,
 .evidence {
   display: grid;

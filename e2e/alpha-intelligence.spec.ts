@@ -114,8 +114,14 @@ test('Alpha Admin refresh checks the gate before any provider-triggering POST', 
     if (url.origin !== 'https://alpha-fixture.invalid') return route.abort();
     if (url.pathname === '/fixture') return route.fulfill({ contentType: 'text/html', body: '<main></main>' });
     if (url.pathname === '/api/admin/alpha-intelligence' && request.method() === 'GET') {
+      if (url.search === '?history=1' && approved) {
+        calls.push('archive');
+        return route.fulfill({ json: { data: [{ alpha_id: 'ALPHA_1', chain: 'Fixture', contract: '0xfake',
+          market: 'ALPHA_1USDT', observed_at: checkedAt, collected_at: checkedAt,
+          measurements: { symbol: 'FIXTURE', price: 7, momentumPercent: null } }] } });
+      }
       calls.push('readiness');
-      return route.fulfill({ json: { enabled: approved } });
+      return route.fulfill({ json: { enabled: approved, historyEnabled: approved } });
     }
     if (url.pathname === '/api/csrf') {
       calls.push('csrf');
@@ -145,4 +151,7 @@ test('Alpha Admin refresh checks the gate before any provider-triggering POST', 
   await check.click();
   await expect(page.getByText('Last source check 2026-11-20 12:00:00.000 UTC')).toBeVisible();
   expect(calls).toEqual(['readiness', 'readiness', 'csrf', 'check']);
+  await page.getByRole('button', { name: 'Load archived Alpha observations' }).click();
+  await expect(page.getByText(/FIXTURE.*Archived price 7/)).toBeVisible();
+  expect(calls).toEqual(['readiness', 'readiness', 'csrf', 'check', 'archive']);
 });

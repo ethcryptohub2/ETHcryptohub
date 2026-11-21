@@ -3,10 +3,11 @@ import { AuthError, requireAdmin } from '../../../../lib/auth';
 import { guardedPost } from '../../../../lib/http';
 import { isPreviewMarketRequestApproved } from '../../../../lib/admin-demo-staging-policy';
 import { acquireAlphaSnapshot } from '../../../../lib/alpha-intelligence';
+import { alphaHistoryReadEnabled, readAlphaObservationHistory, storeApprovedAlphaObservations } from '../../../../lib/alpha-observation-history';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
-export const maxDuration = 15;
+export const maxDuration = 20;
 
 const json = (body: object, status = 200) => Response.json(body, { status, headers: { 'Cache-Control': 'no-store' } });
 let nextAttemptAt = 0;
@@ -21,7 +22,14 @@ function approvedBatch(request: NextRequest) {
 export async function GET(request: NextRequest) {
   try {
     await requireAdmin();
-    return json({ enabled: approvedBatch(request) !== null });
+    const hostname = request.nextUrl.hostname;
+    if (request.nextUrl.search === '?history=1') {
+      const data = await readAlphaObservationHistory(process.env, hostname);
+      return data === null ? json({ error: 'ALPHA_HISTORY_DISABLED' }, 503) : json({ data });
+    }
+    if (request.nextUrl.search) return json({ error: 'INVALID_ALPHA_REQUEST' }, 422);
+    return json({ enabled: approvedBatch(request) !== null,
+      ...(alphaHistoryReadEnabled(process.env, hostname) ? { historyEnabled: true } : {}) });
   } catch (error) {
     return json({ error: 'ALPHA_READINESS_UNAVAILABLE' }, error instanceof AuthError ? error.status : 503);
   }
@@ -39,7 +47,8 @@ export async function POST(request: NextRequest) {
     if (now < nextAttemptAt) return json({ error: 'ALPHA_COOLDOWN' }, 429);
     nextAttemptAt = now + 60_000;
     const data = await acquireAlphaSnapshot({ approved: true, tokenIds, transport: fetch, signal: request.signal });
-    return json({ data });
+    const archive = await storeApprovedAlphaObservations(process.env, request.nextUrl.hostname, tokenIds, data, request.signal);
+    return json({ data, archive });
   } catch (error) {
     return json({ error: 'ALPHA_ACQUISITION_UNAVAILABLE' }, error instanceof AuthError ? error.status : 503);
   }

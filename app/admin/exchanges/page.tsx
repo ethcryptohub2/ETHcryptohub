@@ -18,6 +18,7 @@ export default async function ExchangeControlPage() {
       <p className="mono">RESTRICTED OPERATIONS · {user.email}</p>
       <h1>Exchange control.</h1>
       <p className="muted">Provider readiness and environment gates. This panel never exposes user API credentials.</p>
+      <Link className="button-secondary" href="/admin/exchanges/testing#demo-automation-heading">Review Admin Demo auto-trading</Link>
     </section>
     <ExchangeControl />
   </main>;

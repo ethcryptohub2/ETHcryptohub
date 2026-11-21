@@ -5,8 +5,9 @@ import path from 'node:path';
 import pg from 'pg';
 import ts from 'typescript';
 
-if (process.argv.length !== 3 || process.argv[2] !== '--disposable-loopback') {
-  throw new Error('Requires --disposable-loopback and a fresh isolated scanner_fixture database on port 53104.');
+const roleOnly = process.argv[2] === '--disposable-pilot-role';
+if (process.argv.length !== 3 || (process.argv[2] !== '--disposable-loopback' && !roleOnly)) {
+  throw new Error('Requires --disposable-loopback or --disposable-pilot-role and a fresh isolated scanner_fixture database on port 53104.');
 }
 
 function load(file, mocks = {}) {
@@ -63,7 +64,56 @@ const high = load('lib/high-risk-scalping.ts', {
   },
   'web-push': { sendNotification: forbidden, setVapidDetails: forbidden },
 });
-try {
+async function verifyPilotRole() {
+  const connection = await client.connect();
+  try {
+    await connection.query('BEGIN');
+    await connection.query('SET LOCAL ROLE smartexit_scanner_pilot');
+    const scope = (await connection.query(`SELECT
+      has_table_privilege('public.users', 'SELECT') AS customer,
+      has_table_privilege('public.binance_api_credentials', 'SELECT') AS credentials,
+      has_table_privilege('public.trade_executions', 'INSERT') AS trading,
+      has_table_privilege('public.signal_events', 'DELETE') AS deletes,
+      has_table_privilege('public.signal_events', 'UPDATE') AS edits`)).rows[0];
+    assert.deepEqual(scope, { customer: false, credentials: false, trading: false, deletes: false, edits: false });
+    assert.equal((await connection.query('SELECT stopped FROM public.scanner_pilot_control WHERE singleton')).rows[0].stopped, true);
+    await connection.query('SAVEPOINT kill_switch_write');
+    await assert.rejects(connection.query('UPDATE public.scanner_pilot_control SET stopped = false'), error => error.code === '42501');
+    await connection.query('ROLLBACK TO SAVEPOINT kill_switch_write');
+    const settings = await appNotifications.getNotificationSystemSettings(connection.query.bind(connection));
+    const highSettings = await high.getHighRiskScalpingSettings(connection.query.bind(connection));
+    const standardRows = Array.from({ length: 209 }, (_, i) => row(i, 100 + i / 5, i === 208 ? 150 : 50));
+    const standard = new engine.BinanceMarketScannerService({ list: async () => marketSnapshot(142) },
+      async () => Response.json(standardRows), () => now);
+    const { candidates } = await standard.scan({ quoteAsset: 'USDT', timeframe: '5m', symbols: ['BTCUSDT'],
+      minimumVolume: 10_000_000, limit: 1, atrPeriod: 10, multiplier: 3, maxAgeSeconds: 300, minimumScore: 60 });
+    const setup = high.analyzeHighRiskScalpingSetup({ symbol: 'BTCUSDT', timeframe: '5m',
+      candles: engine.parseCandles(highRows), price: breakout, btcDirection: 'BULLISH', settings: highSettings, now });
+    assert.ok(setup);
+    const slot = new Date(boundary).toISOString();
+    assert.equal((await connection.query(`INSERT INTO public.scanner_pilot_runs (slot_at, approved_sha, symbols)
+      VALUES ($1,$2,$3) ON CONFLICT (slot_at) DO NOTHING`, [slot, 'a'.repeat(40), ['BTCUSDT','ETHUSDT','SOLUSDT']])).rowCount, 1);
+    assert.ok(await appNotifications.insertSignal(connection, candidates[0], settings));
+    assert.ok(await high.insertHighRiskSignal(connection, setup, highSettings));
+    assert.equal(await appNotifications.insertSignal(connection, candidates[0], settings), null);
+    assert.equal(await high.insertHighRiskSignal(connection, setup, highSettings), null);
+    assert.equal((await connection.query(`UPDATE public.scanner_pilot_runs
+      SET state='COMPLETED', finished_at=statement_timestamp(), report='{}' WHERE slot_at=$1`, [slot])).rowCount, 1);
+    assert.equal((await connection.query(`UPDATE public.scanner_pilot_runs SET report='{"edited":true}' WHERE slot_at=$1`, [slot])).rowCount, 0);
+    await connection.query('SAVEPOINT wrong_timeframe');
+    await assert.rejects(connection.query(`INSERT INTO public.scanner_candidate_snapshots
+      (symbol,timeframe,exchange,candidate_json,scanned_at) VALUES ('BTCUSDT','15m','BINANCE','{}',now())`), error => error.code === '42501');
+    await connection.query('ROLLBACK TO SAVEPOINT wrong_timeframe');
+    assert.equal(outbound, 0);
+  } finally {
+    try { await connection.query('ROLLBACK'); } finally { connection.release(); }
+  }
+  assert.equal(await count('SELECT count(*) AS n FROM public.market_signals'), 0);
+  assert.equal(await count('SELECT count(*) AS n FROM public.scanner_pilot_runs'), 0);
+  console.log('PASS restricted pilot role: both strategy writers, replay, audit terminality, 5m containment and no customer, credential or trading access');
+}
+
+async function verifyWriterRecovery() {
   const identity = (await query('SELECT current_database() AS db, current_user AS role, inet_server_addr() AS host')).rows[0];
   assert.deepEqual(identity, { db: 'scanner_fixture', role: 'scanner_fixture', host: '127.0.0.1' });
   assert.equal(await count('SELECT count(*) AS n FROM public.market_signals'), 0);
@@ -110,6 +160,13 @@ try {
   assert.equal(await count('SELECT count(*) AS n FROM public.trade_executions'), 0);
   assert.equal(outbound, 0);
   console.log('PASS Standard and High-Risk: rollback, failure audit, retry, replay, five idempotent events, History isolation, no outbound calls');
+}
+
+try {
+  const identity = (await query('SELECT current_database() AS db, current_user AS role, inet_server_addr() AS host')).rows[0];
+  assert.deepEqual(identity, { db: 'scanner_fixture', role: 'scanner_fixture', host: '127.0.0.1' });
+  if (roleOnly) await verifyPilotRole();
+  else await verifyWriterRecovery();
 } finally {
   await client.end();
 }

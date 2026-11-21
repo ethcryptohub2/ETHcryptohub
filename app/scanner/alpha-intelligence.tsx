@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import type { AlphaObservation, AlphaSnapshot } from '../../lib/alpha-intelligence';
+import type { ArchivedAlphaObservation } from '../../lib/alpha-observation-history';
 import styles from './alpha-intelligence.module.css';
 
 type SortMode = 'symbol' | 'volume' | 'momentum' | 'updated';
@@ -26,12 +27,15 @@ function AlphaAdminRefresh({ onSnapshot }: { onSnapshot: (snapshot: AlphaSnapsho
   const [gate, setGate] = useState<'checking' | 'enabled' | 'disabled' | 'unavailable'>('checking');
   const [running, setRunning] = useState(false);
   const [error, setError] = useState('');
+  const [historyEnabled, setHistoryEnabled] = useState(false);
+  const [archiveState, setArchiveState] = useState('');
   useEffect(() => {
     const controller = new AbortController();
     void fetch(adminEndpoint, { cache: 'no-store', signal: controller.signal }).then(async response => {
       if (!response.ok) throw new Error('Approval status unavailable.');
-      const body = await response.json() as { enabled?: boolean };
+      const body = await response.json() as { enabled?: boolean; historyEnabled?: boolean };
       setGate(body.enabled === true ? 'enabled' : 'disabled');
+      setHistoryEnabled(body.historyEnabled === true);
     }).catch(() => { if (!controller.signal.aborted) setGate('unavailable'); });
     return () => controller.abort();
   }, []);
@@ -40,15 +44,19 @@ function AlphaAdminRefresh({ onSnapshot }: { onSnapshot: (snapshot: AlphaSnapsho
     if (gate !== 'enabled' || running) return;
     setRunning(true);
     setError('');
+    setArchiveState('');
     try {
       const csrfResponse = await fetch('/api/csrf', { cache: 'no-store' });
       const csrf = (await csrfResponse.json() as { data?: { csrfToken?: string } }).data?.csrfToken;
       if (!csrfResponse.ok || !csrf) throw new Error('Secure Admin session is unavailable.');
       const response = await fetch(adminEndpoint, { method: 'POST', headers: { 'X-CSRF-Token': csrf } });
-      const result = await response.json() as { data?: AlphaSnapshot };
+      const result = await response.json() as { data?: AlphaSnapshot; archive?: string };
       if (response.status === 429) throw new Error('An Alpha check is running or the cooldown is active.');
       if (!response.ok || !result.data) throw new Error('Alpha acquisition could not complete. Check approval and source status before retrying.');
       onSnapshot(result.data);
+      if (result.archive === 'STORED') setArchiveState('Approved observations saved to history.');
+      if (result.archive === 'ALREADY_RECORDED') setArchiveState('These observations are already in history.');
+      if (result.archive === 'UNAVAILABLE') setArchiveState('Observations loaded, but history could not be saved.');
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : 'Alpha acquisition could not complete.');
     } finally {
@@ -62,7 +70,43 @@ function AlphaAdminRefresh({ onSnapshot }: { onSnapshot: (snapshot: AlphaSnapsho
     {gate === 'disabled' && <p className="muted">Source acquisition requires separate approval.</p>}
     {gate === 'unavailable' && <p className="muted">Approval status unavailable.</p>}
     {error && <p role="alert" className="error">{error}</p>}
+    {archiveState && <p role="status">{archiveState}</p>}
+    {historyEnabled && <AlphaHistory />}
   </div>;
+}
+
+function AlphaHistory() {
+  const [rows, setRows] = useState<ArchivedAlphaObservation[] | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState(false);
+
+  async function load() {
+    setLoading(true);
+    setError(false);
+    try {
+      const response = await fetch(`${adminEndpoint}?history=1`, { cache: 'no-store' });
+      const body = await response.json() as { data?: ArchivedAlphaObservation[] };
+      if (!response.ok || !Array.isArray(body.data)) throw new Error('History unavailable');
+      setRows(body.data);
+    } catch {
+      setRows(null);
+      setError(true);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  return <section className="stack" aria-label="Archived Alpha observations">
+    <button type="button" className="button-secondary" disabled={loading} onClick={() => void load()}>
+      {loading ? 'Loading archived observations…' : 'Load archived Alpha observations'}
+    </button>
+    {error && <p role="alert">Alpha observation history could not be read.</p>}
+    {rows?.length === 0 && <p>No Alpha observations have been archived.</p>}
+    {!!rows?.length && <ul>{rows.map(row => <li key={`${row.alpha_id}:${row.chain}:${row.contract}:${row.market}:${row.observed_at}`}>
+      {row.measurements.symbol} · {row.chain} · {row.market} · Observed {timestamp(row.observed_at)}
+      {' · '}Archived {timestamp(row.collected_at)} · Archived price {metric(row.measurements.price)}
+    </li>)}</ul>}
+  </section>;
 }
 
 function metric(value: number | null, suffix = '') {

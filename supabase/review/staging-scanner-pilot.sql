@@ -18,5 +18,13 @@ CREATE TABLE public.scanner_pilot_runs (
 
 ALTER TABLE public.scanner_pilot_runs ENABLE ROW LEVEL SECURITY;
 REVOKE ALL ON public.scanner_pilot_runs FROM PUBLIC, anon, authenticated, service_role;
+CREATE TABLE public.scanner_pilot_control (
+    singleton boolean PRIMARY KEY DEFAULT true CHECK (singleton),
+    stopped boolean NOT NULL DEFAULT true,
+    updated_at timestamptz NOT NULL DEFAULT statement_timestamp()
+);
+INSERT INTO public.scanner_pilot_control (singleton) VALUES (true);
+ALTER TABLE public.scanner_pilot_control ENABLE ROW LEVEL SECURITY;
+REVOKE ALL ON public.scanner_pilot_control FROM PUBLIC, anon, authenticated, service_role;
 -- The exact login role and grants on the existing scanner tables require
 -- independent review. Do not grant broader roles or disable existing RLS.

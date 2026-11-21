@@ -13,7 +13,7 @@ const providerDetails = {
   BINANCE: { name: 'Binance USD-M', passphrase: false, fixtures: 'Account, instruments, order and protection lifecycle' },
   BYBIT: { name: 'Bybit', passphrase: false, fixtures: 'Account, orders, protection and reconciliation' },
   OKX: { name: 'OKX', passphrase: true, fixtures: 'Account, positions, instruments, order lookup and single-order cancellation' },
-  BITGET: { name: 'Bitget', passphrase: true, fixtures: 'Signed reads, instrument precision and lookup by order or client ID' },
+  BITGET: { name: 'Bitget', passphrase: true, fixtures: 'Signed reads, instrument precision, order lookup and single-order cancellation' },
   GATE: { name: 'Gate.io Futures', passphrase: false, fixtures: 'Account, positions, contracts, order lookup and single-order cancellation' },
 } satisfies Record<AdminDemoProvider, { name: string; passphrase: boolean; fixtures: string }>;
 
@@ -53,7 +53,7 @@ export function ExchangeDemoReview() {
         <div aria-live="polite">
           <span className={styles.badge}>{environment}</span>
           <h3>{name}</h3>
-          <p className="muted">Mock-tested. Remote connection blocked pending schema and credential approval.</p>
+          <p className="muted"><strong>Not ready for remote testing.</strong> Local fixture coverage is listed below.</p>
         </div>
       </section>
 
@@ -68,7 +68,11 @@ export function ExchangeDemoReview() {
             <label className={styles.field}>API key<input type="password" autoComplete="off" /></label>
             <label className={styles.field}>API secret<input type="password" autoComplete="off" /></label>
             {passphrase && <label className={styles.field}>Passphrase<input type="password" autoComplete="off" /></label>}
-            <button type="button">Save credentials</button>
+            <div className={styles.actions}>
+              <button type="button">Save credentials</button>
+              <button type="button" className="button-secondary">Disable credential</button>
+              <button type="button" className="button-secondary">Remove credential</button>
+            </div>
           </fieldset>
         </section>
 
@@ -77,10 +81,11 @@ export function ExchangeDemoReview() {
           <ol className={styles.approvals}>
             <li>Credential setup requires dedicated {environment} credentials and verified Staging encryption and schema.</li>
             <li>Connection testing requires separate approval for this provider’s authenticated reads.</li>
-            <li>Execution requires separate approval for an individual {environment} test and verified lifecycle protections.</li>
+            <li>Approve one {environment} order after verifying account mode, instrument precision, protection and reconciliation.</li>
+            <li>Automatic execution requires a separate approval covering the account, strategy, instruments, risk limits, execution window and stop conditions.</li>
           </ol>
           <p id="demo-execution-reason" className="muted">
-            No session is active in this lab. Remote connection checks and execution are disabled.
+            This review has no verified session. Remote connection checks and execution are disabled.
           </p>
           <div className={styles.actions} aria-describedby="demo-execution-reason">
             <button type="button" disabled>Test connection</button>
@@ -109,6 +114,40 @@ export function ExchangeDemoReview() {
         </fieldset>
       </section>
 
+      <section className={`card ${styles.automatic}`} aria-labelledby="demo-automation-heading">
+        <div className={styles.automaticHeader}>
+          <h2 id="demo-automation-heading">Admin Demo auto-trading</h2>
+          <strong className={styles.badge}>Execution off</strong>
+        </div>
+        <p id="demo-automation-reason" className="muted">
+          {name} {environment} requires a verified account, a successful individual lifecycle test and an approved execution window.
+          Customer and real-money execution are disabled in this lab.
+        </p>
+        <fieldset key={provider} disabled className={styles.credentialFields} aria-describedby="demo-automation-reason">
+          <legend className={styles.visuallyHidden}>{name} automatic execution configuration</legend>
+          <div className={styles.automaticFields}>
+            <label className={styles.field}>Demo account<select defaultValue=""><option value="">No verified account</option></select></label>
+            <label className={styles.field}>Strategy<select defaultValue=""><option value="">Select an approved strategy</option><option>Standard</option><option>High-Risk</option></select></label>
+            <label className={styles.field}>Risk per trade<input value="1%" readOnly /></label>
+            <label className={styles.field}>Maximum orders<input inputMode="numeric" /></label>
+            <label className={styles.field}>Maximum concurrent positions<input inputMode="numeric" /></label>
+            <label className={styles.field}>Maximum notional exposure<input inputMode="decimal" /></label>
+            <label className={styles.field}>Daily loss limit<input inputMode="decimal" /></label>
+            <label className={styles.field}>Execution stop time (UTC)<input type="datetime-local" /></label>
+          </div>
+          <div className={styles.actions}>
+            <button type="button">Start automatic Demo execution</button>
+            <button type="button" className="button-secondary">Stop automatic Demo execution</button>
+            <button type="button" className="button-secondary">Emergency kill switch</button>
+          </div>
+        </fieldset>
+        <dl className={styles.evidence}>
+          <div><dt>Open positions</dt><dd>No approved position snapshot.</dd></div>
+          <div><dt>Order history</dt><dd>No approved account history.</dd></div>
+          <div><dt>Error monitoring</dt><dd>No execution session to monitor.</dd></div>
+        </dl>
+      </section>
+
       <section className="card" aria-labelledby="demo-capabilities-heading">
         <h2 id="demo-capabilities-heading">Capability matrix</h2>
         <dl className={styles.capabilities}>
@@ -117,6 +156,8 @@ export function ExchangeDemoReview() {
           <div><dt>Credential storage</dt><dd>Credentials blocked pending encrypted storage verification</dd></div>
           <div><dt>Mock ready</dt><dd>{fixtures}</dd></div>
           <div><dt>Signed read verification</dt><dd>Awaiting an approved remote check</dd></div>
+          <div><dt>Last successful connection</dt><dd>No verified timestamp</dd></div>
+          <div><dt>Account permissions</dt><dd>Awaiting Demo account permission verification</dd></div>
           <div><dt>Demo execution verification</dt><dd>Awaiting verified risk controls and individual execution approval</dd></div>
         </dl>
       </section>
