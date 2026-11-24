@@ -1,3 +1,4 @@
+import type { QueryResultRow } from 'pg';
 import { BinanceFuturesMarketsService, BinanceMarketDataError } from '../smartexit/apps/api/src/services/binance-futures-markets';
 import { BinanceMarketScannerService, recommendedMaxAgeSeconds } from '../smartexit/apps/api/src/services/market-scanner';
 import { loadMarketResearchProvider } from './market-research-settings';
@@ -17,8 +18,89 @@ import {
 
 const timeframes = ['5m', '15m', '1h', '4h'] as const;
 const DEFAULT_SYMBOL_BATCH_SIZE = 35;
+const DEFAULT_MINIMUM_VOLUME = 5_000_000;
 const SYMBOL_SYNC_INTERVAL_MS = 15 * 60_000;
 const markets = new BinanceFuturesMarketsService();
+
+export type ScannerConfiguration = {
+  minimumVolume: number;
+  batchSize: number;
+  updatedAt?: string;
+};
+
+export type ScannerRotationState = {
+  cursor: number;
+  cycleCount: number;
+  lastScannedAt: string | null;
+  totalEligible: number;
+};
+
+async function safeDbQuery<T extends QueryResultRow = QueryResultRow>(sql: string, params: unknown[] = []): Promise<{ rows: T[] }> {
+  try {
+    const { query } = await import('./db');
+    return await query<T>(sql, params);
+  } catch {
+    return { rows: [] };
+  }
+}
+
+export async function getScannerConfiguration(): Promise<ScannerConfiguration> {
+  const res = await safeDbQuery<{ value_json: ScannerConfiguration }>(
+    `SELECT value_json FROM public.app_settings WHERE key = 'scanner_configuration'`,
+  );
+  if (res.rows[0]?.value_json) {
+    const val = res.rows[0].value_json;
+    return {
+      minimumVolume: Number(val.minimumVolume) || DEFAULT_MINIMUM_VOLUME,
+      batchSize: Number(val.batchSize) || DEFAULT_SYMBOL_BATCH_SIZE,
+      updatedAt: val.updatedAt,
+    };
+  }
+  return { minimumVolume: DEFAULT_MINIMUM_VOLUME, batchSize: DEFAULT_SYMBOL_BATCH_SIZE };
+}
+
+export async function updateScannerConfiguration(config: { minimumVolume?: number; batchSize?: number }) {
+  const current = await getScannerConfiguration();
+  const updated: ScannerConfiguration = {
+    minimumVolume: config.minimumVolume !== undefined ? config.minimumVolume : current.minimumVolume,
+    batchSize: config.batchSize !== undefined ? config.batchSize : current.batchSize,
+    updatedAt: new Date().toISOString(),
+  };
+  await safeDbQuery(
+    `INSERT INTO public.app_settings (key, value_json, updated_at)
+     VALUES ('scanner_configuration', $1::jsonb, NOW())
+     ON CONFLICT (key) DO UPDATE SET value_json = EXCLUDED.value_json, updated_at = NOW()`,
+    [JSON.stringify(updated)],
+  );
+  return updated;
+}
+
+export async function getAndAdvanceScannerCursor(
+  totalItems: number,
+  batchLimit: number,
+): Promise<{ offset: number; cycleCount: number; lastScannedAt: string | null }> {
+  if (totalItems <= 0) return { offset: 0, cycleCount: 1, lastScannedAt: null };
+  const res = await safeDbQuery<{ value_json: { cursor: number; cycleCount: number; lastScannedAt: string | null } }>(
+    `SELECT value_json FROM public.app_settings WHERE key = 'scanner_rotation_state'`,
+  );
+  const existing = res.rows[0]?.value_json;
+  const currentCursor = typeof existing?.cursor === 'number' && Number.isFinite(existing.cursor) ? existing.cursor : 0;
+  const currentCycle = typeof existing?.cycleCount === 'number' && Number.isFinite(existing.cycleCount) ? existing.cycleCount : 1;
+
+  const offset = currentCursor % totalItems;
+  const nextCursor = (offset + batchLimit) % totalItems;
+  const nextCycle = currentCycle + (offset + batchLimit >= totalItems ? 1 : 0);
+  const nowIso = new Date().toISOString();
+
+  await safeDbQuery(
+    `INSERT INTO public.app_settings (key, value_json, updated_at)
+     VALUES ('scanner_rotation_state', $1::jsonb, NOW())
+     ON CONFLICT (key) DO UPDATE SET value_json = EXCLUDED.value_json, updated_at = NOW()`,
+    [JSON.stringify({ cursor: nextCursor, cycleCount: nextCycle, lastScannedAt: nowIso, totalEligible: totalItems })],
+  );
+
+  return { offset, cycleCount: currentCycle, lastScannedAt: existing?.lastScannedAt ?? null };
+}
 
 export type SignalScanOptions = {
   executeAutomaticTrades?: boolean;
@@ -46,6 +128,10 @@ export async function runSignalScan(
     await syncBinanceScannerUniverse(null);
   }
   const settings = await getNotificationSystemSettings();
+  const scannerConfig = await getScannerConfiguration();
+  const effectiveMinimumVolume = options.minimumVolume ?? scannerConfig.minimumVolume;
+  const effectiveBatchLimit = options.limit ?? scannerConfig.batchSize;
+
   const marketSnapshot = await markets.list().catch((error: unknown) => {
     if (error instanceof BinanceMarketDataError) {
       throw new SignalScanError('Binance exchange metadata or ticker acquisition failed. Check provider access before retrying.');
@@ -74,26 +160,18 @@ export async function runSignalScan(
     symbols = options.symbols.filter((s) => enabledSymbols.includes(s));
   } else if (snapshotSymbols.length > 0) {
     const liquidSnapshotPairs = snapshotSymbols
-      .filter((m) => m && m.quoteAsset === 'USDT' && enabledSymbols.includes(m.symbol) && (m.quoteVolume24h ?? 0) >= (options.minimumVolume ?? 5_000_000))
+      .filter((m) => m && m.quoteAsset === 'USDT' && enabledSymbols.includes(m.symbol) && (m.quoteVolume24h ?? 0) >= effectiveMinimumVolume)
       .sort((a, b) => (b.quoteVolume24h ?? 0) - (a.quoteVolume24h ?? 0))
       .map((m) => m.symbol);
 
-    const batchLimit = options.limit ?? DEFAULT_SYMBOL_BATCH_SIZE;
-    if (liquidSnapshotPairs.length > 0) {
-      const offset = (scanSlot * batchLimit) % liquidSnapshotPairs.length;
-      symbols = Array.from({ length: Math.min(batchLimit, liquidSnapshotPairs.length) }, (_, index) =>
-        liquidSnapshotPairs[(offset + index) % liquidSnapshotPairs.length]!,
-      );
-    } else {
-      const offset = (scanSlot * batchLimit) % enabledSymbols.length;
-      symbols = Array.from({ length: Math.min(batchLimit, enabledSymbols.length) }, (_, index) =>
-        enabledSymbols[(offset + index) % enabledSymbols.length]!,
-      );
-    }
+    const pool = liquidSnapshotPairs.length > 0 ? liquidSnapshotPairs : enabledSymbols;
+    const { offset } = await getAndAdvanceScannerCursor(pool.length, effectiveBatchLimit);
+    symbols = Array.from({ length: Math.min(effectiveBatchLimit, pool.length) }, (_, index) =>
+      pool[(offset + index) % pool.length]!,
+    );
   } else {
-    const batchLimit = options.limit ?? DEFAULT_SYMBOL_BATCH_SIZE;
-    const offset = (scanSlot * batchLimit) % enabledSymbols.length;
-    symbols = Array.from({ length: Math.min(batchLimit, enabledSymbols.length) }, (_, index) =>
+    const { offset } = await getAndAdvanceScannerCursor(enabledSymbols.length, effectiveBatchLimit);
+    symbols = Array.from({ length: Math.min(effectiveBatchLimit, enabledSymbols.length) }, (_, index) =>
       enabledSymbols[(offset + index) % enabledSymbols.length]!,
     );
   }
@@ -102,7 +180,7 @@ export async function runSignalScan(
     quoteAsset: 'USDT',
     timeframe,
     symbols,
-    minimumVolume: options.minimumVolume ?? 5_000_000,
+    minimumVolume: effectiveMinimumVolume,
     limit: symbols.length,
     atrPeriod: 10,
     multiplier: 3,

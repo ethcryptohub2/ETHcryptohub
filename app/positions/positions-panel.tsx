@@ -28,10 +28,14 @@ type Position = {
 type VirtualAccountSummary = {
   startingBalance: number;
   totalRealizedPnl: number;
+  unrealizedPnl: number;
+  estimatedTradingFees: number;
   currentVirtualEquity: number;
   openPositionsCount: number;
   closedTradesCount: number;
   winRatePercent: number;
+  profitFactor: number;
+  takerFeeRatePercent: number;
   storageType: string;
   table: string;
 };
@@ -91,7 +95,7 @@ export function PositionsPanel() {
         style={{
           padding: '16px 20px',
           display: 'grid',
-          gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))',
+          gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))',
           gap: 16,
           background: 'var(--surface-raised)',
           border: '1px solid var(--accent)',
@@ -104,22 +108,32 @@ export function PositionsPanel() {
           <strong style={{ fontSize: 18, fontFamily: 'DM Mono', color: 'var(--accent)' }}>
             ${summary.currentVirtualEquity.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} USDT
           </strong>
-          <small className="muted" style={{ display: 'block', fontSize: 10 }}>Base: ${summary.startingBalance.toLocaleString()} USDT</small>
+          <small className="muted" style={{ display: 'block', fontSize: 10 }}>Base: ${summary.startingBalance.toLocaleString()} USDT Virtual Capital</small>
         </div>
         <div>
-          <small className="muted" style={{ display: 'block', fontSize: 11 }}>TOTAL REALIZED PNL</small>
+          <small className="muted" style={{ display: 'block', fontSize: 11 }}>REALIZED / UNREALIZED PNL</small>
           <strong
             style={{
               fontSize: 18,
               fontFamily: 'DM Mono',
-              color: summary.totalRealizedPnl >= 0 ? '#10b981' : '#ef4444',
+              color: (summary.totalRealizedPnl + (summary.unrealizedPnl ?? 0)) >= 0 ? '#10b981' : '#ef4444',
             }}
           >
-            {summary.totalRealizedPnl >= 0 ? '+' : ''}${summary.totalRealizedPnl.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} USDT
+            {summary.totalRealizedPnl >= 0 ? '+' : ''}${summary.totalRealizedPnl.toFixed(2)}
+            {' '}<span style={{ fontSize: 13, color: (summary.unrealizedPnl ?? 0) >= 0 ? '#10b981' : '#ef4444' }}>
+              ({(summary.unrealizedPnl ?? 0) >= 0 ? '+' : ''}${(summary.unrealizedPnl ?? 0).toFixed(2)} unrealized)
+            </span>
           </strong>
           <small className="muted" style={{ display: 'block', fontSize: 10 }}>
             {summary.closedTradesCount} closed ({summary.winRatePercent}% win rate)
           </small>
+        </div>
+        <div>
+          <small className="muted" style={{ display: 'block', fontSize: 11 }}>TRADING FEES (0.04% TAKER)</small>
+          <strong style={{ fontSize: 18, fontFamily: 'DM Mono', color: '#f59e0b' }}>
+            -${(summary.estimatedTradingFees ?? 0).toFixed(2)} USDT
+          </strong>
+          <small className="muted" style={{ display: 'block', fontSize: 10 }}>Simulated VIP0 fees deducted</small>
         </div>
         <div>
           <small className="muted" style={{ display: 'block', fontSize: 11 }}>ACTIVE OPEN POSITIONS</small>

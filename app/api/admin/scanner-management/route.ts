@@ -3,7 +3,12 @@ import { z } from 'zod';
 import { AuthError, requireAdmin } from '../../../../lib/auth';
 import { validCsrf } from '../../../../lib/http';
 import { createAdminReadLimiter } from '../../../../lib/admin-read-rate-limit';
-import { runSignalScan, SignalScanError } from '../../../../lib/signal-scan';
+import {
+  getScannerConfiguration,
+  runSignalScan,
+  SignalScanError,
+  updateScannerConfiguration,
+} from '../../../../lib/signal-scan';
 import {
   changeScannerCoins,
   consumeScannerAdminRateLimit,
@@ -31,6 +36,11 @@ const actionSchema = z.discriminatedUnion('action', [
   z.object({ action: z.literal('disable_selected'), symbols: z.array(symbol).min(1).max(500).refine((items) => new Set(items).size === items.length), confirm: z.literal(true), reason: z.string().trim().max(200).optional() }).strict(),
   z.object({ action: z.literal('enable_all'), confirm: z.literal(true) }).strict(),
   z.object({ action: z.literal('disable_all'), confirm: z.literal(true), reason: z.string().trim().max(200).optional() }).strict(),
+  z.object({
+    action: z.literal('update_settings'),
+    minimumVolume: z.number().int().min(1_000_000).max(100_000_000).optional(),
+    batchSize: z.number().int().min(5).max(100).optional(),
+  }).strict(),
 ]);
 
 function diagnosticMessage(error: unknown, fallback: string): string {
@@ -48,10 +58,13 @@ export async function GET(request: NextRequest) {
       auditPage: z.coerce.number().int().min(1).max(100_000).default(1),
     }).safeParse(Object.fromEntries(request.nextUrl.searchParams));
     if (!parsed.success) return NextResponse.json({ error: 'Invalid scanner audit log page.' }, { status: 422 });
-    const [coins, sync, audit] = await Promise.all([
+    const [coins, sync, audit, configuration] = await Promise.all([
       getScannerCoinUniverse(),
       getScannerSyncState(),
       getScannerAuditLog(parsed.data.auditPage),
+      typeof getScannerConfiguration === 'function'
+        ? getScannerConfiguration()
+        : Promise.resolve({ minimumVolume: 5_000_000, batchSize: 35 }),
     ]);
     const data = coins.reduce((counts, coin) => {
       counts.total += 1;
@@ -61,7 +74,7 @@ export async function GET(request: NextRequest) {
       else counts.inactive += 1;
       return counts;
     }, { total: 0, enabled: 0, disabled: 0, active: 0, inactive: 0 });
-    return NextResponse.json({ data: { coins, metrics: data, sync, audit: audit.entries, auditTotal: audit.total, auditPage: audit.page, marketRefreshEnabled: marketRefreshEnabled() } }, {
+    return NextResponse.json({ data: { coins, metrics: data, sync, audit: audit.entries, auditTotal: audit.total, auditPage: audit.page, marketRefreshEnabled: marketRefreshEnabled(), configuration } }, {
       headers: { 'Cache-Control': 'no-store' },
     });
   } catch (error) {
@@ -114,6 +127,13 @@ export async function POST(request: NextRequest) {
     if (action.action === 'sync_now') {
       const result = await syncBinanceScannerUniverse(admin.id);
       return NextResponse.json({ data: result }, { headers: { 'Cache-Control': 'no-store' } });
+    }
+    if (action.action === 'update_settings') {
+      const updated = await updateScannerConfiguration({
+        minimumVolume: action.minimumVolume,
+        batchSize: action.batchSize,
+      });
+      return NextResponse.json({ data: { configuration: updated } }, { headers: { 'Cache-Control': 'no-store' } });
     }
 
     const isEnable = action.action.startsWith('enable');

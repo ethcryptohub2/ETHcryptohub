@@ -236,37 +236,94 @@ export async function listUserSignalEntries(userId: number) {
 }
 
 export async function getPaperTradingSummary(userId: number) {
-  const result = await query<{
-    total_entries: string;
-    open_entries: string;
-    closed_entries: string;
-    total_realized_pnl: string | null;
-    winning_trades: string;
-    losing_trades: string;
-  }>(
-    `SELECT COUNT(*)::TEXT AS total_entries,
-            COUNT(*) FILTER (WHERE status = 'ENTERED')::TEXT AS open_entries,
-            COUNT(*) FILTER (WHERE status = 'CLOSED')::TEXT AS closed_entries,
-            COALESCE(SUM(realized_pnl) FILTER (WHERE status = 'CLOSED'), 0)::TEXT AS total_realized_pnl,
-            COUNT(*) FILTER (WHERE status = 'CLOSED' AND realized_pnl > 0)::TEXT AS winning_trades,
-            COUNT(*) FILTER (WHERE status = 'CLOSED' AND realized_pnl <= 0)::TEXT AS losing_trades
-       FROM public.signal_user_entries
-      WHERE user_id = $1`,
-    [userId],
-  );
-  const row = result.rows[0];
+  const [closedStats, openPositions] = await Promise.all([
+    query<{
+      total_entries: string;
+      open_entries: string;
+      closed_entries: string;
+      total_realized_pnl: string | null;
+      winning_trades: string;
+      losing_trades: string;
+      gross_profit: string | null;
+      gross_loss: string | null;
+    }>(
+      `SELECT COUNT(*)::TEXT AS total_entries,
+              COUNT(*) FILTER (WHERE status = 'ENTERED')::TEXT AS open_entries,
+              COUNT(*) FILTER (WHERE status = 'CLOSED')::TEXT AS closed_entries,
+              COALESCE(SUM(realized_pnl) FILTER (WHERE status = 'CLOSED'), 0)::TEXT AS total_realized_pnl,
+              COUNT(*) FILTER (WHERE status = 'CLOSED' AND realized_pnl > 0)::TEXT AS winning_trades,
+              COUNT(*) FILTER (WHERE status = 'CLOSED' AND realized_pnl <= 0)::TEXT AS losing_trades,
+              COALESCE(SUM(realized_pnl) FILTER (WHERE status = 'CLOSED' AND realized_pnl > 0), 0)::TEXT AS gross_profit,
+              COALESCE(SUM(realized_pnl) FILTER (WHERE status = 'CLOSED' AND realized_pnl < 0), 0)::TEXT AS gross_loss
+         FROM public.signal_user_entries
+        WHERE user_id = $1`,
+      [userId],
+    ),
+    query<{
+      entry_price: string;
+      latest_price: string | null;
+      side: string;
+    }>(
+      `SELECT e.entry_price::TEXT, s.latest_price::TEXT, s.side
+         FROM public.signal_user_entries e
+         JOIN public.market_signals s ON s.id = e.signal_id
+        WHERE e.user_id = $1 AND e.status = 'ENTERED'`,
+      [userId],
+    ),
+  ]);
+
+  const row = closedStats.rows[0];
   const startingBalance = 10000.0;
+  const standardNotionalPerPosition = 100.0;
+  const takerFeeRate = 0.0004; // 0.04% standard Binance VIP0 taker fee per fill
+
   const realizedPnl = Number(row?.total_realized_pnl ?? 0);
   const closedCount = Number(row?.closed_entries ?? 0);
+  const openCount = Number(row?.open_entries ?? 0);
   const winningCount = Number(row?.winning_trades ?? 0);
+  const losingCount = Number(row?.losing_trades ?? 0);
+  const grossProfit = Number(row?.gross_profit ?? 0);
+  const grossLoss = Number(row?.gross_loss ?? 0);
+
+  // Mark-to-market unrealized PnL calculation on open positions
+  let unrealizedPnl = 0;
+  for (const pos of openPositions.rows) {
+    const entry = Number(pos.entry_price);
+    const latest = Number(pos.latest_price);
+    if (entry > 0 && latest > 0) {
+      if (pos.side === 'LONG') {
+        unrealizedPnl += ((latest - entry) / entry) * standardNotionalPerPosition;
+      } else if (pos.side === 'SHORT') {
+        unrealizedPnl += ((entry - latest) / entry) * standardNotionalPerPosition;
+      }
+    }
+  }
+
+  // Trading fees: 2 fills per closed trade (entry + exit), 1 fill per open position (entry)
+  const totalFills = closedCount * 2 + openCount * 1;
+  const estimatedTradingFees = totalFills * standardNotionalPerPosition * takerFeeRate;
+
+  const currentVirtualEquity = startingBalance + realizedPnl + unrealizedPnl - estimatedTradingFees;
   const winRate = closedCount > 0 ? (winningCount / closedCount) * 100 : 0;
+  const profitFactor = Math.abs(grossLoss) > 0
+    ? Math.round((grossProfit / Math.abs(grossLoss)) * 100) / 100
+    : grossProfit > 0
+      ? 99.99
+      : 0;
+
   return {
     startingBalance,
-    totalRealizedPnl: realizedPnl,
-    currentVirtualEquity: startingBalance + realizedPnl,
-    openPositionsCount: Number(row?.open_entries ?? 0),
+    totalRealizedPnl: Math.round(realizedPnl * 100) / 100,
+    unrealizedPnl: Math.round(unrealizedPnl * 100) / 100,
+    estimatedTradingFees: Math.round(estimatedTradingFees * 100) / 100,
+    currentVirtualEquity: Math.round(currentVirtualEquity * 100) / 100,
+    openPositionsCount: openCount,
     closedTradesCount: closedCount,
-    winRatePercent: Math.round(winRate * 100) / 100,
+    winningTradesCount: winningCount,
+    losingTradesCount: losingCount,
+    winRatePercent: Math.round(winRate * 10) / 10,
+    profitFactor,
+    takerFeeRatePercent: 0.04,
     storageType: 'DATABASE_PERSISTENT' as const,
     table: 'public.signal_user_entries' as const,
   };
