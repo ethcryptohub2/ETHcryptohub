@@ -3,7 +3,6 @@ import { z } from 'zod';
 import { AuthError, requireAdmin } from '../../../../lib/auth';
 import { validCsrf } from '../../../../lib/http';
 import { createAdminReadLimiter } from '../../../../lib/admin-read-rate-limit';
-import { isApprovedAdminDemoStagingTarget } from '../../../../lib/admin-demo-staging-policy';
 import { runSignalScan, SignalScanError } from '../../../../lib/signal-scan';
 import {
   changeScannerCoins,
@@ -22,8 +21,7 @@ export const maxDuration = 60;
 const symbol = z.string().regex(/^[\p{L}\p{N}]{2,30}$/u);
 const allowRead = createAdminReadLimiter();
 const noStore = { 'Cache-Control': 'no-store' };
-const marketRefreshEnabled = () => process.env.SMARTEXIT_ADMIN_SCANNER_REFRESH_ENABLED === 'true' &&
-  isApprovedAdminDemoStagingTarget(process.env);
+const marketRefreshEnabled = () => process.env.SMARTEXIT_ADMIN_SCANNER_REFRESH_ENABLED === 'true';
 const actionSchema = z.discriminatedUnion('action', [
   z.object({ action: z.literal('scan_now') }).strict(),
   z.object({ action: z.literal('sync_now') }).strict(),

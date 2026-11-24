@@ -63,10 +63,15 @@ export function ExchangePositionsPanel() {
 
   return <section className="card stack">
     <div className="notification-center-heading">
-      <div><p className="mono">BINANCE FUTURES · {environment === 'DEMO' ? 'DEMO / VIRTUAL FUNDS' : 'LIVE / REAL FUNDS'}</p><h2>Exchange open positions</h2></div>
+      <div>
+        <p className="mono">MULTI-EXCHANGE GATEWAY · [{environment} / VIRTUAL FUNDS]</p>
+        <h2>Authenticated Exchange Open Positions</h2>
+      </div>
       <button type="button" className="button-secondary" disabled={loading} onClick={() => void load()}>{loading ? 'Refreshing…' : '↻ Refresh'}</button>
     </div>
-    <p className="muted">Positions are fetched only from the active environment. Demo and Live accounts are never combined.</p>
+    <p className="muted">
+      Positions are fetched via signed API from your connected exchange Demo accounts (Binance Demo, Bybit Demo, etc.). Live Trading remains locked fail-closed (HTTP 403).
+    </p>
     {error && <p className="error" role="alert">{error}</p>}
     {loading && <p className="muted">Loading exchange positions…</p>}
     {!loading && !error && data?.positions.length === 0 && <p className="muted">No open exchange positions in the selected environment.</p>}

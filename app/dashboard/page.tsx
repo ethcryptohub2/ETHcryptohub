@@ -43,16 +43,18 @@ export default async function DashboardPage() {
       {/* Financial Metrics Cards */}
       <section className="grid" style={{ marginBottom: 20 }}>
         <article className="card">
-          <p className="mono">EXECUTION ENVIRONMENT</p>
-          <h2 style={{ margin: '8px 0', fontSize: 22, color: '#10b981' }}>Demo Mode (Active)</h2>
-          <p className="muted" style={{ margin: 0, fontSize: 13 }}>
-            Simulation and virtual funds enabled. Real-money live trading is locked fail-closed for safety.
+          <p className="mono">EXECUTION ENVIRONMENTS</p>
+          <h2 style={{ margin: '8px 0', fontSize: 20, color: '#10b981' }}>Demo & Paper Mode (Active)</h2>
+          <p className="muted" style={{ margin: 0, fontSize: 13, lineHeight: 1.5 }}>
+            <strong>[PAPER SIMULATION]:</strong> Virtual ledger tracking with zero exchange keys.<br />
+            <strong>[EXCHANGE DEMO]:</strong> Remote signed API orders on testnet accounts.<br />
+            <strong>[LIVE TRADING]:</strong> Locked fail-closed (HTTP 403) for complete safety.
           </p>
         </article>
 
         <article className="card">
           <p className="mono">MARKET SCANNER STATUS</p>
-          <h2 style={{ margin: '8px 0', fontSize: 22 }}>300+ Pairs Active</h2>
+          <h2 style={{ margin: '8px 0', fontSize: 20 }}>300+ Pairs Active</h2>
           <p className="muted" style={{ margin: 0, fontSize: 13 }}>
             Continuous technical analysis on Binance USDⓈ-M Futures with EMA, Supertrend, ADX & RSI confluence.
           </p>
@@ -60,7 +62,7 @@ export default async function DashboardPage() {
 
         <article className="card">
           <p className="mono">MEMBERSHIP ACCESS</p>
-          <h2 style={{ margin: '8px 0', fontSize: 22 }}>
+          <h2 style={{ margin: '8px 0', fontSize: 20 }}>
             {subscription.status === 'PREMIUM_ACTIVE' ? 'Premium Active' : 'Free Trial Active'}
           </h2>
           <p className="muted" style={{ margin: 0, fontSize: 13 }}>
@@ -70,7 +72,7 @@ export default async function DashboardPage() {
 
         <article className="card">
           <p className="mono">INFRASTRUCTURE REGION</p>
-          <h2 style={{ margin: '8px 0', fontSize: 22 }}>Mumbai (ap-south-1)</h2>
+          <h2 style={{ margin: '8px 0', fontSize: 20 }}>Mumbai (ap-south-1)</h2>
           <p className="muted" style={{ margin: 0, fontSize: 13 }}>
             Vercel bom1 edge network connected directly to primary Supabase cluster.
           </p>

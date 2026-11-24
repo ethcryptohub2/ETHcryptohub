@@ -59,9 +59,11 @@ export function PositionsPanel() {
   const visible = positions.filter((position) => showClosed ? position.status === 'CLOSED' : position.status === 'ENTERED');
   return <main className="shell">
     <section className="hero">
-      <p className="mono">USER-RECORDED SIGNAL ENTRIES</p>
-      <h1>Position records.</h1>
-      <p className="muted">These are entries you recorded against signals. They are not exchange positions; the platform does not execute or verify orders.</p>
+      <p className="mono">EXECUTION LEDGER · [INTERNAL PAPER SIMULATION]</p>
+      <h1>Paper Position Records</h1>
+      <p className="muted">
+        These are simulated positions tracked in your local virtual ledger with 0 capital risk. Remote signed exchange orders are tracked in the Authenticated Exchange Demo Positions panel below.
+      </p>
     </section>
     <ExchangePositionsPanel />
     <section className="card stack">

@@ -231,6 +231,17 @@ export function ExchangeConnections() {
 
   return (
     <section className="stack">
+      {/* Security Reassurance Banner */}
+      <div style={{ padding: '10px 16px', background: 'var(--surface-subtle)', borderRadius: 8, border: '1px solid var(--surface-border)', marginBottom: 16, display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 10, fontSize: 12 }}>
+        <div>
+          <strong style={{ color: '#10b981' }}>● MULTI-EXCHANGE GATEWAY: DEMO & TESTNET ONLY</strong>
+          <span className="muted" style={{ marginLeft: 8 }}>API credentials are encrypted with AES-256-GCM. Remote testnet calls only.</span>
+        </div>
+        <div className="mono" style={{ color: '#ef4444', fontWeight: 600 }}>
+          🔒 LIVE TRADING: LOCKED FAIL-CLOSED (HTTP 403)
+        </div>
+      </div>
+
       {/* Exchange Selection Grid */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 14 }}>
         {exchanges.map((exchange) => {

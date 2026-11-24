@@ -199,9 +199,9 @@ function StandardSignals({
   const recentCount = data?.recentUntil?.filter(expiry => Number.isFinite(expiry) && expiry >= signalNow).length ?? 0;
   const degraded = Boolean(data && recentCount < data.eligibleCount);
 
-  function executeDemoOrder(item: (typeof candidates)[number]) {
-    setDemoOrderNotice(`Demo trade simulated: ${item.side} ${item.symbol} at ${item.setup?.entryPrice ?? 'market'} (Virtual funds). No real money involved.`);
-    window.setTimeout(() => setDemoOrderNotice(null), 5000);
+  function executePaperSimulation(item: (typeof candidates)[number]) {
+    setDemoOrderNotice(`[INTERNAL PAPER SIMULATION] Virtual order simulated: ${item.side} ${item.symbol} at ${item.setup?.entryPrice ? formatPrice(item.setup.entryPrice) : 'market'} (Virtual paper balance). Position tracked in your local position records.`);
+    window.setTimeout(() => setDemoOrderNotice(null), 6000);
   }
 
   return (
@@ -215,6 +215,17 @@ function StandardSignals({
           Real-time algorithmic confluence scanner detecting high-conviction momentum and trend continuation setups across 300+ liquid cryptocurrency pairs.
         </p>
       </section>
+
+      {/* Execution Environment Assurance Banner */}
+      <div style={{ padding: '10px 16px', background: 'var(--surface-subtle)', borderRadius: 8, border: '1px solid var(--surface-border)', marginBottom: 18, display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 10, fontSize: 12 }}>
+        <div>
+          <strong style={{ color: '#10b981' }}>● ENVIRONMENT: DEMO & PAPER SIMULATION ACTIVE</strong>
+          <span className="muted" style={{ marginLeft: 8 }}>Internal virtual ledger & remote exchange demo testnets enabled.</span>
+        </div>
+        <div className="mono" style={{ color: '#ef4444', fontWeight: 600 }}>
+          🔒 LIVE TRADING: LOCKED FAIL-CLOSED (HTTP 403)
+        </div>
+      </div>
 
       {demoOrderNotice && (
         <div className="success" role="alert" style={{ marginBottom: 18 }}>
@@ -468,18 +479,32 @@ function StandardSignals({
                     </div>
                   </div>
 
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 14, paddingTop: 12, borderTop: '1px solid var(--surface-border)' }}>
-                    <p className="muted" style={{ margin: 0, fontSize: 12 }}>
-                      {item.rationale || 'Multi-indicator confluence: EMA stack alignment, Supertrend direction, ADX momentum, and RSI trigger.'}
-                    </p>
-                    <button
-                      type="button"
-                      className="button"
-                      onClick={() => executeDemoOrder(item)}
-                      style={{ fontSize: 12, padding: '8px 14px' }}
-                    >
-                      Execute Demo Trade
-                    </button>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 14, paddingTop: 12, borderTop: '1px solid var(--surface-border)', flexWrap: 'wrap', gap: 10 }}>
+                    <div style={{ flex: 1, minWidth: 220 }}>
+                      <p className="muted" style={{ margin: 0, fontSize: 12 }}>
+                        {item.rationale || 'Multi-indicator confluence: EMA stack alignment, Supertrend direction, ADX momentum, and RSI trigger.'}
+                      </p>
+                      <span className="mono" style={{ fontSize: 10, color: 'var(--text-muted)' }}>
+                        [PAPER SIMULATION: VIRTUAL BALANCE · EXCHANGE DEMO: REMOTE API]
+                      </span>
+                    </div>
+                    <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                      <button
+                        type="button"
+                        className="button"
+                        onClick={() => executePaperSimulation(item)}
+                        style={{ fontSize: 12, padding: '7px 12px' }}
+                      >
+                        [PAPER SIM] 1-Click Order
+                      </button>
+                      <Link
+                        href="/binance"
+                        className="button-secondary"
+                        style={{ fontSize: 12, padding: '7px 12px' }}
+                      >
+                        [EXCHANGE DEMO] API
+                      </Link>
+                    </div>
                   </div>
                 </article>
               );

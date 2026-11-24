@@ -17,7 +17,7 @@ import { z } from 'zod';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
-export const maxDuration = 15;
+export const maxDuration = 30;
 
 const querySchema = marketScannerQuerySchema.extend({
   coverage: z.enum(scannerCoverageModes).default('saved'),
@@ -57,13 +57,36 @@ export async function GET(request: NextRequest) {
   configuration.maxAgeSeconds = Math.min(configuration.maxAgeSeconds, recommendedMaxAgeSeconds(configuration.timeframe));
 
   try {
-    const universe = await getSavedScannerUniverse({
+    let universe = await getSavedScannerUniverse({
       timeframe: configuration.timeframe, coverage, symbol, rank, page, limit: configuration.limit,
       maxAgeSeconds: configuration.maxAgeSeconds,
     });
+    const now = Date.now();
+    const forceRefresh = request.nextUrl.searchParams.get('refresh') === 'true';
+    const isStale = !universe.saved_count || !universe.recent_until.some(expiry => expiry >= now);
+    let scanDurationMs: number | null = null;
+
+    if (forceRefresh || (isStale && coverage === 'saved')) {
+      const lastScanTime = Date.parse(universe.latest_saved_at ?? '');
+      const elapsedSinceLastScan = Number.isFinite(lastScanTime) ? now - lastScanTime : Infinity;
+      if (forceRefresh || elapsedSinceLastScan > 45_000) {
+        try {
+          const scanStart = Date.now();
+          const { runSignalScan } = await import('../../../lib/signal-scan');
+          await runSignalScan(configuration.timeframe, { executeAutomaticTrades: false, deliverNotifications: false });
+          scanDurationMs = Date.now() - scanStart;
+          universe = await getSavedScannerUniverse({
+            timeframe: configuration.timeframe, coverage, symbol, rank, page, limit: configuration.limit,
+            maxAgeSeconds: configuration.maxAgeSeconds,
+          });
+        } catch (scanErr) {
+          console.warn('Auto/on-demand signal scan notice:', scanErr instanceof Error ? scanErr.message : scanErr);
+        }
+      }
+    }
+
     let settings = defaultNotificationSystemSettings();
     let notificationWarning = '';
-    const now = Date.now();
     const candidates: MarketScannerCandidate[] = coverage === 'eligible' ? [] : universe.rows.flatMap(({ candidate, savedScanAt }) =>
       candidate && savedScanAt ? [savedScannerCandidate(candidate, savedScanAt, configuration.maxAgeSeconds, now)] : []);
     let signalMap: Record<string, Awaited<ReturnType<typeof getPersistedSignalMetadata>>[string] | null> = {};
@@ -127,6 +150,15 @@ export async function GET(request: NextRequest) {
     };
     return NextResponse.json({
       data: result,
+      diagnostics: {
+        discoveredCount: universe.eligible_count,
+        eligibleCount: universe.eligible_count,
+        scannedCount: displayedCandidates.length,
+        rejectedCount: Math.max(0, universe.matching_count - ready.length),
+        qualifiedCount: ready.length,
+        scanDurationMs,
+        lastScanTimestamp: universe.latest_saved_at,
+      },
       signalMetadata: { signals: signalMap, serverNow: new Date(serverNow).toISOString() },
       ...(notificationWarning ? { notificationWarning } : {}),
     }, { headers: noStore });

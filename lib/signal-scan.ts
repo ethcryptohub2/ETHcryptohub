@@ -16,13 +16,16 @@ import {
 } from './scanner-coins';
 
 const timeframes = ['5m', '15m', '1h', '4h'] as const;
-const SYMBOL_BATCH_SIZE = 10;
+const DEFAULT_SYMBOL_BATCH_SIZE = 35;
 const SYMBOL_SYNC_INTERVAL_MS = 15 * 60_000;
 const markets = new BinanceFuturesMarketsService();
 
 export type SignalScanOptions = {
   executeAutomaticTrades?: boolean;
   deliverNotifications?: boolean;
+  symbols?: string[];
+  limit?: number;
+  minimumVolume?: number;
 };
 
 export class SignalScanError extends Error {
@@ -57,17 +60,47 @@ export async function runSignalScan(
   const minute = Math.floor(Date.now() / 60_000);
   const scanSlot = Math.floor(minute / 15);
   const timeframe = timeframeOverride ?? timeframes[scanSlot % timeframes.length]!;
-  const scanRound = scanSlot;
-  const offset = (scanRound * SYMBOL_BATCH_SIZE) % enabledSymbols.length;
-  const symbols = Array.from({ length: Math.min(SYMBOL_BATCH_SIZE, enabledSymbols.length) }, (_, index) =>
-    enabledSymbols[(offset + index) % enabledSymbols.length]!,
-  );
+
+  // Dynamic liquidity-ranked candidate selection: prioritize highest-volume liquid pairs
+  const rawSnapshot = marketSnapshot as unknown;
+  const snapshotSymbols = Array.isArray(rawSnapshot)
+    ? (rawSnapshot as Array<{ quoteAsset?: string; symbol: string; quoteVolume24h?: number }>)
+    : rawSnapshot && typeof rawSnapshot === 'object' && 'symbols' in rawSnapshot && Array.isArray((rawSnapshot as { symbols: unknown[] }).symbols)
+      ? (rawSnapshot as { symbols: Array<{ quoteAsset?: string; symbol: string; quoteVolume24h?: number }> }).symbols
+      : [];
+
+  let symbols: string[];
+  if (options.symbols && options.symbols.length > 0) {
+    symbols = options.symbols.filter((s) => enabledSymbols.includes(s));
+  } else if (snapshotSymbols.length > 0) {
+    const liquidSnapshotPairs = snapshotSymbols
+      .filter((m) => m && m.quoteAsset === 'USDT' && enabledSymbols.includes(m.symbol) && (m.quoteVolume24h ?? 0) >= (options.minimumVolume ?? 5_000_000))
+      .sort((a, b) => (b.quoteVolume24h ?? 0) - (a.quoteVolume24h ?? 0))
+      .map((m) => m.symbol);
+
+    const batchLimit = options.limit ?? DEFAULT_SYMBOL_BATCH_SIZE;
+    if (liquidSnapshotPairs.length > 0) {
+      symbols = liquidSnapshotPairs.slice(0, Math.min(batchLimit, enabledSymbols.length));
+    } else {
+      const offset = (scanSlot * batchLimit) % enabledSymbols.length;
+      symbols = Array.from({ length: Math.min(batchLimit, enabledSymbols.length) }, (_, index) =>
+        enabledSymbols[(offset + index) % enabledSymbols.length]!,
+      );
+    }
+  } else {
+    const batchLimit = options.limit ?? DEFAULT_SYMBOL_BATCH_SIZE;
+    const offset = (scanSlot * batchLimit) % enabledSymbols.length;
+    symbols = Array.from({ length: Math.min(batchLimit, enabledSymbols.length) }, (_, index) =>
+      enabledSymbols[(offset + index) % enabledSymbols.length]!,
+    );
+  }
+
   const config = {
     quoteAsset: 'USDT',
     timeframe,
     symbols,
-    minimumVolume: 10_000_000,
-    limit: 30,
+    minimumVolume: options.minimumVolume ?? 5_000_000,
+    limit: symbols.length,
     atrPeriod: 10,
     multiplier: 3,
     maxAgeSeconds: recommendedMaxAgeSeconds(timeframe),
