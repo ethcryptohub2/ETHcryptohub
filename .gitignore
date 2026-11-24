@@ -31,4 +31,6 @@ out/
 .vscode/
 staging.txt
 supabase/.temp/
+backups/
+tmp/
 
