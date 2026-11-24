@@ -146,7 +146,7 @@ export function PanelNavigation() {
   const notificationTrigger = useRef<HTMLButtonElement>(null);
   const menuOpen = openPanel === 'navigation';
   const unread = newsUnread + signalUnread;
-  const [envLabel] = useState<{ text: string; title: string }>(() => {
+  const [envLabel, setEnvLabel] = useState<{ text: string; title: string; isError?: boolean }>(() => {
     if (typeof window !== 'undefined') {
       const host = window.location.hostname;
       if (host.includes('functional-staging') || host.includes('staging') || host.includes('preview')) {
@@ -167,6 +167,44 @@ export function PanelNavigation() {
       title: 'Production Cluster: Mumbai (bom1) · Connected to Supabase ap-south-1',
     };
   });
+
+  useEffect(() => {
+    let active = true;
+    fetch('/api/environment', { cache: 'no-store' })
+      .then(async (res) => {
+        if (!res.ok) {
+          const body = (await res.json().catch(() => ({}))) as { error?: string };
+          throw new Error(body.error || 'Server environment validation failed');
+        }
+        return res.json() as Promise<{ ok: boolean; label?: string; status?: string; region?: string; projectRef?: string; error?: string }>;
+      })
+      .then((data) => {
+        if (!active) return;
+        if (data.ok && data.label) {
+          setEnvLabel({
+            text: data.label,
+            title: `Verified Server Environment: ${data.status} · Region: ${data.region || 'default'} · Project: ${data.projectRef || 'connected'}`,
+          });
+        } else {
+          setEnvLabel({
+            text: 'Config Inconsistent (Fail-Closed)',
+            title: data.error || 'Environment mismatch detected by server-side safety checks',
+            isError: true,
+          });
+        }
+      })
+      .catch((err: unknown) => {
+        if (!active) return;
+        setEnvLabel({
+          text: 'Config Inconsistent (Fail-Closed)',
+          title: err instanceof Error ? err.message : 'Environment probe rejected',
+          isError: true,
+        });
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
   const sidebarCollapsed = useSyncExternalStore(
     subscribeToSidebar,
     getSidebarSnapshot,
@@ -562,8 +600,8 @@ export function PanelNavigation() {
         </div>
 
         <div className="panel-topbar-actions">
-          <div className="system-status-pill" title={envLabel.title}>
-            <span className="system-status-dot is-online" />
+          <div className={`system-status-pill ${envLabel.isError ? 'is-error' : ''}`} title={envLabel.title}>
+            <span className={`system-status-dot ${envLabel.isError ? 'is-offline' : 'is-online'}`} />
             <span className="system-status-text">{envLabel.text}</span>
           </div>
 

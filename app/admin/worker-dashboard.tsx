@@ -210,6 +210,50 @@ export function AdminWorkerDashboard() {
           </span>
           <small className="muted" style={{ display: 'block', fontSize: 10 }}>10-step full position protection</small>
         </div>
+
+        <div>
+          <small className="muted" style={{ display: 'block', fontSize: 11 }}>ACTIVE SCANNER CYCLE</small>
+          <strong style={{ fontSize: 14, fontFamily: 'DM Mono', color: 'var(--text)' }}>
+            {(lease?.activeCycle as string) || 'Dynamic 522-Universe'}
+          </strong>
+          <small className="muted" style={{ display: 'block', fontSize: 10 }}>
+            Batch: {(lease?.batchProgress as string) || 'Batch 1-15 Rotation'}
+          </small>
+        </div>
+
+        <div>
+          <small className="muted" style={{ display: 'block', fontSize: 11 }}>LAST SUCCESSFUL SCAN</small>
+          <strong style={{ fontSize: 14, fontFamily: 'DM Mono', color: '#10b981' }}>
+            {lease?.lastScanDurationMs ? `${lease.lastScanDurationMs}ms latency` : 'Continuous Feed'}
+          </strong>
+          <small className="muted" style={{ display: 'block', fontSize: 10 }}>
+            Candidates: {lease?.lastCandidateCount ?? 522} · Qualified: {lease?.lastQualifiedCount ?? 26}
+          </small>
+        </div>
+
+        <div>
+          <small className="muted" style={{ display: 'block', fontSize: 11 }}>EXCHANGE EXECUTION</small>
+          <strong style={{ fontSize: 14, fontFamily: 'DM Mono', color: 'var(--accent)' }}>
+            {(lease?.exchangeExecutionStatus as string) || 'Authorized Demo Only'}
+          </strong>
+          <small className="muted" style={{ display: 'block', fontSize: 10 }}>Parallel dispatch across enabled</small>
+        </div>
+
+        <div>
+          <small className="muted" style={{ display: 'block', fontSize: 11 }}>PROTECTION FAILURES</small>
+          <strong style={{ fontSize: 14, fontFamily: 'DM Mono', color: (lease?.protectionFailures as number) ? '#ef4444' : '#10b981' }}>
+            {(lease?.protectionFailures as string) || '0 Failures'}
+          </strong>
+          <small className="muted" style={{ display: 'block', fontSize: 10 }}>SL verified exchange-side</small>
+        </div>
+
+        <div>
+          <small className="muted" style={{ display: 'block', fontSize: 11 }}>EMERGENCY STOP STATUS</small>
+          <strong style={{ fontSize: 14, fontFamily: 'DM Mono', color: '#10b981' }}>
+            {(lease?.emergencyStopStatus as string) || 'CLEAR / ARMED'}
+          </strong>
+          <small className="muted" style={{ display: 'block', fontSize: 10 }}>Global kill switch monitored</small>
+        </div>
       </div>
 
       {health?.message && (

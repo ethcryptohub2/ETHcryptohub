@@ -19,6 +19,56 @@ type CredentialStatus = {
   updatedAt: string | null;
 };
 
+export function getExchangeBadge(params: {
+  exchange: string;
+  environment: string;
+  configured: boolean;
+  lastVerifiedAt?: string | null;
+  hasError?: boolean;
+  switchEnabled?: boolean;
+  isLiveMode?: boolean;
+  adapterComplete?: boolean;
+  lastOrderVerified?: boolean;
+}) {
+  const {
+    exchange,
+    environment,
+    configured,
+    lastVerifiedAt,
+    hasError,
+    switchEnabled = true,
+    isLiveMode = false,
+    adapterComplete = exchange === 'BINANCE' || exchange === 'BYBIT',
+    lastOrderVerified = false,
+  } = params;
+
+  if (isLiveMode || environment === 'LIVE') {
+    return { label: '🔒 LIVE LOCKED', color: '#991b1b', bg: '#fee2e2' };
+  }
+  if (!switchEnabled) {
+    return { label: '○ DISABLED', color: 'var(--text-muted)', bg: 'var(--surface-raised)' };
+  }
+  if (!configured) {
+    return { label: '○ NOT CONFIGURED', color: '#6b7280', bg: 'var(--surface-raised)' };
+  }
+  if (hasError) {
+    return { label: '✕ CREDENTIALS INVALID', color: '#b91c1c', bg: '#fef2f2' };
+  }
+  if (!adapterComplete) {
+    return { label: '⚠ ADAPTER INCOMPLETE', color: '#b45309', bg: '#fffbeb' };
+  }
+  if (lastOrderVerified) {
+    return { label: '✓ DEMO ORDER VERIFIED', color: '#047857', bg: '#ecfdf5' };
+  }
+  if (lastVerifiedAt && switchEnabled) {
+    return { label: '● DEMO EXECUTION ENABLED', color: '#166534', bg: '#f0fdf4' };
+  }
+  if (lastVerifiedAt) {
+    return { label: '● DEMO CONNECTED', color: '#15803d', bg: '#f0fdf4' };
+  }
+  return { label: '● CONFIGURED', color: '#15803d', bg: '#f0fdf4' };
+}
+
 async function getCsrfToken() {
   const response = await fetch('/api/csrf', { cache: 'no-store' });
   const body = (await response.json()) as { data?: { csrfToken: string } };
@@ -54,11 +104,13 @@ function GenericExchangeCredentials({
   name,
   environment,
   requiresPassphrase = false,
+  switchEnabled = true,
 }: {
   exchange: string;
   name: string;
   environment: 'DEMO' | 'TESTNET';
   requiresPassphrase?: boolean;
+  switchEnabled?: boolean;
 }) {
   const [status, setStatus] = useState<CredentialStatus | null>(null);
   const [apiKey, setApiKey] = useState('');
@@ -67,6 +119,17 @@ function GenericExchangeCredentials({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [message, setMessage] = useState('');
+
+  const badgeInfo = getExchangeBadge({
+    exchange,
+    environment,
+    configured: Boolean(status?.configured),
+    lastVerifiedAt: status?.lastVerifiedAt,
+    hasError: Boolean(error),
+    switchEnabled,
+    isLiveMode: false,
+    adapterComplete: exchange === 'BINANCE' || exchange === 'BYBIT',
+  });
 
   useEffect(() => {
     let active = true;
@@ -159,15 +222,11 @@ function GenericExchangeCredentials({
               fontSize: 11,
               fontWeight: 600,
               fontFamily: 'DM Mono',
-              backgroundColor: status?.configured ? '#f0fdf4' : 'var(--surface-raised)',
-              color: status?.configured ? '#166534' : 'var(--text-muted)',
+              backgroundColor: badgeInfo.bg,
+              color: badgeInfo.color,
             }}
           >
-            {status?.configured
-              ? status.lastVerifiedAt
-                ? '✓ CONNECTED & VERIFIED'
-                : '● CONFIGURED'
-              : '○ NOT CONFIGURED'}
+            {badgeInfo.label}
           </span>
         </div>
         <h3 style={{ margin: '4px 0 0' }}>{name} {environment} API Configuration</h3>
@@ -534,7 +593,14 @@ export function ExchangeConnections() {
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 14 }}>
             {exchanges.map((exchange) => {
               const isSelected = exchange.exchange === selected;
-              const isSupported = exchange.environments.some((env) => env.supported);
+              const isEnabled = Boolean(exchangeSwitches[exchange.exchange]);
+              const cardBadge = getExchangeBadge({
+                exchange: exchange.exchange,
+                environment: exchange.exchange === 'GATE' ? 'TESTNET' : 'DEMO',
+                configured: true,
+                switchEnabled: isEnabled,
+                adapterComplete: exchange.exchange === 'BINANCE' || exchange.exchange === 'BYBIT',
+              });
               return (
                 <button
                   key={exchange.exchange}
@@ -565,11 +631,11 @@ export function ExchangeConnections() {
                         fontSize: 10,
                         fontWeight: 600,
                         fontFamily: 'DM Mono',
-                        backgroundColor: isSupported ? '#f0fdf4' : 'var(--surface-raised)',
-                        color: isSupported ? '#166534' : 'var(--text-muted)',
+                        backgroundColor: cardBadge.bg,
+                        color: cardBadge.color,
                       }}
                     >
-                      {exchange.exchange === 'GATE' ? 'TESTNET READY' : 'DEMO READY'}
+                      {cardBadge.label}
                     </span>
                   </div>
                   <strong style={{ fontSize: 16 }}>{exchange.name}</strong>
@@ -590,6 +656,7 @@ export function ExchangeConnections() {
               name={chosen?.name ?? selected}
               environment={(demo.environment as 'DEMO' | 'TESTNET') ?? 'DEMO'}
               requiresPassphrase={selected === 'OKX' || selected === 'BITGET'}
+              switchEnabled={Boolean(exchangeSwitches[selected])}
             />
           ) : (
             <div className="card" style={{ padding: '24px', textAlign: 'center' }}>

@@ -414,7 +414,7 @@ export async function runWorkerLoop(options = {}) {
 const isMain = process.argv[1] && fileURLToPath(import.meta.url) === path.resolve(process.argv[1]);
 if (isMain) {
   const args = process.argv.slice(2);
-  const once = args.includes('--once');
+  const once = args.includes('--once') || process.env.WORKER_SINGLE_CYCLE === 'true';
   runWorkerLoop({ once }).catch((err) => {
     console.error(err);
     process.exit(1);
