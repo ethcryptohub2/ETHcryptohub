@@ -1,0 +1,69 @@
+name: Reconcile Binance Demo protections
+
+on:
+  schedule:
+    - cron: '*/5 * * * *'
+  workflow_dispatch:
+    inputs:
+      confirm_staging_reconciler:
+        description: Confirm this invocation targets the approved Staging Preview
+        required: true
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: binance-demo-protection-reconciliation
+  cancel-in-progress: false
+
+jobs:
+  reconcile:
+    if: ${{ vars.SMARTEXIT_CRON_RECONCILIATION_ENABLED == 'true' && (github.event_name == 'schedule' || inputs.confirm_staging_reconciler) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Validate the approved staging target and authorization
+        env:
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+          CRON_BASE_URL: ${{ secrets.SMARTEXIT_CRON_BASE_URL }}
+          CRON_ALLOWED_PREVIEW_URL: ${{ secrets.SMARTEXIT_STAGING_PREVIEW_URL }}
+          CRON_PRODUCTION_URL: ${{ vars.SMARTEXIT_PRODUCTION_APP_URL }}
+          CRON_TARGET_ENVIRONMENT: ${{ vars.SMARTEXIT_CRON_TARGET_ENVIRONMENT }}
+        run: |
+          test -n "$CRON_SECRET" || { echo "Configure the CRON_SECRET repository Actions secret."; exit 1; }
+          test "${#CRON_SECRET}" -ge 32 || { echo "CRON_SECRET must contain at least 32 characters."; exit 1; }
+          test "$CRON_TARGET_ENVIRONMENT" = "staging" || { echo "CRON target environment must be explicitly set to staging."; exit 1; }
+          python3 - <<'PY'
+          import os
+          from urllib.parse import urlsplit
+
+          base = os.environ.get("CRON_BASE_URL", "")
+          approved = os.environ.get("CRON_ALLOWED_PREVIEW_URL", "")
+          production = os.environ.get("CRON_PRODUCTION_URL", "")
+
+          def origin(value):
+              parsed = urlsplit(value)
+              if (parsed.scheme != "https" or not parsed.hostname or parsed.username or parsed.password
+                      or parsed.path not in ("", "/") or parsed.query or parsed.fragment):
+                  return None
+              return f"https://{parsed.netloc.lower()}"
+
+          base_origin = origin(base)
+          approved_origin = origin(approved)
+          production_origin = origin(production)
+          if (not base_origin or base_origin != approved_origin or not production_origin
+                  or base_origin == production_origin):
+              raise SystemExit("CRON target must exactly match the approved HTTPS Staging Preview URL.")
+          PY
+      - name: Invoke the explicitly enabled Staging reconciler
+        env:
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+          CRON_BASE_URL: ${{ secrets.SMARTEXIT_CRON_BASE_URL }}
+        run: |
+          status=$(curl --silent --show-error --output /dev/null --write-out "%{http_code}" --max-time 110 \
+            -H "Authorization: Bearer $CRON_SECRET" \
+            "$CRON_BASE_URL/api/cron/binance-protection")
+          test "$status" = "200" || { echo "Staging reconciler returned a non-success status."; exit 1; }
+          echo "Staging protection reconciliation completed."

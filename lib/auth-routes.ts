@@ -5,7 +5,7 @@ import { ZodError, z } from 'zod';
 import { createSession, currentUser, safeEqual } from './auth';
 import { query } from './db';
 import { EmailDeliveryError, sendPasswordResetCode, sendVerificationCode } from './email';
-import { guardedPost, jsonError } from './http';
+import { guardedPost, jsonError, resolveClientIp } from './http';
 import { assertPasswordRecoveryReady, PasswordRecoveryUnavailableError } from './auth-recovery-readiness';
 
 const emailSchema = z.string().trim().email().max(255);
@@ -16,6 +16,23 @@ function requiredAuthSecret() {
   const secret = process.env.AUTH_SECRET ?? '';
   if (secret.length < 32) throw new Error('AUTH_SECRET must contain at least 32 characters.');
   return secret;
+}
+
+export function resolveRateLimitPeer(request: NextRequest, fallbackContext?: string): string {
+  const clientIp = resolveClientIp(request);
+  if (clientIp) {
+    return `ip:${clientIp}`;
+  }
+  // Prevent shared unknown-IP lockouts (BUG-01) by isolating anonymous or non-proxied requests
+  const ua = request.headers.get('user-agent') ?? '';
+  const lang = request.headers.get('accept-language') ?? '';
+  const chUa = request.headers.get('sec-ch-ua') ?? '';
+  const context = fallbackContext ? `:${fallbackContext.trim().toLowerCase()}` : '';
+  const fp = createHash('sha256')
+    .update(`${ua}:${lang}:${chUa}${context}`)
+    .digest('hex')
+    .slice(0, 24);
+  return `fp:${fp}`;
 }
 const signupSchema = z.object({
   email: emailSchema,
@@ -105,7 +122,7 @@ export async function authRoute(action: string, request: NextRequest) {
       const blocked = guardedPost(request);
       if (blocked) return blocked;
       const body = signupSchema.parse(await request.json());
-      const peer = request.headers.get('x-vercel-forwarded-for') ?? 'unknown';
+      const peer = resolveRateLimitPeer(request, body.email);
       if (!(await consumeRateLimit(`signup:${peer}`, 10, 3600))) return jsonError('Too many signup attempts. Try again later.', 429);
       if (Buffer.byteLength(body.password, 'utf8') > 72) return jsonError('Password must be 72 bytes or fewer.', 422);
       const passwordHash = await bcrypt.hash(body.password, 12);
@@ -123,8 +140,14 @@ export async function authRoute(action: string, request: NextRequest) {
       const blocked = guardedPost(request);
       if (blocked) return blocked;
       const body = z.object({ email: emailSchema, password: z.string().min(1).max(72) }).parse(await request.json());
-      const peer = request.headers.get('x-vercel-forwarded-for') ?? 'unknown';
-      if (!(await consumeRateLimit(`login:${peer}`, 20, 900))) return jsonError('Too many sign-in attempts. Try again later.', 429);
+      const email = body.email.toLowerCase();
+      const peer = resolveRateLimitPeer(request, email);
+      if (
+        !(await consumeRateLimit(`login:${peer}`, 20, 900)) ||
+        !(await consumeRateLimit(`login-email:${email}`, 10, 900))
+      ) {
+        return jsonError('Too many sign-in attempts. Try again later.', 429);
+      }
       const result = await query<{ id: number; password_hash: string; is_email_verified: number; is_active: number }>(
         'SELECT id, password_hash, is_email_verified, is_active FROM public.users WHERE email = $1 LIMIT 1',
         [body.email.toLowerCase()],
@@ -198,7 +221,7 @@ export async function authRoute(action: string, request: NextRequest) {
       const blocked = guardedPost(request);
       if (blocked) return blocked;
       const body = z.object({ email: emailSchema }).parse(await request.json());
-      const peer = request.headers.get('x-vercel-forwarded-for') ?? 'unknown';
+      const peer = resolveRateLimitPeer(request, body.email);
       if (!(await consumeRateLimit(`resend-v2:${peer}`, 10, 600))) {
         return NextResponse.json(
           { error: 'Too many verification requests from this network. Please wait up to 10 minutes before trying again.' },
@@ -227,7 +250,7 @@ export async function authRoute(action: string, request: NextRequest) {
       if (blocked) return blocked;
       const body = z.object({ email: emailSchema }).parse(await request.json());
       const email = body.email.toLowerCase();
-      const peer = request.headers.get('x-vercel-forwarded-for') ?? 'unknown';
+      const peer = resolveRateLimitPeer(request, email);
       if (!(await consumeRateLimit(`password-reset:${peer}`, 10, 900)) ||
           !(await consumeRateLimit(`password-reset-email:${email}`, 3, 900))) {
         return NextResponse.json(
@@ -264,7 +287,7 @@ export async function authRoute(action: string, request: NextRequest) {
         return jsonError('Passwords must match and be 72 bytes or fewer.', 422);
       }
       const email = body.email.toLowerCase();
-      const peer = request.headers.get('x-vercel-forwarded-for') ?? 'unknown';
+      const peer = resolveRateLimitPeer(request, email);
       if (!(await consumeRateLimit(`password-reset-complete:${peer}`, 15, 900))) {
         return NextResponse.json(
           { error: 'Too many password reset attempts. Please wait before trying again.' },

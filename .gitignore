@@ -28,3 +28,7 @@ node_modules/
 out/
 .vercel
 .env*
+.vscode/
+staging.txt
+supabase/.temp/
+

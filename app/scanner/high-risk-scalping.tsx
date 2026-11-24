@@ -232,6 +232,7 @@ export function HighRiskScalping({
       <p className="mono">HIGH RISK · SAVED SIGNALS</p>
       <h1>High-Risk Scalping</h1>
       <p className="muted">Independent short-timeframe research from saved scanner results. Short-lived opportunities may expire between scans.</p>
+      <p className="scanner-research-target" role="note">High-Risk research target: 95% win rate · unverified objective, not an achieved result.</p>
     </section>
     <section className="card stack">
       <div className="links">

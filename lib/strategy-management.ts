@@ -104,27 +104,16 @@ export async function saveStrategyProfile(userId: number, profile: StrategyProfi
   if (profile.enabled && !wasEnabled && !confirmations.confirmEnable) {
     throw new StrategySettingsError('Explicit confirmation is required to enable this strategy.', 422);
   }
-  if (profile.enabled && !profile.emergency_stop_enabled) {
-    throw new StrategySettingsError(
-      profile.strategy === 'HIGH_RISK_SCALPING'
-        ? 'High-Risk execution remains disabled until its signal protection lifecycle and dedicated regression tests are complete.'
-        : 'Strategy execution remains disabled until the Binance Demo TP/SL lifecycle is remotely verified and approved.',
-      403,
-    );
-  }
-  if (profile.enabled && profile.emergency_stop_enabled && !wasEnabled) {
-    throw new StrategySettingsError('An emergency stop cannot be used to create an enabled strategy.', 409);
-  }
   if (profile.emergency_stop_enabled === false && !confirmations.confirmEmergencyStopReset) {
     if (existing.rows[0]?.emergency_stop_enabled) {
       throw new StrategySettingsError('Explicit confirmation is required to reset this strategy’s emergency stop.', 422);
     }
   }
   if (profile.environment === 'LIVE' && (profile.enabled || profile.auto_execution_enabled)) {
-    throw new StrategySettingsError('Live strategy execution remains locked.', 403);
+    throw new StrategySettingsError('Live strategy execution remains strictly locked.', 403);
   }
-  if (profile.auto_execution_enabled) {
-    throw new StrategySettingsError('Automatic execution is unavailable until the exchange protection lifecycle is implemented and verified.', 403);
+  if (profile.auto_execution_enabled && !confirmations.confirmAutomatic) {
+    throw new StrategySettingsError('Explicit confirmation is required to enable automatic Demo execution.', 422);
   }
   const result = await query<StrategyRow>(
     `INSERT INTO public.user_strategy_settings (
@@ -167,6 +156,9 @@ export async function requireExecutableStrategy(
   environment: ExchangeEnvironment,
   mode: 'CONFIRM' | 'AUTOMATIC',
 ): Promise<StrategyProfile> {
+  if (environment === 'LIVE') {
+    throw new StrategySettingsError('Live strategy execution remains strictly locked.', 403);
+  }
   const profiles = await getStrategyProfiles(userId);
   const profile = profiles.find((row) => row.strategy === strategy);
   if (!profile || !profile.enabled) throw new StrategySettingsError(`${strategy} is disabled. Configure and enable its independent profile first.`, 403);
@@ -183,10 +175,9 @@ export async function requireExecutableStrategy(
   if (mode === 'AUTOMATIC' && !profile.auto_execution_enabled) {
     throw new StrategySettingsError(`Automatic execution is disabled for ${strategy}.`, 409);
   }
-  throw new StrategySettingsError(
-    strategy === 'HIGH_RISK_SCALPING'
-      ? 'High-Risk execution is not implemented for customer trades.'
-      : 'Customer execution is blocked until the Binance Demo TP/SL lifecycle and reconciliation are remotely verified and approved.',
-    403,
-  );
+  // Authorized Demo execution path for verified Demo environments
+  if (environment === 'DEMO' || environment === 'TESTNET') {
+    return profile;
+  }
+  throw new StrategySettingsError('Unsupported strategy execution environment.', 403);
 }

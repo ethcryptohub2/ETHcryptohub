@@ -26,30 +26,40 @@ async function getCsrfToken() {
   return body.data.csrfToken;
 }
 
-function BybitDemoCredentials() {
+function GenericExchangeCredentials({
+  exchange,
+  name,
+  environment,
+  requiresPassphrase = false,
+}: {
+  exchange: string;
+  name: string;
+  environment: 'DEMO' | 'TESTNET';
+  requiresPassphrase?: boolean;
+}) {
   const [status, setStatus] = useState<CredentialStatus | null>(null);
   const [apiKey, setApiKey] = useState('');
   const [apiSecret, setApiSecret] = useState('');
+  const [passphrase, setPassphrase] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [message, setMessage] = useState('');
 
-  async function loadStatus() {
-    const response = await fetch('/api/exchanges/credentials?exchange=BYBIT&environment=DEMO', { cache: 'no-store' });
-    const body = await response.json() as { data?: CredentialStatus; error?: string };
-    if (!response.ok || !body.data) throw new Error(body.error ?? 'Bybit Demo connection settings are unavailable.');
-    return body.data;
-  }
-
   useEffect(() => {
     let active = true;
+    async function loadStatus() {
+      const response = await fetch(`/api/exchanges/credentials?exchange=${encodeURIComponent(exchange)}&environment=${encodeURIComponent(environment)}`, { cache: 'no-store' });
+      const body = await response.json() as { data?: CredentialStatus; error?: string };
+      if (!response.ok || !body.data) throw new Error(body.error ?? `${name} ${environment} connection settings are unavailable.`);
+      return body.data;
+    }
     void loadStatus()
       .then((data) => { if (active) setStatus(data); })
       .catch((reason: unknown) => {
-        if (active) setError(reason instanceof Error ? reason.message : 'Bybit Demo settings are unavailable.');
+        if (active) setError(reason instanceof Error ? reason.message : `${name} ${environment} settings are unavailable.`);
       });
     return () => { active = false; };
-  }, []);
+  }, [exchange, environment, name]);
 
   async function submit(event: FormEvent, action: 'save' | 'test' | 'remove') {
     event.preventDefault();
@@ -63,42 +73,46 @@ function BybitDemoCredentials() {
         headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken },
         body: JSON.stringify({
           action,
-          exchange: 'BYBIT',
-          environment: 'DEMO',
-          ...(action === 'save' ? { apiKey, apiSecret } : {}),
+          exchange,
+          environment,
+          ...(action === 'save' ? { apiKey, apiSecret, ...(requiresPassphrase ? { passphrase } : {}) } : {}),
         }),
       });
       const body = await response.json() as { data?: CredentialStatus; error?: string };
-      if (!response.ok || !body.data) throw new Error(body.error ?? 'Bybit Demo request failed.');
+      if (!response.ok || !body.data) throw new Error(body.error ?? `${name} ${environment} request failed.`);
       setStatus(body.data);
       if (action === 'save') {
         setApiKey('');
         setApiSecret('');
+        setPassphrase('');
       }
       setMessage(action === 'test'
-        ? 'Bybit Demo account access verified. No orders were placed.'
+        ? `${name} ${environment} account access verified. No orders were placed.`
         : action === 'remove'
-          ? 'Bybit Demo credentials removed.'
-          : 'Bybit Demo credentials encrypted and saved.');
+          ? `${name} ${environment} credentials removed.`
+          : `${name} ${environment} credentials encrypted and saved.`);
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : 'Bybit Demo request failed.');
+      setError(reason instanceof Error ? reason.message : `${name} ${environment} request failed.`);
     } finally {
       setBusy(false);
     }
   }
 
   return <form className="card stack" onSubmit={(event) => void submit(event, 'save')}>
-    <p className="mono">BYBIT · DEMO / VIRTUAL FUNDS</p>
+    <p className="mono">{exchange} · {environment} / VIRTUAL FUNDS</p>
     <p className="muted">
       {status?.configured
         ? `Configured ${status.maskedApiKey ?? ''} · ${status.lastVerifiedAt ? `last connection check ${new Date(status.lastVerifiedAt).toLocaleString()}` : 'not tested'}`
         : status?.environmentConfirmationRequired
-          ? 'A legacy credential exists but its original environment is unverified. Re-enter a dedicated Bybit Demo key before connecting.'
-          : 'No Bybit Demo credentials are saved.'}
-      {' '}Use a Bybit Demo API key with read and derivatives-trading permission only. Keep withdrawals and transfers disabled.
+          ? `A legacy credential exists but its original environment is unverified. Re-enter a dedicated ${name} ${environment} key before connecting.`
+          : `No ${name} ${environment} credentials are saved.`}
+      {' '}Use a {name} {environment} API key with read and derivatives-trading permission only. Keep withdrawals and transfers disabled.
     </p>
-    <label>Bybit Demo API Key<input autoComplete="off" value={apiKey} minLength={8} maxLength={256} onChange={(event) => setApiKey(event.target.value)} required /></label>
-    <label>Bybit Demo API Secret<input type="password" autoComplete="new-password" value={apiSecret} minLength={8} maxLength={512} onChange={(event) => setApiSecret(event.target.value)} required /></label>
+    <label>{name} {environment} API Key<input autoComplete="off" value={apiKey} minLength={8} maxLength={256} onChange={(event) => setApiKey(event.target.value)} required /></label>
+    <label>{name} {environment} API Secret<input type="password" autoComplete="new-password" value={apiSecret} minLength={8} maxLength={512} onChange={(event) => setApiSecret(event.target.value)} required /></label>
+    {requiresPassphrase && (
+      <label>{name} API Passphrase<input type="password" autoComplete="new-password" value={passphrase} minLength={1} maxLength={256} onChange={(event) => setPassphrase(event.target.value)} required /></label>
+    )}
     {error && <p className="error" role="alert">{error}</p>}
     {message && <p className="success" role="status">{message}</p>}
     <div className="links">
@@ -160,8 +174,13 @@ export function ExchangeConnections() {
     {error && <p className="muted" role="status">{error}</p>}
     {selected === 'BINANCE'
       ? <BinanceForm />
-      : selected === 'BYBIT' && demo?.available
-        ? <BybitDemoCredentials />
+      : demo?.available
+        ? <GenericExchangeCredentials
+            exchange={selected}
+            name={chosen?.name ?? selected}
+            environment={(demo.environment as 'DEMO' | 'TESTNET') ?? 'DEMO'}
+            requiresPassphrase={selected === 'OKX' || selected === 'BITGET'}
+          />
         : <p className="muted">
             {!demo?.supported
               ? 'NOT IMPLEMENTED — DISABLED. Admin has not enabled this exchange.'
