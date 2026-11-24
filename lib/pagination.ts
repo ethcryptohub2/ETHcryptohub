@@ -48,8 +48,8 @@ export function getVisiblePageNumbers(currentPage: number, totalPages: number, m
 
   const pages: (number | 'ellipsis')[] = [1];
   const halfWindow = Math.floor(maxVisible / 2);
-  let start = Math.max(2, currentPage - halfWindow);
-  let end = Math.min(totalPages - 1, currentPage + halfWindow);
+  const start = Math.max(2, currentPage - halfWindow);
+  const end = Math.min(totalPages - 1, currentPage + halfWindow);
 
   if (start > 2) {
     pages.push('ellipsis');

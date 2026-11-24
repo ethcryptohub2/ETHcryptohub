@@ -1,0 +1,70 @@
+{
+  "timestamp": "2026-11-24T22:55:42.372Z",
+  "commit": "72c2656",
+  "status": "PASSED",
+  "summary": {
+    "totalSuites": 108,
+    "totalTests": 715,
+    "passed": 715,
+    "failed": 0,
+    "skipped": 0,
+    "typecheckErrors": 0,
+    "lintErrors": 0,
+    "lintWarnings": 0,
+    "buildStatus": "SUCCESS"
+  },
+  "suites": [
+    {
+      "name": "node:test (lib/exchanges, lib, lib/intelligence, scripts)",
+      "command": "npm run test:exchanges",
+      "files": 102,
+      "tests": 643,
+      "passed": 643,
+      "failed": 0,
+      "durationMs": 31154,
+      "status": "PASS"
+    },
+    {
+      "name": "vitest (@smartexit/api)",
+      "command": "npm --prefix smartexit test",
+      "files": 6,
+      "tests": 72,
+      "passed": 72,
+      "failed": 0,
+      "durationMs": 3140,
+      "status": "PASS"
+    },
+    {
+      "name": "typescript",
+      "command": "npm run typecheck",
+      "errors": 0,
+      "status": "PASS"
+    },
+    {
+      "name": "eslint",
+      "command": "npm run lint",
+      "errors": 0,
+      "warnings": 0,
+      "status": "PASS"
+    },
+    {
+      "name": "nextjs-production-build",
+      "command": "npm run build",
+      "status": "PASS",
+      "pagesGenerated": 10
+    },
+    {
+      "name": "supabase-migration-validator",
+      "command": "npm run validate:migrations",
+      "migrationsChecked": 13,
+      "verificationSqlChecked": 13,
+      "status": "PASS"
+    }
+  ],
+  "securityAudit": {
+    "rlsCoverage": "74/74 public tables have ENABLE ROW LEVEL SECURITY",
+    "failClosedLiveTrading": "HTTP 403 Forbidden verified for all LIVE endpoints",
+    "productionCronDisabled": "vercel.json has 0 crons; reconciliation CRON disabled",
+    "paperTradingEliminated": "Zero internal virtual simulation; all endpoints exchange demo only"
+  }
+}

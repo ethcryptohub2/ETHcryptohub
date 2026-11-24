@@ -12,7 +12,7 @@ export default async function HomePage() {
   const user = databaseConfigured ? await currentUser() : null;
   return (
     <main className="shell">
-      <header className="topbar"><Link className="brand" href="/">ETHCRYPTOHUB</Link><nav className="links">{user ? <><Link href="/dashboard">Dashboard</Link><Link href="/scanner">Scanner</Link></> : <><Link href="/login">Sign in</Link><Link href="/signup">Create account</Link></>}<ThemeToggle /></nav></header>
+      <header className="topbar"><Link className="brand" href="/">ETHCRYPTOHUB</Link><nav className="links" style={{ display: 'flex', gap: 14, alignItems: 'center' }}>{user ? <><Link href="/dashboard">Dashboard</Link><Link href="/scanner">Scanner</Link></> : <><Link href="/login">Sign in</Link><Link href="/signup">Create account</Link></>}<ThemeToggle /></nav></header>
       {uiPreviewOnly
         ? <p className="error" role="status">Unavailable in UI Preview: account, database, market-data, and exchange features are disabled. No data or trade results are simulated.</p>
         : !databaseConfigured && <p className="error" role="status">Database is not configured. Account, settings, and scanner services will remain unavailable until Supabase connection variables are set.</p>}

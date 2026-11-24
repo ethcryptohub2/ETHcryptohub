@@ -288,7 +288,7 @@ export function HighRiskScalping({
       <p className="scanner-research-target" role="note">High-Risk research target: 95% win rate · unverified objective, not an achieved result.</p>
     </section>
     <section className="card stack">
-      <div className="links">
+      <div className="links" style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
         {data && <p className="muted">{data.settings.enabled ? `Enabled timeframes: ${SCALPING_TIMEFRAMES.filter((timeframe) => data.settings.enabledTimeframes.includes(timeframe)).join(', ') || 'none'}` : 'Scalping signal generation is disabled in the saved settings.'}</p>}
         <button
           type="button"
@@ -330,11 +330,11 @@ export function HighRiskScalping({
     </section>
     <section className="card stack"><h2>High-Risk setups</h2>
       <p className="muted">Browse the latest 200 saved High-Risk signal records. Refresh reads saved records without requesting new market data.</p>
-      <nav className="links" aria-label="High-Risk signal records">
+      <nav className="links" aria-label="High-Risk signal records" style={{ display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'center' }}>
         <Link href="/scanner/history?scannerType=HIGH_RISK">High-Risk Signal History</Link>
         <Link href="/scanner/performance">Signal Performance</Link>
       </nav>
-      <div className="links">
+      <div className="links" style={{ display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'center' }}>
         <label>View<select value={view} onChange={(event) => { setPage(1); setView(event.target.value as typeof view); }}><option value="active">Active opportunities</option><option value="entered">Recorded entries</option><option value="history">Inactive and expired</option></select></label>
         <label>Symbol<input value={symbol} maxLength={25} onChange={(event) => { setPage(1); setSymbol(event.target.value); }} /></label>
         <label>Timeframe<select value={timeframe} onChange={(event) => { setPage(1); setTimeframe(event.target.value); }}><option value="">All timeframes</option>{SCALPING_TIMEFRAMES.map((value) => <option key={value}>{value}</option>)}</select></label>

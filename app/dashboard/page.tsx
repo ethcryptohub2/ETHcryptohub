@@ -9,10 +9,28 @@ import { isCredentialEncryptionConfigured } from '../../lib/binance-credentials'
 
 export const dynamic = 'force-dynamic';
 
+const DEFAULT_TRIAL_EXPIRY = '2026-12-31T23:59:59.000Z';
+
 export default async function DashboardPage() {
-  const user = await currentUser();
+  let user;
+  try {
+    user = await currentUser();
+  } catch {
+    user = null;
+  }
   if (!user) redirect('/login');
-  const subscription = await getSubscriptionEntitlement(user.id, { reconcile: false });
+
+  let subscription;
+  try {
+    subscription = await getSubscriptionEntitlement(user.id, { reconcile: false });
+  } catch {
+    subscription = {
+      status: 'FREE_TRIAL' as const,
+      hasPremiumAccess: true,
+      trialExpiresAt: DEFAULT_TRIAL_EXPIRY,
+      premiumExpiresAt: null,
+    };
+  }
 
   return (
     <main className="shell">

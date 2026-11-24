@@ -99,7 +99,6 @@ function StandardSignals({
   const [lastCheckedAt, setLastCheckedAt] = useState<number | null>(null);
   const [freshnessNow, setFreshnessNow] = useState(0);
   const [soundEnabled, setSoundEnabled] = useState(true);
-  const [demoOrderNotice, setDemoOrderNotice] = useState<string | null>(null);
   const requestInFlight = useRef<AbortController | null>(null);
   const [timeframe, setTimeframe] = useState<ScannerCandidate['timeframe']>('15m');
   const [selection, setSelection] = useState<{ coverage: ScannerCoverage; symbol: string; rank: ScannerRank | null; page: number }>({
@@ -238,7 +237,6 @@ function StandardSignals({
 
   useEffect(() => {
     if (!autoScanEnabled) {
-      setAutoScanCountdown(15);
       return;
     }
 
@@ -318,12 +316,6 @@ function StandardSignals({
 
       {/* Genuine Binance USDⓈ-M Futures Live Ticker Bar */}
       <LiveMarketTickerBar />
-
-      {demoOrderNotice && (
-        <div className="success" role="alert" style={{ marginBottom: 18 }}>
-          ✓ {demoOrderNotice}
-        </div>
-      )}
 
       <section className="scanner-overview" aria-label="Scanner summary">
         <article className="scanner-stat-card scanner-stat-primary">

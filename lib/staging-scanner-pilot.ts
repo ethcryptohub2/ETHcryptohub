@@ -38,7 +38,7 @@ export function getApprovedScannerPilot(env: Env, credentials: Credentials, now 
       new Date(end).toISOString().replace('.000Z', 'Z') !== ends ||
       start % slotMs !== 0 || end % slotMs !== 0 || end <= start || end - start > 4 * slotMs ||
       now < start || now >= end || now - slot < 120_000 || now - slot >= 300_000 ||
-      symbols.length !== 3 || new Set(symbols).size !== 3 || symbols.some(symbol => !/^[A-Z0-9]{1,20}USDT$/.test(symbol))) {
+      symbols.length !== 3 || new Set(symbols).size !== 3 || symbols.some(symbol => !/^[\p{L}\p{N}]{1,20}USDT$/u.test(symbol))) {
     return null;
   }
   try {

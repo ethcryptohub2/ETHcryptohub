@@ -221,8 +221,8 @@ export function NewsFeed() {
     </section>
     <section className="card stack news-feed">
       <div className="news-feed-toolbar">
-        <div><strong>Latest updates</strong><span className="mono">{updateStatus}</span></div>
-        <div className="links">
+        <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}><strong>Latest updates</strong><span className="mono">{updateStatus}</span></div>
+        <div className="links" style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
           <span className="news-unread-count" aria-live="polite">{data?.unreadCount ?? 0} unread</span>
           <button type="button" className="button-secondary" onClick={() => void markBreakingRead()} disabled={!data?.unreadCount}>Mark alerts read</button>
           <button type="button" onClick={() => void load()} disabled={loading}>{loading ? 'Refreshing…' : 'Refresh'}</button>

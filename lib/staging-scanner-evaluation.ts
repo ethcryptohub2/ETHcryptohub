@@ -73,7 +73,7 @@ type EvaluationOptions = {
 export async function evaluateStagingScanner(options: EvaluationOptions) {
   const { symbols, minimumScore, highRisk, signal, request = fetch, now = Date.now, mode = 'both' } = options;
   if (!symbols.length || symbols.length > scannerEvaluationBatchLimit ||
-      new Set(symbols).size !== symbols.length || symbols.some(symbol => !/^[A-Z0-9]{1,20}USDT$/.test(symbol))) {
+      new Set(symbols).size !== symbols.length || symbols.some(symbol => !/^[\p{L}\p{N}]{1,20}USDT$/u.test(symbol))) {
     throw new ScannerEvaluationFailure('INVALID_SYMBOL_BATCH');
   }
   if (!highRisk.enabled || !highRisk.enabledTimeframes.includes('5m')) {

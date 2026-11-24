@@ -81,10 +81,34 @@ export function AdminWorkerDashboard() {
   };
 
   useEffect(() => {
-    void fetchHealth();
-    const interval = window.setInterval(fetchHealth, 15_000);
-    return () => window.clearInterval(interval);
-  }, [fetchHealth]);
+    let active = true;
+    const load = async () => {
+      try {
+        const [healthRes, exchangesRes] = await Promise.all([
+          fetch('/api/admin/worker-health', { cache: 'no-store' }),
+          fetch('/api/admin/exchanges', { cache: 'no-store' }),
+        ]);
+
+        const healthBody = (await healthRes.json()) as { ok?: boolean; data?: WorkerHealthResult; error?: string };
+        if (active && healthRes.ok && healthBody.data) {
+          setHealth(healthBody.data);
+        }
+
+        const exchangesBody = (await exchangesRes.json()) as { data?: ExchangeProvider[]; error?: string };
+        if (active && exchangesRes.ok && exchangesBody.data) {
+          setProviders(exchangesBody.data);
+        }
+      } catch (err) {
+        if (active) setError(err instanceof Error ? err.message : 'Failed to query telemetry.');
+      }
+    };
+    void load();
+    const interval = window.setInterval(load, 15_000);
+    return () => {
+      active = false;
+      window.clearInterval(interval);
+    };
+  }, []);
 
   const isOnline = health?.status === 'ONLINE';
   const isDegraded = health?.status === 'DEGRADED';

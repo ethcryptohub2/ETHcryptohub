@@ -3,7 +3,7 @@ import path from 'node:path';
 import type { QueryResultRow } from 'pg';
 
 export interface WorkerLeaseInfo {
-  [key: string]: any;
+  [key: string]: unknown;
   workerId: string;
   hostname: string;
   pid: number;
@@ -31,7 +31,7 @@ export interface WorkerHealthResult {
 const SETTING_KEY = 'demo_worker_lease';
 const DEFAULT_TTL_SECONDS = 90;
 
-async function safeDbQuery<T extends QueryResultRow = any>(sql: string, params: unknown[] = []): Promise<{ rows: T[] }> {
+async function safeDbQuery<T extends QueryResultRow = QueryResultRow>(sql: string, params: unknown[] = []): Promise<{ rows: T[] }> {
   try {
     const { query } = await import('./db');
     return await query<T>(sql, params);

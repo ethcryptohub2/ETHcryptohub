@@ -1,6 +1,6 @@
 import { NextRequest } from 'next/server';
 import { AuthError } from '../../../lib/auth';
-import { getPaperTradingSummary, listUserSignalEntries } from '../../../lib/signal-history';
+import { listUserSignalEntries } from '../../../lib/signal-history';
 import { requirePremiumUser, SubscriptionError } from '../../../lib/subscriptions';
 import { z } from 'zod';
 
@@ -19,10 +19,7 @@ export async function GET(request: NextRequest) {
     const parsed = querySchema.safeParse(Object.fromEntries(request.nextUrl.searchParams));
     const { page, pageSize, status } = parsed.success ? parsed.data : { page: 1, pageSize: 20, status: 'ALL' as const };
 
-    const [positionsResult, summary] = await Promise.all([
-      listUserSignalEntries(user.id, { page, pageSize, status }),
-      getPaperTradingSummary(user.id),
-    ]);
+    const positionsResult = await listUserSignalEntries(user.id, { page, pageSize, status });
 
     return Response.json({
       data: {
@@ -33,7 +30,7 @@ export async function GET(request: NextRequest) {
           pageSize: positionsResult.pageSize,
           totalPages: positionsResult.totalPages,
         },
-        summary,
+        summary: null,
       },
     }, {
       headers: { 'Cache-Control': 'no-store' },

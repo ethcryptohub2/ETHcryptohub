@@ -1253,6 +1253,12 @@ export async function executeMultiExchangeDemo(
   exchange: 'BYBIT' | 'OKX' | 'BITGET' | 'GATE',
   environment: 'DEMO' | 'TESTNET' = exchange === 'GATE' ? 'TESTNET' : 'DEMO',
 ) {
+  const gateEnv: TradingEnvironment = environment === 'TESTNET' ? 'DEMO' : environment;
+  if (!tradingExecutionGate(gateEnv)) {
+    return { status: 'LIVE_TRADING_DISABLED' };
+  }
+  await assertEmergencyStopClear(userId, gateEnv);
+
   const existing = await query<{ id: string }>(
     `SELECT id::TEXT FROM public.trade_executions
       WHERE user_id = $1 AND signal_id = $2 AND exchange = $3 AND environment = $4`,
@@ -1271,27 +1277,57 @@ export async function executeMultiExchangeDemo(
   const signal = await getSignal(signalId);
   const strategy = strategyForSignal(signal.scanner_type);
 
-  let adapter: any;
-  if (exchange === 'BYBIT') {
-    const { createBybitDemoAdapter } = await import('./exchanges/bybit-demo');
-    adapter = createBybitDemoAdapter(credentials);
-  } else if (exchange === 'OKX') {
-    const { createOkxDemoAdapter } = await import('./exchanges/okx-demo');
-    adapter = createOkxDemoAdapter(credentials);
-  } else if (exchange === 'BITGET') {
-    const { createBitgetDemoAdapter } = await import('./exchanges/bitget-demo');
-    adapter = createBitgetDemoAdapter(environment);
-  } else if (exchange === 'GATE') {
-    const { createGateTestnetAdapter } = await import('./exchanges/gate-testnet');
-    adapter = createGateTestnetAdapter(credentials, environment);
-  } else {
-    return { status: 'UNSUPPORTED_EXCHANGE' };
+  type OrderPlacingAdapter = {
+    testConnection: () => Promise<unknown>;
+    placeMarketOrder: (params: { symbol: string; side: 'BUY' | 'SELL'; quantity: string; clientOrderId: string }) => Promise<{ exchangeOrderId?: string }>;
+    setPositionProtection?: (symbol: string, stopLoss?: string, takeProfit?: string) => Promise<unknown>;
+  };
+
+  let adapter: OrderPlacingAdapter | null = null;
+  try {
+    if (exchange === 'BYBIT') {
+      const { createBybitDemoAdapter } = await import('./exchanges/bybit-demo');
+      adapter = createBybitDemoAdapter(credentials) as unknown as OrderPlacingAdapter;
+    } else if (exchange === 'OKX') {
+      const { createOkxDemoAdapter } = await import('./exchanges/okx-demo');
+      adapter = createOkxDemoAdapter(credentials) as unknown as OrderPlacingAdapter;
+    } else if (exchange === 'BITGET') {
+      const { createBitgetDemoAdapter } = await import('./exchanges/bitget-demo');
+      adapter = createBitgetDemoAdapter(environment) as unknown as OrderPlacingAdapter;
+    } else if (exchange === 'GATE') {
+      const { createGateTestnetAdapter } = await import('./exchanges/gate-testnet');
+      adapter = createGateTestnetAdapter(credentials, environment) as unknown as OrderPlacingAdapter;
+    }
+  } catch {
+    return { status: 'CREDENTIAL_GATED' };
   }
 
-  await adapter.testConnection();
+  if (!adapter || typeof adapter.placeMarketOrder !== 'function') {
+    return { status: 'UNSUPPORTED_ADAPTER' };
+  }
+
+  try {
+    await adapter.testConnection();
+  } catch {
+    return { status: 'CONNECTION_FAILED' };
+  }
+
+  const userSettings = await query<{
+    order_size_mode: string;
+    fixed_notional_usdt: string;
+    risk_percentage: string;
+    default_leverage: number;
+  }>(
+    `SELECT order_size_mode, fixed_notional_usdt, risk_percentage, default_leverage
+       FROM public.user_exchange_trading_settings
+      WHERE user_id = $1 AND exchange = $2 AND environment = $3`,
+    [userId, exchange, environment],
+  );
+  const setting = userSettings.rows[0];
+  const notionalUsdt = setting?.fixed_notional_usdt ? Math.min(Number(setting.fixed_notional_usdt), 500).toFixed(2) : '100';
+  const leverage = Math.min(Math.max(setting?.default_leverage ?? 1, 1), 5);
 
   const clientOrderId = `smx${randomUUID().replaceAll('-', '')}`.slice(0, 36);
-  const notionalUsdt = '100';
   const entryPrice = signal.entry_price;
   const quantity = (Number(notionalUsdt) / Number(entryPrice)).toFixed(4);
 
@@ -1300,14 +1336,14 @@ export async function executeMultiExchangeDemo(
        user_id, signal_id, exchange, environment, strategy, symbol, side, entry_price, quantity, notional_usdt,
        leverage, stop_loss, take_profit, tp1_price, tp2_price, tp3_price, trailing_percent,
        protection_status, client_order_id, execution_status, execution_mode
-     ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 1, $11, $12, $13, $14, $15, 1,
-               'PROTECTED', $16, 'PROTECTED', 'AUTOMATIC')
+     ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $17, $11, $12, $13, $14, $15, 1,
+               'PENDING', $16, 'PENDING', 'AUTOMATIC')
      ON CONFLICT (user_id, signal_id, exchange, environment) DO NOTHING
      RETURNING id::TEXT`,
     [
       userId, signal.id, exchange, environment, strategy, signal.symbol, signal.side, entryPrice,
       quantity, notionalUsdt, signal.initial_stop, signal.tp3 || signal.tp2,
-      signal.tp1, signal.tp2, signal.tp3, clientOrderId,
+      signal.tp1, signal.tp2, signal.tp3, clientOrderId, leverage,
     ],
   );
 
@@ -1333,7 +1369,7 @@ export async function executeMultiExchangeDemo(
 
     await query(
       `UPDATE public.trade_executions
-          SET execution_status = 'PROTECTED', protection_status = 'ACTIVE',
+          SET execution_status = 'PROTECTED', protection_status = 'PROTECTED',
               actual_fill_price = $2, binance_order_id = $3, updated_at = NOW()
         WHERE id = $1`,
       [executionId, signal.entry_price, order.exchangeOrderId || clientOrderId],
@@ -1344,11 +1380,11 @@ export async function executeMultiExchangeDemo(
     const errorMsg = err instanceof Error ? err.message : 'Exchange dispatch failed';
     await query(
       `UPDATE public.trade_executions
-          SET execution_status = 'FAILED', error_message = $2, updated_at = NOW()
+          SET execution_status = 'FAILED', protection_status = 'FAILED', error_message = $2, updated_at = NOW()
         WHERE id = $1`,
       [executionId, errorMsg.slice(0, 400)],
     );
-    throw err;
+    return { id: executionId, status: 'FAILED', error: errorMsg };
   }
 }
 
@@ -1382,7 +1418,20 @@ export async function processNewAutomaticTrades(signalIds: string[]) {
     for (const { user_id: userId, environment } of configuredUsers.rows) {
       if (!tradingExecutionGate(environment)) continue;
 
-      const jobs = destinations.map(async ({ exchange, env }) => {
+      const userSettings = await query<{
+        exchange: 'BINANCE' | 'BYBIT' | 'OKX' | 'BITGET' | 'GATE';
+      }>(
+        `SELECT exchange FROM public.user_exchange_trading_settings
+          WHERE user_id = $1 AND auto_trade_enabled = TRUE AND execution_mode = 'AUTOMATIC' AND emergency_stop_enabled = FALSE`,
+        [userId],
+      );
+      const activeExchanges = new Set(userSettings.rows.map(r => r.exchange));
+      if (activeExchanges.size === 0) {
+        activeExchanges.add('BINANCE');
+      }
+
+      const activeDestinations = destinations.filter(({ exchange }) => activeExchanges.has(exchange));
+      const jobs = activeDestinations.map(async ({ exchange, env }) => {
         try {
           if (exchange === 'BINANCE') {
             return await executeSignal(userId, signalId, environment, 'AUTOMATIC');

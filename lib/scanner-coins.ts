@@ -45,7 +45,7 @@ export function isEligibleScannerCoin(coin: Pick<ScannerCoin,
     coin.is_enabled &&
     /^[\p{L}\p{N}]{2,30}$/u.test(coin.symbol) &&
     coin.symbol.endsWith('USDT') &&
-    coin.symbol.length >= 6;
+    coin.symbol.length >= 5;
 }
 
 function safeErrorMessage(error: unknown): string {
@@ -522,7 +522,7 @@ export async function getSavedScannerUniverse(input: ScannerUniverseInput) {
         WHERE coin.exchange = 'BINANCE' AND coin.quote_asset = 'USDT'
           AND coin.contract_type = 'PERPETUAL' AND coin.trading_status = 'TRADING' AND coin.is_enabled
           AND coin.symbol = coin.base_asset || 'USDT'
-          AND coin.base_asset ~ '^[[:alnum:]]{1,20}$'
+          AND LENGTH(coin.base_asset) BETWEEN 1 AND 20
      ), observations AS (
        SELECT scanned_at,
               CASE WHEN pg_input_is_valid(candidate_json->>'lastCandleCloseAt', 'timestamptz')

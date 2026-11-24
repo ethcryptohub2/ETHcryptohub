@@ -45,20 +45,25 @@ export async function destroySession() {
 }
 
 export async function currentUser(): Promise<User | null> {
-  const jar = await cookies();
-  const token = jar.get(SESSION_COOKIE)?.value;
-  if (!token || token.length > 100) return null;
-  const result = await query<User>(
-    `SELECT u.id, u.email, u.full_name, u.country_code, u.phone_number, u.x_handle,
-            u.is_x_verified, u.is_email_verified, u.is_active, u.role
-       FROM public.auth_sessions s
-       JOIN public.users u ON u.id = s.user_id
-      WHERE s.token_hash = $1 AND s.expires_at > NOW()
-        AND u.is_active = 1 AND u.is_email_verified = 1
-      LIMIT 1`,
-    [sha256(token)],
-  );
-  return result.rows[0] ?? null;
+  try {
+    const jar = await cookies();
+    const token = jar.get(SESSION_COOKIE)?.value;
+    if (!token || token.length > 100) return null;
+    const result = await query<User>(
+      `SELECT u.id, u.email, u.full_name, u.country_code, u.phone_number, u.x_handle,
+              u.is_x_verified, u.is_email_verified, u.is_active, u.role
+         FROM public.auth_sessions s
+         JOIN public.users u ON u.id = s.user_id
+        WHERE s.token_hash = $1 AND s.expires_at > NOW()
+          AND u.is_active = 1 AND u.is_email_verified = 1
+        LIMIT 1`,
+      [sha256(token)],
+    );
+    return result.rows[0] ?? null;
+  } catch (error) {
+    console.error('currentUser query error:', error);
+    return null;
+  }
 }
 
 export async function requireUser(): Promise<User> {

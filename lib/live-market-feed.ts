@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useRef, useState, useCallback } from 'react';
+import { useEffect, useRef, useState, useCallback, useMemo } from 'react';
 
 export interface LiveTickerItem {
   symbol: string;
@@ -40,7 +40,10 @@ export function useLiveMarketFeed(filterSymbols?: string[]) {
   const prevPricesRef = useRef<Record<string, number>>({});
   const isTabVisibleRef = useRef<boolean>(true);
 
-  const filterSet = filterSymbols ? new Set(filterSymbols.map((s) => s.toUpperCase())) : null;
+  const filterSet = useMemo(
+    () => (filterSymbols ? new Set(filterSymbols.map((s) => s.toUpperCase())) : null),
+    [filterSymbols],
+  );
 
   const updateTickers = useCallback((rawTickers: Array<{
     s: string; // symbol
@@ -88,7 +91,7 @@ export function useLiveMarketFeed(filterSymbols?: string[]) {
         error: null,
       }));
     }
-  }, [filterSymbols]);
+  }, [filterSet]);
 
   const pollRestFallback = useCallback(async () => {
     if (!isTabVisibleRef.current) return;

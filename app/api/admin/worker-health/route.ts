@@ -27,7 +27,7 @@ async function checkWorkerOrAdminAuth(request: NextRequest): Promise<boolean> {
   }
 }
 
-export async function GET(request: NextRequest) {
+export async function GET() {
   try {
     await requireAdmin();
   } catch (error) {
@@ -77,6 +77,22 @@ export async function POST(request: NextRequest) {
   }
 
   const { action, workerId, hostname, pid, version, environment, tickCount, lastScanDurationMs, lastCandidateCount, lastQualifiedCount, ttlSeconds } = body ?? {};
+
+  if (action === 'acquire') {
+    const workerSecret = request.headers.get('x-worker-secret');
+    const validSecrets = [
+      process.env.ADMIN_SETUP_TOKEN,
+      process.env.SUPABASE_SERVICE_ROLE_KEY,
+      process.env.CRON_SECRET,
+    ].filter(Boolean) as string[];
+    const hasWorkerSecret = Boolean(workerSecret && validSecrets.some(secret => secret === workerSecret));
+    if (!hasWorkerSecret) {
+      return NextResponse.json(
+        { error: 'Valid worker secret header required to acquire lease.' },
+        { status: 403, headers: noStore },
+      );
+    }
+  }
 
   if (!workerId || typeof workerId !== 'string') {
     return NextResponse.json({ error: 'workerId is required.' }, { status: 422, headers: noStore });

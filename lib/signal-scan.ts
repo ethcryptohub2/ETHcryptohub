@@ -99,7 +99,7 @@ export async function getAndAdvanceScannerCursor(
   const totalBatches = Math.max(1, Math.ceil(totalItems / batchLimit));
   const offset = currentCursor % totalItems;
   const batchIndex = Math.min(totalBatches, Math.floor(offset / batchLimit) + 1);
-  const cycleId = `CYCLE-${currentCycle}-BATCH-${batchIndex}-OF-${totalBatches}`;
+  const cycleId = `CYCLE-${currentCycle}-FULL-RUN`;
   const nextCursor = (offset + batchLimit) % totalItems;
   const nextCycle = currentCycle + (offset + batchLimit >= totalItems ? 1 : 0);
   const nowIso = new Date().toISOString();
@@ -159,14 +159,6 @@ export async function runSignalScan(
   const scanSlot = Math.floor(minute / 15);
   const timeframe = timeframeOverride ?? timeframes[scanSlot % timeframes.length]!;
 
-  // Dynamic liquidity-ranked candidate selection: prioritize highest-volume liquid pairs
-  const rawSnapshot = marketSnapshot as unknown;
-  const snapshotSymbols = Array.isArray(rawSnapshot)
-    ? (rawSnapshot as Array<{ quoteAsset?: string; symbol: string; quoteVolume24h?: number }>)
-    : rawSnapshot && typeof rawSnapshot === 'object' && 'symbols' in rawSnapshot && Array.isArray((rawSnapshot as { symbols: unknown[] }).symbols)
-      ? (rawSnapshot as { symbols: Array<{ quoteAsset?: string; symbol: string; quoteVolume24h?: number }> }).symbols
-      : [];
-
   let symbols: string[];
   let cursorInfo = { offset: 0, cycleCount: 1, lastScannedAt: null as string | null, totalBatches: 1, batchIndex: 1, cycleId: 'MANUAL-BATCH' };
   if (options.symbols && options.symbols.length > 0) {
@@ -213,6 +205,7 @@ export async function runSignalScan(
   const qualifiedCandidates = result.candidates.filter((item) => item.status === 'READY' && item.setup);
   const rejectionBreakdown = {
     insufficientScore: 0,
+    lowVolume: 0,
     trendConflict: 0,
     momentumConflict: 0,
     supertrendConflict: 0,
@@ -224,14 +217,36 @@ export async function runSignalScan(
     if (c.status === 'READY' && c.setup) continue;
     if (c.status === 'DATA_UNAVAILABLE') {
       rejectionBreakdown.dataUnavailable++;
-    } else if ((c.score?.value ?? 0) < settings.minimumSetupScore) {
+      continue;
+    }
+    if ((c.score?.value ?? 0) < settings.minimumSetupScore) {
       rejectionBreakdown.insufficientScore++;
     }
     const text = `${c.rationale ?? ''} ${(c.warnings ?? []).join(' ')}`.toLowerCase();
-    if (text.includes('ema') || text.includes('trend')) rejectionBreakdown.trendConflict++;
-    if (text.includes('supertrend')) rejectionBreakdown.supertrendConflict++;
-    if (text.includes('pivot')) rejectionBreakdown.pivotProximity++;
-    if (text.includes('rsi') || text.includes('macd') || text.includes('momentum')) rejectionBreakdown.momentumConflict++;
+    let classified = false;
+    if (text.includes('volume') || text.includes('below the configured')) {
+      rejectionBreakdown.lowVolume++;
+      classified = true;
+    }
+    if (text.includes('ema') || text.includes('trend')) {
+      rejectionBreakdown.trendConflict++;
+      classified = true;
+    }
+    if (text.includes('supertrend')) {
+      rejectionBreakdown.supertrendConflict++;
+      classified = true;
+    }
+    if (text.includes('pivot')) {
+      rejectionBreakdown.pivotProximity++;
+      classified = true;
+    }
+    if (text.includes('rsi') || text.includes('macd') || text.includes('momentum')) {
+      rejectionBreakdown.momentumConflict++;
+      classified = true;
+    }
+    if (!classified && c.status !== 'READY') {
+      rejectionBreakdown.other++;
+    }
   }
 
   return {
@@ -264,5 +279,97 @@ export async function runSignalScan(
         setup: candidate?.status === 'READY' ? candidate.setup : null,
       };
     }),
+  };
+}
+
+export async function runCompleteScannerCycle(
+  timeframeOverride?: typeof timeframes[number],
+  options: SignalScanOptions = {},
+) {
+  const startedAt = new Date().toISOString();
+  const enabledSymbols = await getEnabledScannerSymbols();
+  if (enabledSymbols.length === 0) {
+    throw new SignalScanError('No enabled Binance USDT perpetual pairs were found.');
+  }
+
+  const batchSize = options.limit ? Math.min(options.limit, 50) : 35;
+  const totalBatches = Math.ceil(enabledSymbols.length / batchSize);
+  const scannedUniqueSymbols = new Set<string>();
+  let totalQualified = 0;
+  let totalCreatedSignals = 0;
+  let totalDeduplicated = 0;
+  const aggregatedRejections = {
+    insufficientScore: 0,
+    lowVolume: 0,
+    trendConflict: 0,
+    momentumConflict: 0,
+    supertrendConflict: 0,
+    pivotProximity: 0,
+    dataUnavailable: 0,
+    other: 0,
+  };
+
+  const batchResults: Array<Awaited<ReturnType<typeof runSignalScan>>> = [];
+  const retrySymbols: string[] = [];
+
+  for (let batchIdx = 0; batchIdx < totalBatches; batchIdx++) {
+    const batchSymbols = enabledSymbols.slice(batchIdx * batchSize, (batchIdx + 1) * batchSize);
+    try {
+      const batchResult = await runSignalScan(timeframeOverride, {
+        ...options,
+        symbols: batchSymbols,
+      });
+      batchResults.push(batchResult);
+      batchSymbols.forEach((s) => scannedUniqueSymbols.add(s));
+      totalQualified += batchResult.qualifiedCount;
+      totalCreatedSignals += batchResult.newSignals;
+      totalDeduplicated += batchResult.deduplicatedSignals;
+
+      for (const [key, val] of Object.entries(batchResult.rejections)) {
+        if (key in aggregatedRejections) {
+          aggregatedRejections[key as keyof typeof aggregatedRejections] += val;
+        }
+      }
+    } catch (err) {
+      console.warn(`[SCANNER FULL CYCLE] Batch ${batchIdx + 1}/${totalBatches} error:`, err);
+      retrySymbols.push(...batchSymbols);
+    }
+  }
+
+  if (retrySymbols.length > 0) {
+    try {
+      const retryResult = await runSignalScan(timeframeOverride, {
+        ...options,
+        symbols: retrySymbols.slice(0, 35),
+      });
+      retryResult.rows.forEach((r) => scannedUniqueSymbols.add(r.symbol));
+      totalQualified += retryResult.qualifiedCount;
+      totalCreatedSignals += retryResult.newSignals;
+    } catch {
+      // Retry attempted
+    }
+  }
+
+  const completedAt = new Date().toISOString();
+  const durationMs = new Date(completedAt).getTime() - new Date(startedAt).getTime();
+  const coveragePercent = Number(((scannedUniqueSymbols.size / enabledSymbols.length) * 100).toFixed(2));
+
+  return {
+    cycleId: `CYCLE-FULL-${Date.now()}`,
+    timeframe: timeframeOverride ?? '15m',
+    startedAt,
+    completedAt,
+    durationMs,
+    totalEligible: enabledSymbols.length,
+    scannedUniqueCount: scannedUniqueSymbols.size,
+    coveragePercent,
+    totalBatches,
+    completedBatches: batchResults.length,
+    failedBatches: totalBatches - batchResults.length,
+    qualifiedCount: totalQualified,
+    newSignals: totalCreatedSignals,
+    deduplicatedSignals: totalDeduplicated,
+    rejections: aggregatedRejections,
+    batchResults,
   };
 }

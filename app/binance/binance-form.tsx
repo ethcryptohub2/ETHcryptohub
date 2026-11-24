@@ -250,12 +250,12 @@ export function BinanceForm() {
           <p className="muted" style={{ margin: 0, fontSize: 12 }}>
             💡 <strong>How to get keys:</strong> Log in to Binance → Futures → Mock Trading (or visit{' '}
             <a
-              href="https://testnet.binancefuture.com"
+              href="https://demo-fapi.binance.com"
               target="_blank"
               rel="noreferrer"
               style={{ color: 'var(--accent)', textDecoration: 'underline' }}
             >
-              testnet.binancefuture.com
+              demo-fapi.binance.com
             </a>
             ) → Settings / API Keys → Generate virtual key. Keep withdrawal permissions disabled.
           </p>

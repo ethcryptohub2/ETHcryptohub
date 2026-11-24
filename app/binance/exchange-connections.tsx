@@ -1,6 +1,5 @@
 'use client';
 
-import Link from 'next/link';
 import { useEffect, useState, type FormEvent } from 'react';
 import { BinanceForm } from './binance-form';
 
@@ -29,8 +28,8 @@ async function getCsrfToken() {
 
 const exchangeGuideUrls: Record<string, { portal: string; url: string; market: string }> = {
   BYBIT: {
-    portal: 'Bybit Testnet Portal',
-    url: 'https://testnet.bybit.com',
+    portal: 'Bybit Demo Trading Portal',
+    url: 'https://api-demo.bybit.com',
     market: 'USDT Perpetual Futures Sandbox',
   },
   OKX: {
@@ -281,22 +280,16 @@ export function ExchangeConnections() {
   const [selected, setSelected] = useState('BINANCE');
   const [error, setError] = useState('');
   const [activeMode, setActiveMode] = useState<'demo' | 'live'>('demo');
-  const [exchangeSwitches, setExchangeSwitches] = useState<Record<string, boolean>>({
-    BINANCE: true,
-    BYBIT: true,
-    OKX: false,
-    BITGET: false,
-    GATE: true,
-  });
-
-  useEffect(() => {
+  const [exchangeSwitches, setExchangeSwitches] = useState<Record<string, boolean>>(() => {
+    if (typeof window === 'undefined') {
+      return { BINANCE: true, BYBIT: true, OKX: false, BITGET: false, GATE: true };
+    }
     try {
-      const stored = localStorage.getItem('smartexit_exchange_switches');
-      if (stored) {
-        setExchangeSwitches(JSON.parse(stored));
-      }
+      const stored = window.localStorage.getItem('smartexit_exchange_switches');
+      if (stored) return JSON.parse(stored);
     } catch {}
-  }, []);
+    return { BINANCE: true, BYBIT: true, OKX: false, BITGET: false, GATE: true };
+  });
 
   const toggleExchangeSwitch = (exchangeId: string) => {
     setExchangeSwitches((prev) => {

@@ -14,7 +14,7 @@ export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 export const maxDuration = 30;
 
-const input = z.object({ symbols: z.array(z.string().regex(/^[A-Z0-9]{1,20}USDT$/))
+const input = z.object({ symbols: z.array(z.string().regex(/^[\p{L}\p{N}]{1,20}USDT$/u))
   .min(1).max(scannerEvaluationBatchLimit).refine(values => new Set(values).size === values.length),
   mode: z.enum(['both', 'high_risk']).default('both') }).strict();
 const json = (body: object, status = 200) => Response.json(body, { status, headers: { 'Cache-Control': 'no-store' } });

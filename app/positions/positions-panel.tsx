@@ -77,34 +77,42 @@ export function PositionsPanel() {
   const [execLoading, setExecLoading] = useState(true);
   const [execError, setExecError] = useState('');
   const [filterExchange, setFilterExchange] = useState<string>('ALL');
-
-  const loadExecutions = useCallback(async () => {
-    setExecLoading(true);
-    setExecError('');
-    try {
-      const params = new URLSearchParams({
-        page: String(execPage),
-        environment: 'DEMO',
-        ...(filterExchange !== 'ALL' ? { exchange: filterExchange } : {}),
-      });
-      const response = await fetch(`/api/trading/executions?${params}`, { cache: 'no-store' });
-      const body = (await response.json()) as ExecutionResponse;
-      if (!response.ok || !body.data) {
-        throw new Error(body.error ?? 'Exchange trade executions could not be loaded.');
-      }
-      setExecutions(body.data.items);
-      setExecTotal(body.data.total);
-      setExecTotalPages(Math.max(1, Math.ceil(body.data.total / 20)));
-    } catch (err) {
-      setExecError(err instanceof Error ? err.message : 'Execution history unavailable.');
-    } finally {
-      setExecLoading(false);
-    }
-  }, [execPage, filterExchange]);
+  const [refreshKey, setRefreshKey] = useState(0);
+  const loadExecutions = useCallback(() => setRefreshKey((k) => k + 1), []);
 
   useEffect(() => {
-    void loadExecutions();
-  }, [loadExecutions]);
+    let active = true;
+    const fetchExecutions = async () => {
+      setExecLoading(true);
+      setExecError('');
+      try {
+        const params = new URLSearchParams({
+          page: String(execPage),
+          environment: 'DEMO',
+          ...(filterExchange !== 'ALL' ? { exchange: filterExchange } : {}),
+        });
+        const response = await fetch(`/api/trading/executions?${params}`, { cache: 'no-store' });
+        const body = (await response.json()) as ExecutionResponse;
+        if (!active) return;
+        if (!response.ok || !body.data) {
+          throw new Error(body.error ?? 'Exchange trade executions could not be loaded.');
+        }
+        setExecutions(body.data.items);
+        setExecTotal(body.data.total);
+        setExecTotalPages(Math.max(1, Math.ceil(body.data.total / POSITIONS_PAGE_SIZE)));
+      } catch (err) {
+        if (active) {
+          setExecError(err instanceof Error ? err.message : 'Execution history unavailable.');
+        }
+      } finally {
+        if (active) {
+          setExecLoading(false);
+        }
+      }
+    };
+    void fetchExecutions();
+    return () => { active = false; };
+  }, [execPage, filterExchange, refreshKey]);
 
   return (
     <main className="shell">

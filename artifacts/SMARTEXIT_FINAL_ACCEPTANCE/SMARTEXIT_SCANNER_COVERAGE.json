@@ -1,0 +1,112 @@
+{
+  "verifiedAt": "2026-11-24T22:54:45.390Z",
+  "totalBinanceFuturesContracts": 956,
+  "activeUsdtPerpetualsEligible": 522,
+  "batchSize": 35,
+  "totalBatches": 15,
+  "coveragePercent": 100,
+  "cycleId": "CYCLE-1-FULL-RUN",
+  "batchesSummary": [
+    {
+      "batch": "1/15",
+      "symbolCount": 35,
+      "firstSymbol": "BTCUSDT",
+      "lastSymbol": "DOTUSDT"
+    },
+    {
+      "batch": "2/15",
+      "symbolCount": 35,
+      "firstSymbol": "YFIUSDT",
+      "lastSymbol": "MTLUSDT"
+    },
+    {
+      "batch": "3/15",
+      "symbolCount": 35,
+      "firstSymbol": "OGNUSDT",
+      "lastSymbol": "QNTUSDT"
+    },
+    {
+      "batch": "4/15",
+      "symbolCount": 35,
+      "firstSymbol": "FETUSDT",
+      "lastSymbol": "SEIUSDT"
+    },
+    {
+      "batch": "5/15",
+      "symbolCount": 35,
+      "firstSymbol": "CYBERUSDT",
+      "lastSymbol": "ONDOUSDT"
+    },
+    {
+      "batch": "6/15",
+      "symbolCount": 35,
+      "firstSymbol": "LSKUSDT",
+      "lastSymbol": "BRETTUSDT"
+    },
+    {
+      "batch": "7/15",
+      "symbolCount": 35,
+      "firstSymbol": "POPCATUSDT",
+      "lastSymbol": "ORCAUSDT"
+    },
+    {
+      "batch": "8/15",
+      "symbolCount": 35,
+      "firstSymbol": "MOVEUSDT",
+      "lastSymbol": "ANIMEUSDT"
+    },
+    {
+      "batch": "9/15",
+      "symbolCount": 35,
+      "firstSymbol": "PIPPINUSDT",
+      "lastSymbol": "BANKUSDT"
+    },
+    {
+      "batch": "10/15",
+      "symbolCount": 35,
+      "firstSymbol": "DEEPUSDT",
+      "lastSymbol": "MYXUSDT"
+    },
+    {
+      "batch": "11/15",
+      "symbolCount": 35,
+      "firstSymbol": "FUSDT",
+      "lastSymbol": "WLFIUSDT"
+    },
+    {
+      "batch": "12/15",
+      "symbolCount": 35,
+      "firstSymbol": "SOMIUSDT",
+      "lastSymbol": "TRUTHUSDT"
+    },
+    {
+      "batch": "13/15",
+      "symbolCount": 35,
+      "firstSymbol": "2ZUSDT",
+      "lastSymbol": "SENTUSDT"
+    },
+    {
+      "batch": "14/15",
+      "symbolCount": 35,
+      "firstSymbol": "IRYSUSDT",
+      "lastSymbol": "MANTRAUSDT"
+    },
+    {
+      "batch": "15/15",
+      "symbolCount": 32,
+      "firstSymbol": "龙虾USDT",
+      "lastSymbol": "PREDICTUSDT"
+    }
+  ],
+  "rejectionCategories": {
+    "insufficientScore": "Score < 60",
+    "lowVolume": "Quote volume 24h < $5,000,000 (strategy rejection, not market exclusion)",
+    "trendConflict": "EMA 20/50/200 trend conflict",
+    "momentumConflict": "RSI / MACD divergence or extreme exhaustion",
+    "supertrendConflict": "Supertrend direction opposes setup",
+    "pivotProximity": "Setup price too close to pivot resistance/support",
+    "dataUnavailable": "Temporary candle provider unavailable / stale"
+  },
+  "unattendedOperationVerified": true,
+  "zeroInternalPaperSimulationVerified": true
+}
