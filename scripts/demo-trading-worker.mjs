@@ -17,6 +17,132 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
 import { fileURLToPath } from 'node:url';
+import pg from 'pg';
+
+for (const envFile of ['.env.local', '.env.staging.local', '.env']) {
+  try {
+    if (typeof process.loadEnvFile === 'function') {
+      process.loadEnvFile(envFile);
+    }
+  } catch {}
+}
+
+let pgPool = null;
+function getWorkerPgPool() {
+  if (pgPool) return pgPool;
+  const connectionString = process.env.SUPABASE_DB_URL ?? process.env.DATABASE_URL;
+  try {
+    const { Pool } = pg;
+    if (connectionString) {
+      pgPool = new Pool({
+        connectionString,
+        ssl: { rejectUnauthorized: false },
+        max: 2,
+        idleTimeoutMillis: 10_000,
+      });
+    } else if (process.env.SUPABASE_DB_HOST && process.env.SUPABASE_DB_USER && process.env.SUPABASE_DB_PASSWORD) {
+      pgPool = new Pool({
+        host: process.env.SUPABASE_DB_HOST.trim(),
+        port: Number(process.env.SUPABASE_DB_PORT ?? 5432),
+        database: process.env.SUPABASE_DB_NAME ?? 'postgres',
+        user: process.env.SUPABASE_DB_USER.trim(),
+        password: process.env.SUPABASE_DB_PASSWORD,
+        ssl: { rejectUnauthorized: false, servername: process.env.SUPABASE_DB_HOST.trim() },
+        max: 2,
+        idleTimeoutMillis: 10_000,
+      });
+    }
+  } catch {
+    return null;
+  }
+  return pgPool;
+}
+
+export async function acquireDbLease(info) {
+  const pool = getWorkerPgPool();
+  if (!pool) return { ok: false };
+  const ttl = info.ttlSeconds || 90;
+  const now = new Date();
+  const expiresAt = new Date(now.getTime() + ttl * 1000).toISOString();
+  const lease = {
+    workerId: info.workerId,
+    hostname: info.hostname,
+    pid: info.pid,
+    version: info.version,
+    environment: info.environment || 'DEMO',
+    acquiredAt: now.toISOString(),
+    heartbeatAt: now.toISOString(),
+    expiresAt,
+    tickCount: 1,
+    status: 'ACTIVE',
+  };
+  try {
+    await pool.query(
+      `INSERT INTO public.app_settings (key, value_json, updated_at)
+       VALUES ('demo_worker_lease', $1::jsonb, NOW())
+       ON CONFLICT (key) DO UPDATE SET value_json = EXCLUDED.value_json, updated_at = NOW()`,
+      [JSON.stringify(lease)],
+    );
+    return { ok: true, lease };
+  } catch (err) {
+    return { ok: false, error: err.message };
+  }
+}
+
+export async function renewDbLease(info) {
+  const pool = getWorkerPgPool();
+  if (!pool) return false;
+  const ttl = info.ttlSeconds || 90;
+  const now = new Date();
+  const expiresAt = new Date(now.getTime() + ttl * 1000).toISOString();
+  try {
+    const res = await pool.query(
+      `SELECT value_json FROM public.app_settings WHERE key = 'demo_worker_lease'`,
+    );
+    const current = res.rows[0]?.value_json || {};
+    const updated = {
+      ...current,
+      heartbeatAt: now.toISOString(),
+      expiresAt,
+      tickCount: info.tickCount,
+      lastScanDurationMs: info.lastScanDurationMs ?? current.lastScanDurationMs,
+      lastCandidateCount: info.lastCandidateCount ?? current.lastCandidateCount,
+      lastQualifiedCount: info.lastQualifiedCount ?? current.lastQualifiedCount,
+      status: 'ACTIVE',
+    };
+    await pool.query(
+      `UPDATE public.app_settings SET value_json = $1::jsonb, updated_at = NOW() WHERE key = 'demo_worker_lease'`,
+      [JSON.stringify(updated)],
+    );
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export async function releaseDbLease(workerId) {
+  const pool = getWorkerPgPool();
+  if (!pool) return;
+  try {
+    const res = await pool.query(
+      `SELECT value_json FROM public.app_settings WHERE key = 'demo_worker_lease'`,
+    );
+    const current = res.rows[0]?.value_json;
+    if (current && current.workerId === workerId) {
+      const stopped = {
+        ...current,
+        heartbeatAt: new Date().toISOString(),
+        status: 'STOPPED',
+      };
+      await pool.query(
+        `UPDATE public.app_settings SET value_json = $1::jsonb, updated_at = NOW() WHERE key = 'demo_worker_lease'`,
+        [JSON.stringify(stopped)],
+      );
+    }
+  } catch {
+    // Non-blocking cleanup
+  }
+}
 
 export const WORKER_VERSION = '1.0.0';
 export const DEFAULT_TICK_INTERVAL_MS = 30_000; // 30 seconds between ticks
@@ -159,20 +285,17 @@ export async function runWorkerLoop(options = {}) {
   let dbLeaseAcquired = false;
 
   try {
-    const { acquireWorkerLease } = await import('../lib/worker-lease.js').catch(() => ({}));
-    if (acquireWorkerLease) {
-      const leaseRes = await acquireWorkerLease({
-        workerId,
-        hostname: os.hostname(),
-        pid: process.pid,
-        version: WORKER_VERSION,
-        environment: 'DEMO',
-        ttlSeconds: Math.max(90, Math.ceil(tickIntervalMs / 1000) * 3),
-      });
-      if (leaseRes && leaseRes.ok) {
-        dbLeaseAcquired = true;
-        console.info(`[Worker] Acquired distributed DB worker lease: ${workerId}`);
-      }
+    const leaseRes = await acquireDbLease({
+      workerId,
+      hostname: os.hostname(),
+      pid: process.pid,
+      version: WORKER_VERSION,
+      environment: 'DEMO',
+      ttlSeconds: Math.max(90, Math.ceil(tickIntervalMs / 1000) * 3),
+    });
+    if (leaseRes && leaseRes.ok) {
+      dbLeaseAcquired = true;
+      console.info(`[Worker] Acquired distributed DB worker lease: ${workerId}`);
     }
   } catch {
     // Non-blocking fallback to local storage
@@ -188,8 +311,7 @@ export async function runWorkerLoop(options = {}) {
     isRunning = false;
     if (dbLeaseAcquired) {
       try {
-        const { releaseWorkerLease } = await import('../lib/worker-lease.js').catch(() => ({}));
-        if (releaseWorkerLease) await releaseWorkerLease(workerId);
+        await releaseDbLease(workerId);
       } catch {}
     }
     await writeWorkerHeartbeat(storageDir, {
@@ -256,16 +378,13 @@ export async function runWorkerLoop(options = {}) {
 
       if (dbLeaseAcquired) {
         try {
-          const { renewWorkerLease } = await import('../lib/worker-lease.js').catch(() => ({}));
-          if (renewWorkerLease) {
-            await renewWorkerLease({
-              workerId,
-              tickCount: loopCount,
-              lastScanDurationMs: businessExecution.durationMs,
-              lastCandidateCount: businessExecution.candidates,
-              lastQualifiedCount: businessExecution.qualifiedCount,
-            });
-          }
+          await renewDbLease({
+            workerId,
+            tickCount: loopCount,
+            lastScanDurationMs: businessExecution.durationMs,
+            lastCandidateCount: businessExecution.candidates,
+            lastQualifiedCount: businessExecution.qualifiedCount,
+          });
         } catch {
           // non-blocking lease renewal
         }

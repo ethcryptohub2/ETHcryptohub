@@ -216,23 +216,52 @@ export async function recordUserSignalTrade(
   }
 }
 
-export async function listUserSignalEntries(userId: number) {
-  const result = await query(
-    `SELECT e.signal_id::TEXT AS signal_id, s.scanner_type, s.symbol, s.side, s.timeframe,
-            s.strategy_name, s.entry_price::TEXT AS reference_entry,
-            s.initial_stop::TEXT AS stop_loss, s.tp1::TEXT AS take_profit_1,
-            s.tp2::TEXT AS take_profit_2, s.tp3::TEXT AS take_profit_3,
-            e.entry_price::TEXT AS actual_entry, e.exit_price::TEXT AS actual_exit,
-            e.realized_pnl::TEXT AS realized_pnl, e.status, e.entered_at, e.closed_at,
-            s.status AS signal_status
-       FROM public.signal_user_entries e
-       JOIN public.market_signals s ON s.id = e.signal_id
-      WHERE e.user_id = $1
-      ORDER BY (e.status = 'ENTERED') DESC, e.entered_at DESC, e.signal_id DESC
-      LIMIT 500`,
-    [userId],
-  );
-  return result.rows;
+export async function listUserSignalEntries(
+  userId: number,
+  options: { page?: number; pageSize?: number; status?: 'ENTERED' | 'CLOSED' | 'ALL' } = {},
+) {
+  const page = Math.max(1, options.page ?? 1);
+  const pageSize = Math.max(1, Math.min(100, options.pageSize ?? 20));
+  const offset = (page - 1) * pageSize;
+
+  const statusClause = options.status && options.status !== 'ALL'
+    ? `AND e.status = '${options.status}'`
+    : '';
+
+  const [countRes, rowsRes] = await Promise.all([
+    query<{ total: string }>(
+      `SELECT COUNT(*)::TEXT AS total
+         FROM public.signal_user_entries e
+        WHERE e.user_id = $1 ${statusClause}`,
+      [userId],
+    ),
+    query(
+      `SELECT e.signal_id::TEXT AS signal_id, s.scanner_type, s.symbol, s.side, s.timeframe,
+              s.strategy_name, s.entry_price::TEXT AS reference_entry,
+              s.initial_stop::TEXT AS stop_loss, s.tp1::TEXT AS take_profit_1,
+              s.tp2::TEXT AS take_profit_2, s.tp3::TEXT AS take_profit_3,
+              e.entry_price::TEXT AS actual_entry, e.exit_price::TEXT AS actual_exit,
+              e.realized_pnl::TEXT AS realized_pnl, e.status, e.entered_at, e.closed_at,
+              s.status AS signal_status
+         FROM public.signal_user_entries e
+         JOIN public.market_signals s ON s.id = e.signal_id
+        WHERE e.user_id = $1 ${statusClause}
+        ORDER BY (e.status = 'ENTERED') DESC, e.entered_at DESC, e.signal_id DESC
+        LIMIT $2 OFFSET $3`,
+      [userId, pageSize, offset],
+    ),
+  ]);
+
+  const total = Number(countRes.rows[0]?.total ?? 0);
+  const totalPages = Math.max(1, Math.ceil(total / pageSize));
+
+  return {
+    items: rowsRes.rows,
+    total,
+    page,
+    pageSize,
+    totalPages,
+  };
 }
 
 export async function getPaperTradingSummary(userId: number) {
@@ -329,6 +358,10 @@ export async function getPaperTradingSummary(userId: number) {
   return {
     startingBalance,
     totalRealizedPnl: Math.round(realizedGrossPnl * 100) / 100,
+    realizedGrossPnl: Math.round(realizedGrossPnl * 100) / 100,
+    realizedNetPnl: Math.round((realizedGrossPnl - totalClosedFees) * 100) / 100,
+    totalClosedFees: Math.round(totalClosedFees * 100) / 100,
+    totalOpenFees: Math.round(totalOpenFees * 100) / 100,
     unrealizedPnl: Math.round(unrealizedPnl * 100) / 100,
     estimatedTradingFees: Math.round(estimatedTradingFees * 100) / 100,
     currentVirtualEquity: Math.round(currentVirtualEquity * 100) / 100,

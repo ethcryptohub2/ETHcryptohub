@@ -1,20 +1,38 @@
+import { NextRequest } from 'next/server';
 import { AuthError } from '../../../lib/auth';
 import { getPaperTradingSummary, listUserSignalEntries } from '../../../lib/signal-history';
 import { requirePremiumUser, SubscriptionError } from '../../../lib/subscriptions';
+import { z } from 'zod';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
-export async function GET() {
+const querySchema = z.object({
+  page: z.coerce.number().int().min(1).max(100_000).default(1),
+  pageSize: z.coerce.number().int().min(1).max(100).default(20),
+  status: z.enum(['ENTERED', 'CLOSED', 'ALL']).default('ALL'),
+}).strict();
+
+export async function GET(request: NextRequest) {
   try {
     const { user } = await requirePremiumUser({ reconcile: false });
-    const [positions, summary] = await Promise.all([
-      listUserSignalEntries(user.id),
+    const parsed = querySchema.safeParse(Object.fromEntries(request.nextUrl.searchParams));
+    const { page, pageSize, status } = parsed.success ? parsed.data : { page: 1, pageSize: 20, status: 'ALL' as const };
+
+    const [positionsResult, summary] = await Promise.all([
+      listUserSignalEntries(user.id, { page, pageSize, status }),
       getPaperTradingSummary(user.id),
     ]);
+
     return Response.json({
       data: {
-        positions,
+        positions: positionsResult.items,
+        pagination: {
+          total: positionsResult.total,
+          page: positionsResult.page,
+          pageSize: positionsResult.pageSize,
+          totalPages: positionsResult.totalPages,
+        },
         summary,
       },
     }, {

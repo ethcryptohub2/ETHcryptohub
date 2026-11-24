@@ -54,39 +54,56 @@ export function PositionsPanel() {
   const [error, setError] = useState('');
   const [showClosed, setShowClosed] = useState(false);
   const [page, setPage] = useState(1);
+  const [totalCount, setTotalCount] = useState(0);
+  const [totalPages, setTotalPages] = useState(1);
 
   const load = useCallback(async () => {
     setLoading(true);
     setError('');
     try {
-      const response = await fetch('/api/positions', { cache: 'no-store' });
+      const params = new URLSearchParams({
+        page: String(page),
+        pageSize: String(POSITIONS_PAGE_SIZE),
+        status: showClosed ? 'CLOSED' : 'ENTERED',
+      });
+      const response = await fetch(`/api/positions?${params}`, { cache: 'no-store' });
       const body = (await response.json()) as {
-        data?: Position[] | { positions: Position[]; summary: VirtualAccountSummary };
+        data?: {
+          positions: Position[];
+          summary: VirtualAccountSummary;
+          pagination?: { total: number; page: number; pageSize: number; totalPages: number };
+        } | Position[];
         error?: string;
       };
       if (!response.ok || !body.data) throw new Error(body.error ?? 'Position records could not be loaded.');
       if (Array.isArray(body.data)) {
         setPositions(body.data);
+        setTotalCount(body.data.length);
+        setTotalPages(Math.max(1, Math.ceil(body.data.length / POSITIONS_PAGE_SIZE)));
       } else {
         setPositions(body.data.positions ?? []);
         setSummary(body.data.summary ?? null);
+        if (body.data.pagination) {
+          setTotalCount(body.data.pagination.total);
+          setTotalPages(body.data.pagination.totalPages);
+        } else {
+          setTotalCount(body.data.positions?.length ?? 0);
+          setTotalPages(Math.max(1, Math.ceil((body.data.positions?.length ?? 0) / POSITIONS_PAGE_SIZE)));
+        }
       }
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : 'Position records could not be loaded.');
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [page, showClosed]);
 
   useEffect(() => {
     const timer = window.setTimeout(() => void load(), 0);
     return () => window.clearTimeout(timer);
   }, [load]);
 
-  const visible = positions.filter((position) => showClosed ? position.status === 'CLOSED' : position.status === 'ENTERED');
-  const pageCount = Math.max(1, Math.ceil(visible.length / POSITIONS_PAGE_SIZE));
-  const currentPage = Math.min(page, pageCount);
-  const pagePositions = visible.slice((currentPage - 1) * POSITIONS_PAGE_SIZE, currentPage * POSITIONS_PAGE_SIZE);
+  const pagePositions = positions;
   return <main className="shell">
     <section className="hero">
       <p className="mono">EXECUTION LEDGER · [INTERNAL PAPER SIMULATION]</p>
@@ -168,8 +185,8 @@ export function PositionsPanel() {
       </div>
       {error && <p className="error" role="alert">{error}</p>}
       {loading && <p className="muted">Loading your recorded entries…</p>}
-      {!loading && !error && visible.length === 0 && <p className="muted">{showClosed ? 'No closed user-recorded entries yet.' : 'No open user-recorded entries yet. Record an entry from signal history.'}</p>}
-      {!loading && visible.length > 0 && <div className="scanner-table-wrap"><table className="scan-table position-table">
+      {!loading && !error && pagePositions.length === 0 && <p className="muted">{showClosed ? 'No closed user-recorded entries yet.' : 'No open user-recorded entries yet. Record an entry from signal history.'}</p>}
+      {!loading && pagePositions.length > 0 && <div className="scanner-table-wrap"><table className="scan-table position-table">
         <thead><tr><th>Pair</th><th>Mode</th><th>Direction</th><th>Actual entry</th><th>Stop Loss</th><th>TP1 / TP2 / TP3</th><th>Exit / PnL</th><th>Recorded</th><th>Signal</th></tr></thead>
         <tbody>{pagePositions.map((position) => <tr key={position.signal_id}>
           <td>{position.symbol}<small>{position.timeframe}</small></td>
@@ -183,11 +200,11 @@ export function PositionsPanel() {
           <td><Link href={`/signals/${position.signal_id}`}>{position.signal_status.replaceAll('_', ' ')}</Link></td>
         </tr>)}</tbody>
       </table></div>}
-      {visible.length > 0 && (
+      {totalCount > 0 && (
         <Pagination
-          page={currentPage}
-          totalPages={pageCount}
-          totalItems={visible.length}
+          page={page}
+          totalPages={totalPages}
+          totalItems={totalCount}
           pageSize={POSITIONS_PAGE_SIZE}
           onPageChange={setPage}
           itemLabel="positions"

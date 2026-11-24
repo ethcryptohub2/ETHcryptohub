@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import { HighRiskScalping } from './high-risk-scalping';
 import { ScannerTabs, type ScannerTab } from './scanner-tabs';
@@ -14,6 +14,8 @@ import { scannerSymbolPrefix, type SavedScannerResponse, type ScannerCoverage, t
 import { SavedResultsRefresh, useSavedResultsPolling, type RefreshMinutes } from './saved-results-refresh';
 import { ScannerRadar } from '../../components/ui/scanner-radar';
 import { Pagination } from '../../components/pagination';
+import { LiveMarketTickerBar } from '../../components/live-market-ticker';
+import { useLiveMarketFeed } from '../../lib/live-market-feed';
 
 type SignalMetadata = {
   signals: Record<string, {
@@ -118,6 +120,10 @@ function StandardSignals({
     scannedAt: string;
   } | null>(null);
   const [scanNotice, setScanNotice] = useState<string | null>(null);
+  const [autoScanEnabled, setAutoScanEnabled] = useState(true);
+  const [autoScanCountdown, setAutoScanCountdown] = useState(15);
+  const candidateSymbols = useMemo(() => (savedData?.candidates ?? []).map((c) => c.symbol), [savedData]);
+  const liveMarket = useLiveMarketFeed(candidateSymbols.length > 0 ? candidateSymbols : ['BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'BNBUSDT']);
   const { coverage, symbol, rank, page } = selection;
   const data = savedData?.timeframe === timeframe && savedData.selection.coverage === coverage &&
     savedData.selection.symbol === symbol && savedData.selection.rank === rank && savedData.selection.page === page ? savedData : null;
@@ -204,6 +210,7 @@ function StandardSignals({
           scannedCount: number;
           qualifiedCount: number;
           newSignals: number;
+          deduplicatedSignals?: number;
           cycleId: string;
           batchIndex: number;
           totalBatches: number;
@@ -216,7 +223,10 @@ function StandardSignals({
         throw new Error(body.error ?? `Scan failed (${response.status})`);
       }
       setScanResult(body.data);
-      setScanNotice(`Scan completed: ${body.data.scannedCount} pairs analyzed in ${body.data.durationMs}ms. ${body.data.qualifiedCount} qualified setups. Batch ${body.data.batchIndex}/${body.data.totalBatches} (${body.data.cycleId}).`);
+      const dedupSuffix = (body.data.deduplicatedSignals ?? 0) > 0
+        ? ` (${body.data.newSignals} new + ${body.data.deduplicatedSignals} deduplicated)`
+        : ` (${body.data.newSignals} new signals)`;
+      setScanNotice(`Scan completed: ${body.data.scannedCount} pairs analyzed in ${body.data.durationMs}ms. ${body.data.qualifiedCount} qualified setups${dedupSuffix}. Batch ${body.data.batchIndex}/${body.data.totalBatches} (${body.data.cycleId}).`);
       await load();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Scan request failed.');
@@ -225,6 +235,29 @@ function StandardSignals({
       setIsScanning(false);
     }
   }, [timeframe, isScanning, load]);
+
+  useEffect(() => {
+    if (!autoScanEnabled) {
+      setAutoScanCountdown(15);
+      return;
+    }
+
+    const timer = window.setInterval(() => {
+      if (document.visibilityState !== 'visible' || isScanning || loading) {
+        return;
+      }
+
+      setAutoScanCountdown((prev) => {
+        if (prev <= 1) {
+          void triggerScan();
+          return 20;
+        }
+        return prev - 1;
+      });
+    }, 1000);
+
+    return () => window.clearInterval(timer);
+  }, [autoScanEnabled, isScanning, loading, triggerScan]);
 
   useEffect(() => {
     const refreshWhenVisible = () => {
@@ -278,7 +311,7 @@ function StandardSignals({
       </section>
 
       {/* Execution Environment Assurance Banner */}
-      <div style={{ padding: '10px 16px', background: 'var(--surface-subtle)', borderRadius: 8, border: '1px solid var(--surface-border)', marginBottom: 18, display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 10, fontSize: 12 }}>
+      <div style={{ padding: '10px 16px', background: 'var(--surface-subtle)', borderRadius: 8, border: '1px solid var(--surface-border)', marginBottom: 14, display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 10, fontSize: 12 }}>
         <div>
           <strong style={{ color: '#10b981' }}>● ENVIRONMENT: DEMO & PAPER SIMULATION ACTIVE</strong>
           <span className="muted" style={{ marginLeft: 8 }}>Internal virtual ledger & remote exchange demo testnets enabled.</span>
@@ -287,6 +320,9 @@ function StandardSignals({
           🔒 LIVE TRADING: LOCKED FAIL-CLOSED (HTTP 403)
         </div>
       </div>
+
+      {/* Genuine Binance USDⓈ-M Futures Live Ticker Bar */}
+      <LiveMarketTickerBar />
 
       {demoOrderNotice && (
         <div className="success" role="alert" style={{ marginBottom: 18 }}>
@@ -339,6 +375,30 @@ function StandardSignals({
             </p>
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+            <button
+              type="button"
+              className="button-secondary"
+              onClick={() => setAutoScanEnabled(!autoScanEnabled)}
+              style={{
+                borderColor: autoScanEnabled ? 'rgba(16, 185, 129, 0.5)' : undefined,
+                color: autoScanEnabled ? '#10b981' : undefined,
+                fontWeight: 600,
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: 6,
+              }}
+              title={autoScanEnabled ? 'Continuous background scanning is ACTIVE. Click to pause.' : 'Continuous background scanning is PAUSED. Click to resume.'}
+            >
+              <span style={{
+                display: 'inline-block',
+                width: 8,
+                height: 8,
+                borderRadius: '50%',
+                background: autoScanEnabled ? '#10b981' : '#6b7280',
+                boxShadow: autoScanEnabled ? '0 0 8px #10b981' : 'none',
+              }} />
+              {autoScanEnabled ? `Auto-Scan (${autoScanCountdown}s)` : 'Auto-Scan: PAUSED'}
+            </button>
             <button
               type="button"
               className="button-secondary"
@@ -557,6 +617,9 @@ function StandardSignals({
               const entryZone = item.setup && signal?.entryZone;
               const isReady = item.status === 'READY';
               const isLong = item.side === 'LONG';
+              const liveTicker = liveMarket.tickers[item.symbol];
+              const currentPrice = liveTicker?.price ?? item.price;
+              const priceColor = liveTicker?.direction === 'UP' ? '#10b981' : liveTicker?.direction === 'DOWN' ? '#ef4444' : undefined;
 
               return (
                 <article
@@ -596,7 +659,14 @@ function StandardSignals({
                   <div className="scanner-price-grid">
                     <div className="scanner-price-cell">
                       <span>Market Price</span>
-                      <strong>{item.price ? formatPrice(item.price) : '—'}</strong>
+                      <strong style={{ color: priceColor, transition: 'color 0.3s ease' }}>
+                        {currentPrice ? formatPrice(currentPrice) : '—'}
+                        {liveTicker && (
+                          <span style={{ fontSize: 11, marginLeft: 4 }}>
+                            {liveTicker.direction === 'UP' ? '▲' : liveTicker.direction === 'DOWN' ? '▼' : ''}
+                          </span>
+                        )}
+                      </strong>
                       <small style={{ color: (item.priceChangePercent24h ?? 0) >= 0 ? '#16a34a' : '#dc2626' }}>
                         {(item.priceChangePercent24h ?? 0) >= 0 ? '+' : ''}{(item.priceChangePercent24h ?? 0).toFixed(2)}% (24h)
                       </small>

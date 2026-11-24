@@ -6,6 +6,7 @@ import type { WorkerHealthResult } from '../../lib/worker-lease';
 export function AdminWorkerDashboard() {
   const [health, setHealth] = useState<WorkerHealthResult | null>(null);
   const [loading, setLoading] = useState(false);
+  const [syncing, setSyncing] = useState(false);
   const [error, setError] = useState('');
 
   const fetchHealth = useCallback(async () => {
@@ -24,6 +25,38 @@ export function AdminWorkerDashboard() {
       setLoading(false);
     }
   }, []);
+
+  const syncDemoLease = async () => {
+    setSyncing(true);
+    setError('');
+    try {
+      const csrfResponse = await fetch('/api/csrf', { cache: 'no-store' });
+      const csrfBody = await csrfResponse.json() as { data?: { csrfToken: string } };
+      const csrf = csrfBody.data?.csrfToken;
+      const response = await fetch('/api/admin/worker-health', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(csrf ? { 'X-CSRF-Token': csrf } : {}),
+        },
+        body: JSON.stringify({
+          action: 'acquire',
+          workerId: 'worker-cloud-daemon-1',
+          hostname: 'smartexit-worker-host',
+          pid: 4096,
+          version: '1.0.0',
+          environment: 'DEMO',
+          ttlSeconds: 600,
+        }),
+      });
+      if (!response.ok) throw new Error('Worker lease sync failed.');
+      await fetchHealth();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Lease sync failed.');
+    } finally {
+      setSyncing(false);
+    }
+  };
 
   useEffect(() => {
     void fetchHealth();
@@ -46,6 +79,15 @@ export function AdminWorkerDashboard() {
           </p>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+          <button
+            type="button"
+            className="button"
+            onClick={() => void syncDemoLease()}
+            disabled={loading || syncing}
+            style={{ fontSize: 12, padding: '6px 12px' }}
+          >
+            {syncing ? 'Syncing Lease…' : '⚡ Activate Demo Lease'}
+          </button>
           <button
             type="button"
             className="button-secondary"

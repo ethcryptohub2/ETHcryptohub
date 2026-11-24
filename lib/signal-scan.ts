@@ -255,6 +255,7 @@ export async function runSignalScan(
     enabledCoins: enabledSymbols.length,
     batchSize: symbols.length,
     newSignals: persisted.created,
+    deduplicatedSignals: Math.max(0, qualifiedCandidates.length - persisted.created),
     scannedAt: result.updatedAt,
     cycleId: cursorInfo.cycleId,
     totalBatches: cursorInfo.totalBatches,
