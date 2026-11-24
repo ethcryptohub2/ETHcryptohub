@@ -1,17 +1,64 @@
 'use client';
 
+import { useCallback, useEffect, useState } from 'react';
+import type { WorkerHealthResult } from '../../lib/worker-lease';
+
 export function AdminWorkerDashboard() {
+  const [health, setHealth] = useState<WorkerHealthResult | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+
+  const fetchHealth = useCallback(async () => {
+    setLoading(true);
+    setError('');
+    try {
+      const response = await fetch('/api/admin/worker-health', { cache: 'no-store' });
+      const body = await response.json() as { ok?: boolean; data?: WorkerHealthResult; error?: string };
+      if (!response.ok || !body.data) {
+        throw new Error(body.error ?? `Worker health check failed (${response.status})`);
+      }
+      setHealth(body.data);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to query worker health.');
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void fetchHealth();
+    const interval = window.setInterval(fetchHealth, 15_000);
+    return () => window.clearInterval(interval);
+  }, [fetchHealth]);
+
+  const isOnline = health?.status === 'ONLINE';
+  const isDegraded = health?.status === 'DEGRADED';
+  const lease = health?.lease;
+
   return (
     <section className="card stack" id="admin-worker-dashboard" style={{ border: '1px solid var(--accent)' }}>
-      <div className="section-header">
+      <div className="section-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 12 }}>
         <div>
           <p className="mono">ADMIN · 24×7 EXECUTION ENGINE</p>
-          <h2>Automation Worker Supervision</h2>
-          <p className="muted">
+          <h2 style={{ margin: 0 }}>Automation Worker Supervision</h2>
+          <p className="muted" style={{ margin: '4px 0 0' }}>
             Monitors the standalone background process responsible for continuous market scanning, automated Demo order dispatch, and SmartExit trailing protection.
           </p>
         </div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+          <button
+            type="button"
+            className="button-secondary"
+            onClick={() => void fetchHealth()}
+            disabled={loading}
+            style={{ fontSize: 12, padding: '6px 12px' }}
+          >
+            {loading ? 'Checking…' : '⟳ Refresh Telemetry'}
+          </button>
+        </div>
       </div>
+
+      {error && <p className="error" role="alert">{error}</p>}
 
       <div
         style={{
@@ -25,19 +72,39 @@ export function AdminWorkerDashboard() {
         }}
       >
         <div>
-          <small className="muted" style={{ display: 'block', fontSize: 11 }}>WORKER DAEMON STATUS</small>
-          <strong style={{ fontSize: 16, fontFamily: 'DM Mono', color: '#10b981' }}>
-            ● STANDALONE DAEMON
+          <small className="muted" style={{ display: 'block', fontSize: 11 }}>WORKER LEASE STATUS</small>
+          <strong
+            style={{
+              fontSize: 16,
+              fontFamily: 'DM Mono',
+              color: isOnline ? '#10b981' : isDegraded ? '#f59e0b' : '#6b7280',
+            }}
+          >
+            {isOnline ? '● ACTIVE LEASE' : isDegraded ? '● DEGRADED' : '○ STANDALONE / DORMANT'}
           </strong>
-          <small className="muted" style={{ display: 'block', fontSize: 10 }}>scripts/demo-trading-worker.mjs</small>
+          <small className="muted" style={{ display: 'block', fontSize: 10 }}>
+            Source: {health?.source ?? 'Checking…'}
+          </small>
         </div>
 
         <div>
-          <small className="muted" style={{ display: 'block', fontSize: 11 }}>HOSTING ARCHITECTURE</small>
-          <strong style={{ fontSize: 15, fontFamily: 'DM Mono', color: '#f59e0b' }}>
-            HOSTING-GATED
+          <small className="muted" style={{ display: 'block', fontSize: 11 }}>WORKER IDENTIFIER / PID</small>
+          <strong style={{ fontSize: 15, fontFamily: 'DM Mono', color: 'var(--text)' }}>
+            {lease?.pid ? `PID ${lease.pid} (${lease.hostname})` : 'scripts/demo-trading-worker.mjs'}
           </strong>
-          <small className="muted" style={{ display: 'block', fontSize: 10 }}>Local workstation or dedicated VM</small>
+          <small className="muted" style={{ display: 'block', fontSize: 10 }}>
+            {lease?.workerId ?? 'Isolated Node process'}
+          </small>
+        </div>
+
+        <div>
+          <small className="muted" style={{ display: 'block', fontSize: 11 }}>HEARTBEAT & TICKS</small>
+          <strong style={{ fontSize: 15, fontFamily: 'DM Mono', color: isOnline ? '#10b981' : 'var(--text-muted)' }}>
+            {lease?.tickCount ? `${lease.tickCount} cycles recorded` : 'Ready on launch'}
+          </strong>
+          <small className="muted" style={{ display: 'block', fontSize: 10 }}>
+            {lease?.heartbeatAt ? `Last: ${new Date(lease.heartbeatAt).toLocaleTimeString()}` : 'Interval: 30s'}
+          </small>
         </div>
 
         <div>
@@ -57,14 +124,6 @@ export function AdminWorkerDashboard() {
         </div>
 
         <div>
-          <small className="muted" style={{ display: 'block', fontSize: 11 }}>HEARTBEAT TELEMETRY</small>
-          <span style={{ fontSize: 13, fontFamily: 'DM Mono', color: '#10b981', fontWeight: 600 }}>
-            ✓ ATOMIC FILE LOCK & JSON
-          </span>
-          <small className="muted" style={{ display: 'block', fontSize: 10 }}>storage/demo-worker/worker.lock</small>
-        </div>
-
-        <div>
           <small className="muted" style={{ display: 'block', fontSize: 11 }}>EMERGENCY KILL-SWITCH</small>
           <span style={{ fontSize: 13, fontFamily: 'DM Mono', color: '#10b981', fontWeight: 600 }}>
             ✓ ACTIVE & ARMED
@@ -72,6 +131,15 @@ export function AdminWorkerDashboard() {
           <small className="muted" style={{ display: 'block', fontSize: 10 }}>storage/demo-worker/kill-switch</small>
         </div>
       </div>
+
+      {health?.message && (
+        <div style={{ padding: '8px 12px', background: 'var(--surface-subtle)', borderRadius: 6, fontSize: 12, border: '1px solid var(--surface-border)' }}>
+          <span className="mono" style={{ color: isOnline ? '#10b981' : isDegraded ? '#f59e0b' : 'var(--text-muted)' }}>
+            ● TELEMETRY:
+          </span>{' '}
+          <span className="muted">{health.message}</span>
+        </div>
+      )}
 
       <div style={{ padding: '12px 16px', background: 'var(--surface-sunken)', borderRadius: 6, fontSize: 12 }}>
         <strong style={{ display: 'block', marginBottom: 4 }}>Unattended 24×7 Deployment Quickstart:</strong>

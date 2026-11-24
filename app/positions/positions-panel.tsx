@@ -3,6 +3,8 @@
 import { useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
 import { ExchangePositionsPanel } from './exchange-positions-panel';
+import { POSITIONS_PAGE_SIZE } from '../../lib/pagination';
+import { Pagination } from '../../components/pagination';
 
 type Position = {
   signal_id: string;
@@ -51,6 +53,7 @@ export function PositionsPanel() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [showClosed, setShowClosed] = useState(false);
+  const [page, setPage] = useState(1);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -81,6 +84,9 @@ export function PositionsPanel() {
   }, [load]);
 
   const visible = positions.filter((position) => showClosed ? position.status === 'CLOSED' : position.status === 'ENTERED');
+  const pageCount = Math.max(1, Math.ceil(visible.length / POSITIONS_PAGE_SIZE));
+  const currentPage = Math.min(page, pageCount);
+  const pagePositions = visible.slice((currentPage - 1) * POSITIONS_PAGE_SIZE, currentPage * POSITIONS_PAGE_SIZE);
   return <main className="shell">
     <section className="hero">
       <p className="mono">EXECUTION LEDGER · [INTERNAL PAPER SIMULATION]</p>
@@ -155,8 +161,8 @@ export function PositionsPanel() {
     <section className="card stack">
       <div className="position-toolbar">
         <div className="links" role="group" aria-label="Position record filter">
-          <button type="button" className={!showClosed ? '' : 'button-secondary'} onClick={() => setShowClosed(false)}>Open entries</button>
-          <button type="button" className={showClosed ? '' : 'button-secondary'} onClick={() => setShowClosed(true)}>Closed history</button>
+          <button type="button" className={!showClosed ? '' : 'button-secondary'} onClick={() => { setShowClosed(false); setPage(1); }}>Open entries</button>
+          <button type="button" className={showClosed ? '' : 'button-secondary'} onClick={() => { setShowClosed(true); setPage(1); }}>Closed history</button>
         </div>
         <button type="button" className="button-secondary" onClick={() => void load()} disabled={loading}>Refresh</button>
       </div>
@@ -165,7 +171,7 @@ export function PositionsPanel() {
       {!loading && !error && visible.length === 0 && <p className="muted">{showClosed ? 'No closed user-recorded entries yet.' : 'No open user-recorded entries yet. Record an entry from signal history.'}</p>}
       {!loading && visible.length > 0 && <div className="scanner-table-wrap"><table className="scan-table position-table">
         <thead><tr><th>Pair</th><th>Mode</th><th>Direction</th><th>Actual entry</th><th>Stop Loss</th><th>TP1 / TP2 / TP3</th><th>Exit / PnL</th><th>Recorded</th><th>Signal</th></tr></thead>
-        <tbody>{visible.map((position) => <tr key={position.signal_id}>
+        <tbody>{pagePositions.map((position) => <tr key={position.signal_id}>
           <td>{position.symbol}<small>{position.timeframe}</small></td>
           <td>{position.scanner_type === 'HIGH_RISK' ? 'High-Risk' : 'Standard'}</td>
           <td>{position.side}</td>
@@ -177,6 +183,16 @@ export function PositionsPanel() {
           <td><Link href={`/signals/${position.signal_id}`}>{position.signal_status.replaceAll('_', ' ')}</Link></td>
         </tr>)}</tbody>
       </table></div>}
+      {visible.length > 0 && (
+        <Pagination
+          page={currentPage}
+          totalPages={pageCount}
+          totalItems={visible.length}
+          pageSize={POSITIONS_PAGE_SIZE}
+          onPageChange={setPage}
+          itemLabel="positions"
+        />
+      )}
     </section>
   </main>;
 }

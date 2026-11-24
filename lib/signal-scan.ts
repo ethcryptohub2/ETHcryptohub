@@ -78,8 +78,17 @@ export async function updateScannerConfiguration(config: { minimumVolume?: numbe
 export async function getAndAdvanceScannerCursor(
   totalItems: number,
   batchLimit: number,
-): Promise<{ offset: number; cycleCount: number; lastScannedAt: string | null }> {
-  if (totalItems <= 0) return { offset: 0, cycleCount: 1, lastScannedAt: null };
+): Promise<{
+  offset: number;
+  cycleCount: number;
+  lastScannedAt: string | null;
+  totalBatches: number;
+  batchIndex: number;
+  cycleId: string;
+}> {
+  if (totalItems <= 0) {
+    return { offset: 0, cycleCount: 1, lastScannedAt: null, totalBatches: 1, batchIndex: 1, cycleId: 'CYCLE-1-BATCH-1-OF-1' };
+  }
   const res = await safeDbQuery<{ value_json: { cursor: number; cycleCount: number; lastScannedAt: string | null } }>(
     `SELECT value_json FROM public.app_settings WHERE key = 'scanner_rotation_state'`,
   );
@@ -87,7 +96,10 @@ export async function getAndAdvanceScannerCursor(
   const currentCursor = typeof existing?.cursor === 'number' && Number.isFinite(existing.cursor) ? existing.cursor : 0;
   const currentCycle = typeof existing?.cycleCount === 'number' && Number.isFinite(existing.cycleCount) ? existing.cycleCount : 1;
 
+  const totalBatches = Math.max(1, Math.ceil(totalItems / batchLimit));
   const offset = currentCursor % totalItems;
+  const batchIndex = Math.min(totalBatches, Math.floor(offset / batchLimit) + 1);
+  const cycleId = `CYCLE-${currentCycle}-BATCH-${batchIndex}-OF-${totalBatches}`;
   const nextCursor = (offset + batchLimit) % totalItems;
   const nextCycle = currentCycle + (offset + batchLimit >= totalItems ? 1 : 0);
   const nowIso = new Date().toISOString();
@@ -96,10 +108,10 @@ export async function getAndAdvanceScannerCursor(
     `INSERT INTO public.app_settings (key, value_json, updated_at)
      VALUES ('scanner_rotation_state', $1::jsonb, NOW())
      ON CONFLICT (key) DO UPDATE SET value_json = EXCLUDED.value_json, updated_at = NOW()`,
-    [JSON.stringify({ cursor: nextCursor, cycleCount: nextCycle, lastScannedAt: nowIso, totalEligible: totalItems })],
+    [JSON.stringify({ cursor: nextCursor, cycleCount: nextCycle, lastScannedAt: nowIso, totalEligible: totalItems, cycleId })],
   );
 
-  return { offset, cycleCount: currentCycle, lastScannedAt: existing?.lastScannedAt ?? null };
+  return { offset, cycleCount: currentCycle, lastScannedAt: existing?.lastScannedAt ?? null, totalBatches, batchIndex, cycleId };
 }
 
 export type SignalScanOptions = {
@@ -156,6 +168,7 @@ export async function runSignalScan(
       : [];
 
   let symbols: string[];
+  let cursorInfo = { offset: 0, cycleCount: 1, lastScannedAt: null as string | null, totalBatches: 1, batchIndex: 1, cycleId: 'MANUAL-BATCH' };
   if (options.symbols && options.symbols.length > 0) {
     symbols = options.symbols.filter((s) => enabledSymbols.includes(s));
   } else if (snapshotSymbols.length > 0) {
@@ -165,14 +178,14 @@ export async function runSignalScan(
       .map((m) => m.symbol);
 
     const pool = liquidSnapshotPairs.length > 0 ? liquidSnapshotPairs : enabledSymbols;
-    const { offset } = await getAndAdvanceScannerCursor(pool.length, effectiveBatchLimit);
+    cursorInfo = await getAndAdvanceScannerCursor(pool.length, effectiveBatchLimit);
     symbols = Array.from({ length: Math.min(effectiveBatchLimit, pool.length) }, (_, index) =>
-      pool[(offset + index) % pool.length]!,
+      pool[(cursorInfo.offset + index) % pool.length]!,
     );
   } else {
-    const { offset } = await getAndAdvanceScannerCursor(enabledSymbols.length, effectiveBatchLimit);
+    cursorInfo = await getAndAdvanceScannerCursor(enabledSymbols.length, effectiveBatchLimit);
     symbols = Array.from({ length: Math.min(effectiveBatchLimit, enabledSymbols.length) }, (_, index) =>
-      enabledSymbols[(offset + index) % enabledSymbols.length]!,
+      enabledSymbols[(cursorInfo.offset + index) % enabledSymbols.length]!,
     );
   }
 
@@ -205,6 +218,31 @@ export async function runSignalScan(
   if (options.deliverNotifications !== false) {
     await flushSignalNotifications();
   }
+
+  const qualifiedCandidates = result.candidates.filter((item) => item.status === 'READY' && item.setup);
+  const rejectionBreakdown = {
+    insufficientScore: 0,
+    trendConflict: 0,
+    momentumConflict: 0,
+    supertrendConflict: 0,
+    pivotProximity: 0,
+    dataUnavailable: 0,
+    other: 0,
+  };
+  for (const c of result.candidates) {
+    if (c.status === 'READY' && c.setup) continue;
+    if (c.status === 'DATA_UNAVAILABLE') {
+      rejectionBreakdown.dataUnavailable++;
+    } else if ((c.score?.value ?? 0) < settings.minimumSetupScore) {
+      rejectionBreakdown.insufficientScore++;
+    }
+    const text = `${c.rationale ?? ''} ${(c.warnings ?? []).join(' ')}`.toLowerCase();
+    if (text.includes('ema') || text.includes('trend')) rejectionBreakdown.trendConflict++;
+    if (text.includes('supertrend')) rejectionBreakdown.supertrendConflict++;
+    if (text.includes('pivot')) rejectionBreakdown.pivotProximity++;
+    if (text.includes('rsi') || text.includes('macd') || text.includes('momentum')) rejectionBreakdown.momentumConflict++;
+  }
+
   return {
     startedAt,
     completedAt: new Date().toISOString(),
@@ -213,10 +251,16 @@ export async function runSignalScan(
     timeframe,
     scannerStatus: result.status,
     candidates: result.candidates.length,
+    qualifiedCount: qualifiedCandidates.length,
     enabledCoins: enabledSymbols.length,
     batchSize: symbols.length,
     newSignals: persisted.created,
     scannedAt: result.updatedAt,
+    cycleId: cursorInfo.cycleId,
+    totalBatches: cursorInfo.totalBatches,
+    batchIndex: cursorInfo.batchIndex,
+    cycleCount: cursorInfo.cycleCount,
+    rejections: rejectionBreakdown,
     rows: symbols.map(symbol => {
       const candidate = result.candidates.find(item => item.symbol === symbol);
       return {

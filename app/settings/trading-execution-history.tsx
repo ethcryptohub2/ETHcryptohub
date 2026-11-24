@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import { Pagination } from '../../components/pagination';
 
 type Execution = {
   id: string;
@@ -163,10 +164,15 @@ export function TradingExecutionHistory() {
         {item.error_message && <p className="error" role="alert">{item.error_message}</p>}
         {item.execution_status === 'PROTECTION_FAILED' && <p className="scanner-warning"><strong>Action required:</strong> immediately check Binance positions, open orders, and algo orders before proceeding.</p>}
       </article>)}
-      <div className="links">
-        <button type="button" className="button-secondary" disabled={page <= 1} onClick={() => setPage((value) => value - 1)}>Previous</button>
-        <span className="muted">Page {page} · {data.total} total</span>
-        <button type="button" className="button-secondary" disabled={page * data.pageSize >= data.total} onClick={() => setPage((value) => value + 1)}>Next</button>
+      <Pagination
+        page={page}
+        totalPages={Math.max(1, Math.ceil(data.total / data.pageSize))}
+        totalItems={data.total}
+        pageSize={data.pageSize}
+        onPageChange={(value) => setPage(value)}
+        itemLabel="executions"
+      />
+      <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 8 }}>
         <button type="button" className="button-secondary" disabled={loading} onClick={() => { setLoading(true); setRefresh((value) => value + 1); }}>Refresh</button>
       </div>
     </div>}

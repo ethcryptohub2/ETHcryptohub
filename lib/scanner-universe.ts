@@ -7,6 +7,20 @@ export const scannerSymbolPrefix = /^[\p{L}\p{N}]{0,30}$/u;
 export type ScannerCoverage = typeof scannerCoverageModes[number];
 export type ScannerRank = typeof scannerRanks[number];
 
+export function calculateScannerBatches(totalEligibleSymbols: number, batchSize = 35): {
+  totalBatches: number;
+  batchSize: number;
+  totalEligible: number;
+} {
+  const safeTotal = Math.max(0, totalEligibleSymbols);
+  const safeBatch = Math.max(1, batchSize);
+  return {
+    totalBatches: Math.max(1, Math.ceil(safeTotal / safeBatch)),
+    batchSize: safeBatch,
+    totalEligible: safeTotal,
+  };
+}
+
 export interface ScannerInstrument {
   symbol: string;
   baseAsset: string | null;

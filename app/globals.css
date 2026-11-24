@@ -1389,3 +1389,180 @@ html[data-theme='dark'] .scanner-target-card.is-active > strong {
     grid-template-columns: 1fr;
   }
 }
+
+/* ==========================================================================
+   Trading Scanner Radar & Animation Keyframes
+   ========================================================================== */
+
+@keyframes radar-sweep {
+  0% {
+    transform: rotate(0deg);
+  }
+  100% {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes pulse-glow {
+  0%, 100% {
+    opacity: 1;
+    transform: scale(1);
+    box-shadow: 0 0 6px var(--pulse-color, rgba(37, 99, 235, 0.4)), 0 0 16px var(--pulse-color, rgba(37, 99, 235, 0.2));
+  }
+  50% {
+    opacity: 0.7;
+    transform: scale(1.08);
+    box-shadow: 0 0 16px var(--pulse-color, rgba(37, 99, 235, 0.7)), 0 0 28px var(--pulse-color, rgba(37, 99, 235, 0.35));
+  }
+}
+
+@keyframes skeleton-shimmer {
+  0% {
+    background-position: -200% 0;
+  }
+  100% {
+    background-position: 200% 0;
+  }
+}
+
+@keyframes row-fade-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* Reduced-motion overrides */
+@media (prefers-reduced-motion: reduce) {
+  @keyframes radar-sweep {
+    0%, 100% { transform: rotate(45deg); }
+  }
+
+  @keyframes pulse-glow {
+    0%, 100% { transform: none; box-shadow: none; opacity: 1; }
+  }
+
+  @keyframes skeleton-shimmer {
+    0%, 100% { background-position: 0 0; }
+  }
+
+  @keyframes row-fade-in {
+    from, to { transform: none; opacity: 1; }
+  }
+
+  .radar-sweep-beam,
+  .animate-radar-sweep {
+    animation: none !important;
+    transform: rotate(45deg) !important;
+  }
+
+  .pulse-glow-badge,
+  .animate-pulse-glow {
+    animation: none !important;
+  }
+
+  .skeleton-shimmer,
+  .animate-skeleton-shimmer {
+    animation: none !important;
+  }
+
+  .row-fade-in,
+  .animate-row-fade-in {
+    animation: none !important;
+    opacity: 1 !important;
+    transform: none !important;
+  }
+}
+
+/* Radar & Scanning Progress Classes */
+.radar-sweep-beam,
+.animate-radar-sweep {
+  animation: radar-sweep 4s linear infinite;
+  transform-origin: 150px 150px;
+}
+
+.pulse-glow-badge,
+.animate-pulse-glow {
+  animation: pulse-glow 2s ease-in-out infinite;
+}
+
+.skeleton-shimmer,
+.animate-skeleton-shimmer {
+  background: linear-gradient(90deg, var(--surface-raised) 25%, var(--surface-border) 50%, var(--surface-raised) 75%);
+  background-size: 200% 100%;
+  animation: skeleton-shimmer 2s infinite linear;
+}
+
+.row-fade-in,
+.animate-row-fade-in {
+  animation: row-fade-in 0.25s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+.scanner-radar-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 36px 24px;
+  border: 1px solid var(--surface-border);
+  border-radius: 14px;
+  background: var(--surface);
+  text-align: center;
+  box-shadow: var(--card-shadow);
+  position: relative;
+  overflow: hidden;
+}
+
+.scanner-radar-svg {
+  width: 260px;
+  height: 260px;
+  max-width: 100%;
+  margin: 0 auto 20px;
+  filter: drop-shadow(0 4px 16px rgba(37, 99, 235, 0.12));
+}
+
+html[data-theme='dark'] .scanner-radar-svg {
+  filter: drop-shadow(0 4px 20px rgba(59, 130, 246, 0.2));
+}
+
+.scanner-progress-card {
+  border: 1px solid var(--accent-border);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--accent-light) 45%, var(--surface));
+  padding: 18px 22px;
+  box-shadow: var(--card-shadow);
+  display: grid;
+  gap: 14px;
+}
+
+.scanner-progress-bar-bg {
+  width: 100%;
+  height: 8px;
+  border-radius: 99px;
+  background: var(--surface-border);
+  overflow: hidden;
+}
+
+.scanner-progress-bar-fill {
+  height: 100%;
+  border-radius: 99px;
+  background: linear-gradient(90deg, var(--accent), #38bdf8);
+  transition: width 0.3s ease;
+}
+
+.scanner-rejection-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border-radius: 6px;
+  font: 500 11px 'DM Mono', monospace;
+  background: var(--surface-raised);
+  border: 1px solid var(--surface-border);
+  color: var(--text-secondary);
+}
+

@@ -8,6 +8,8 @@ import { formatSignalStatusText, highRiskEntryWindowOpen } from '../../lib/high-
 import { TABLE_PAGE_SIZE } from '../../lib/pagination';
 import { ScannerTabs, type ScannerTab } from './scanner-tabs';
 import { SavedResultsRefresh, useSavedResultsPolling, type RefreshMinutes } from './saved-results-refresh';
+import { ScannerRadar } from '../../components/ui/scanner-radar';
+import { Pagination } from '../../components/pagination';
 
 type Data = {
   active: StoredScalpingSignal[];
@@ -56,6 +58,15 @@ export function HighRiskScalping({
   const [timeframe, setTimeframe] = useState('');
   const [direction, setDirection] = useState('');
   const [page, setPage] = useState(1);
+  const [isScanning, setIsScanning] = useState(false);
+  const [scanResult, setScanResult] = useState<{
+    scannedCount: number;
+    createdSignals: number;
+    failedCount: number;
+    batchSize: number;
+    durationMs: number;
+    completedAt: string;
+  } | null>(null);
   const request = useRef<AbortController | null>(null);
   const now = clock.serverAt + clock.elapsed;
 
@@ -99,6 +110,48 @@ export function HighRiskScalping({
     if (!response.ok || !body.data) throw new Error(body.error ?? 'Scalping notification preference is unavailable.');
     setPushEnabled(body.data.pushEnabled);
   }, []);
+
+  const triggerScalpingScan = useCallback(async () => {
+    if (isScanning) return;
+    setIsScanning(true);
+    setError('');
+    setNotice('Executing live on-demand High-Risk Scalping scan across perpetual pairs…');
+    try {
+      const csrfResponse = await fetch('/api/csrf', { cache: 'no-store' });
+      const csrfBody = await csrfResponse.json() as { data?: { csrfToken: string } };
+      const csrf = csrfBody.data?.csrfToken;
+      const response = await fetch('/api/scalping', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(csrf ? { 'X-CSRF-Token': csrf } : {}),
+        },
+        body: JSON.stringify({ action: 'scan' }),
+      });
+      const body = await response.json() as {
+        ok?: boolean;
+        error?: string;
+        data?: {
+          scannedCount: number;
+          createdSignals: number;
+          failedCount: number;
+          batchSize: number;
+          durationMs: number;
+          completedAt: string;
+        };
+      };
+      if (!response.ok || !body.ok || !body.data) {
+        throw new Error(body.error ?? `Scalping scan failed (${response.status})`);
+      }
+      setScanResult(body.data);
+      setNotice(`Scalping scan completed: ${body.data.scannedCount} pairs analyzed in ${body.data.durationMs}ms. ${body.data.createdSignals} new scalping signals generated.`);
+      await load(true);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : 'Scalping scan request failed.');
+    } finally {
+      setIsScanning(false);
+    }
+  }, [isScanning, load]);
 
   useEffect(() => {
     const initial = window.setTimeout(() => {
@@ -237,7 +290,33 @@ export function HighRiskScalping({
     <section className="card stack">
       <div className="links">
         {data && <p className="muted">{data.settings.enabled ? `Enabled timeframes: ${SCALPING_TIMEFRAMES.filter((timeframe) => data.settings.enabledTimeframes.includes(timeframe)).join(', ') || 'none'}` : 'Scalping signal generation is disabled in the saved settings.'}</p>}
-        <button type="button" className="button-secondary" disabled={loading} onClick={() => void load()}>{loading ? 'Loading saved signals…' : 'Refresh saved signals'}</button>
+        <button
+          type="button"
+          className="button"
+          disabled={isScanning || loading}
+          onClick={() => void triggerScalpingScan()}
+          style={{
+            background: 'linear-gradient(135deg, #10b981 0%, #059669 100%)',
+            color: '#ffffff',
+            fontWeight: 600,
+            display: 'inline-flex',
+            alignItems: 'center',
+            gap: 8,
+          }}
+        >
+          {isScanning ? (
+            <>
+              <span className="spinner" style={{ width: 14, height: 14, borderWidth: 2 }} />
+              <span>Scanning Scalping…</span>
+            </>
+          ) : (
+            <>
+              <span>⚡</span>
+              <span>Scan Scalping Setups</span>
+            </>
+          )}
+        </button>
+        <button type="button" className="button-secondary" disabled={loading || isScanning} onClick={() => void load()}>{loading ? 'Loading saved signals…' : 'Refresh saved signals'}</button>
         <SavedResultsRefresh minutes={refreshMinutes} onChange={onRefreshChange} />
         <button type="button" className="button-secondary" disabled={busy !== '' || pushEnabled === null} onClick={() => void togglePush()}>
           {pushEnabled === null ? 'Scalping alert preference unavailable' : pushEnabled ? 'Disable scalping alerts' : 'Enable scalping alerts'}
@@ -263,12 +342,35 @@ export function HighRiskScalping({
       </div>
     </section>
     {data && <section className="stack scalping-signal-section">
-      {visibleSignals.length > 0 ? visibleSignals.map(signalCard) : <p className="scanner-empty"><strong>{view === 'active' && active.length === 0 ? 'No qualified setups' : 'No matching saved records'}</strong><span>{view === 'active' && active.length === 0 ? 'No saved High-Risk setup has an open entry window.' : 'Choose a different view or adjust the filters.'}</span></p>}
-      {visibleSignals.length > 0 && <nav className="links" aria-label="High-Risk setup pagination">
-        <button type="button" disabled={currentPage === 1} onClick={() => setPage(currentPage - 1)}>Previous</button>
-        <span>Page {currentPage} of {totalPages} · {results.length} matching records</span>
-        <button type="button" disabled={currentPage === totalPages} onClick={() => setPage(currentPage + 1)}>Next</button>
-      </nav>}
+      {view === 'active' && active.length === 0 ? (
+        <ScannerRadar
+          state={isScanning ? 'SCANNING' : (scanResult ? 'NO_QUALIFIED_SIGNALS' : 'WAITING')}
+          scannedCount={scanResult?.scannedCount ?? (data?.active.length || 0)}
+          totalEligible={data?.settings.enabledTimeframes.length ? 150 : 0}
+          strategy="High-Risk 1m/5m Quick Reaction Scalping"
+          lastScanTime={scanResult?.completedAt || (data?.serverNow ? new Date(data.serverNow) : null)}
+          onScanNow={() => void triggerScalpingScan()}
+          isScanning={isScanning}
+          emptyStateTitle="High-Risk Scalping Scanner Active — Awaiting Open Trigger Windows"
+          emptyStateSubtitle="Scalping setups operate on fast 1m/5m horizons with short entry windows. When no setups are in active entry range, monitor market feeds or trigger a scan."
+          emptyStateFooter="Research target 95% win-rate model. Real-money live execution remains disabled."
+        />
+      ) : (
+        visibleSignals.length > 0 ? visibleSignals.map(signalCard) : (
+          <p className="scanner-empty">
+            <strong>No matching saved records</strong>
+            <span>Choose a different view or adjust the filters.</span>
+          </p>
+        )
+      )}
+      <Pagination
+        page={currentPage}
+        totalPages={totalPages}
+        totalItems={results.length}
+        pageSize={TABLE_PAGE_SIZE}
+        onPageChange={(nextPage) => setPage(nextPage)}
+        itemLabel="records"
+      />
     </section>}
   </main>;
 }

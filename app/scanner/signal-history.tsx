@@ -1,6 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { Pagination } from '../../components/pagination';
 
 type SignalItem = {
   id: string;
@@ -162,7 +163,16 @@ export function SignalHistory({ successfulOnly = false, initialScannerType = '' 
         </tr>)}
         {!data.items.length && <tr><td colSpan={10}>No matching persisted signals.</td></tr>}</tbody>
       </table></div>}
-      {data && <div className="signal-history-pagination"><span>{data.total} signals · page {data.page} of {pageCount}</span><button type="button" className="button-secondary" disabled={page <= 1 || loadingHistory} onClick={() => setPage((value) => value - 1)}>Previous</button><button type="button" className="button-secondary" disabled={page >= pageCount || loadingHistory} onClick={() => setPage((value) => value + 1)}>Next</button></div>}
+      {data && (
+        <Pagination
+          page={page}
+          totalPages={pageCount}
+          totalItems={data.total}
+          pageSize={data.pageSize}
+          onPageChange={(value) => setPage(value)}
+          itemLabel="signals"
+        />
+      )}
     </section>
     {selected && <section className="card stack signal-history-detail">
       <div className="signal-detail-heading"><h2>{selected.signal.symbol} · {selected.signal.side} · {selected.signal.timeframe}</h2><button className="button-secondary" type="button" disabled={savingTrade} onClick={() => setSelected(null)}>Close</button></div>

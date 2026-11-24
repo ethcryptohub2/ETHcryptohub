@@ -15,6 +15,7 @@
 
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import os from 'node:os';
 import { fileURLToPath } from 'node:url';
 
 export const WORKER_VERSION = '1.0.0';
@@ -154,6 +155,28 @@ export async function runWorkerLoop(options = {}) {
   let isRunning = true;
   let loopCount = 0;
   let lastScanResult = null;
+  const workerId = `worker-${os.hostname()}-${process.pid}`;
+  let dbLeaseAcquired = false;
+
+  try {
+    const { acquireWorkerLease } = await import('../lib/worker-lease.js').catch(() => ({}));
+    if (acquireWorkerLease) {
+      const leaseRes = await acquireWorkerLease({
+        workerId,
+        hostname: os.hostname(),
+        pid: process.pid,
+        version: WORKER_VERSION,
+        environment: 'DEMO',
+        ttlSeconds: Math.max(90, Math.ceil(tickIntervalMs / 1000) * 3),
+      });
+      if (leaseRes && leaseRes.ok) {
+        dbLeaseAcquired = true;
+        console.info(`[Worker] Acquired distributed DB worker lease: ${workerId}`);
+      }
+    }
+  } catch {
+    // Non-blocking fallback to local storage
+  }
 
   const checkpoint = (await loadCheckpoint(storageDir)) ?? {
     cycleCount: 0,
@@ -163,6 +186,12 @@ export async function runWorkerLoop(options = {}) {
 
   const shutdown = async (reason) => {
     isRunning = false;
+    if (dbLeaseAcquired) {
+      try {
+        const { releaseWorkerLease } = await import('../lib/worker-lease.js').catch(() => ({}));
+        if (releaseWorkerLease) await releaseWorkerLease(workerId);
+      } catch {}
+    }
     await writeWorkerHeartbeat(storageDir, {
       status: 'STOPPED',
       reason: reason ?? 'Graceful shutdown',
@@ -224,6 +253,23 @@ export async function runWorkerLoop(options = {}) {
         checkpoint,
         lastScanResult,
       });
+
+      if (dbLeaseAcquired) {
+        try {
+          const { renewWorkerLease } = await import('../lib/worker-lease.js').catch(() => ({}));
+          if (renewWorkerLease) {
+            await renewWorkerLease({
+              workerId,
+              tickCount: loopCount,
+              lastScanDurationMs: businessExecution.durationMs,
+              lastCandidateCount: businessExecution.candidates,
+              lastQualifiedCount: businessExecution.qualifiedCount,
+            });
+          }
+        } catch {
+          // non-blocking lease renewal
+        }
+      }
 
       if (once) {
         console.info(`[Worker] Single-cycle test execution finished successfully.`);

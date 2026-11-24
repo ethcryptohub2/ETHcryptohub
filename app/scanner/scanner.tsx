@@ -12,6 +12,8 @@ import { applyScannerSignalValidity, savedScannerCandidate } from '../../lib/sca
 import { SignalCountdown } from '../countdown';
 import { scannerSymbolPrefix, type SavedScannerResponse, type ScannerCoverage, type ScannerRank } from '../../lib/scanner-universe';
 import { SavedResultsRefresh, useSavedResultsPolling, type RefreshMinutes } from './saved-results-refresh';
+import { ScannerRadar } from '../../components/ui/scanner-radar';
+import { Pagination } from '../../components/pagination';
 
 type SignalMetadata = {
   signals: Record<string, {
@@ -103,6 +105,19 @@ function StandardSignals({
   });
   const [symbolInput, setSymbolInput] = useState('');
   const [filterError, setFilterError] = useState('');
+  const [isScanning, setIsScanning] = useState(false);
+  const [scanResult, setScanResult] = useState<{
+    scannedCount: number;
+    qualifiedCount: number;
+    newSignals: number;
+    cycleId: string;
+    batchIndex: number;
+    totalBatches: number;
+    rejections: Record<string, number>;
+    durationMs: number;
+    scannedAt: string;
+  } | null>(null);
+  const [scanNotice, setScanNotice] = useState<string | null>(null);
   const { coverage, symbol, rank, page } = selection;
   const data = savedData?.timeframe === timeframe && savedData.selection.coverage === coverage &&
     savedData.selection.symbol === symbol && savedData.selection.rank === rank && savedData.selection.page === page ? savedData : null;
@@ -164,6 +179,52 @@ function StandardSignals({
       }
     }
   }, [coverage, page, rank, symbol, timeframe]);
+
+  const triggerScan = useCallback(async () => {
+    if (isScanning) return;
+    setIsScanning(true);
+    setError('');
+    setScanNotice('Executing live on-demand algorithmic market scan across Binance USDⓈ-M perpetual contracts…');
+    try {
+      const csrfResponse = await fetch('/api/csrf', { cache: 'no-store' });
+      const csrfBody = await csrfResponse.json() as { data?: { csrfToken: string } };
+      const csrf = csrfBody.data?.csrfToken;
+      const response = await fetch('/api/scanner/scan', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(csrf ? { 'X-CSRF-Token': csrf } : {}),
+        },
+        body: JSON.stringify({ timeframe, strategy: 'STANDARD' }),
+      });
+      const body = await response.json() as {
+        ok?: boolean;
+        error?: string;
+        data?: {
+          scannedCount: number;
+          qualifiedCount: number;
+          newSignals: number;
+          cycleId: string;
+          batchIndex: number;
+          totalBatches: number;
+          rejections: Record<string, number>;
+          durationMs: number;
+          scannedAt: string;
+        };
+      };
+      if (!response.ok || !body.ok || !body.data) {
+        throw new Error(body.error ?? `Scan failed (${response.status})`);
+      }
+      setScanResult(body.data);
+      setScanNotice(`Scan completed: ${body.data.scannedCount} pairs analyzed in ${body.data.durationMs}ms. ${body.data.qualifiedCount} qualified setups. Batch ${body.data.batchIndex}/${body.data.totalBatches} (${body.data.cycleId}).`);
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Scan request failed.');
+      setScanNotice(null);
+    } finally {
+      setIsScanning(false);
+    }
+  }, [timeframe, isScanning, load]);
 
   useEffect(() => {
     const refreshWhenVisible = () => {
@@ -277,7 +338,7 @@ function StandardSignals({
               Filter by timeframe, rank, or specific cryptocurrency asset.
             </p>
           </div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
             <button
               type="button"
               className="button-secondary"
@@ -289,11 +350,38 @@ function StandardSignals({
             <SavedResultsRefresh minutes={refreshMinutes} onChange={onRefreshChange} />
             <button
               type="button"
-              onClick={() => void load()}
-              disabled={loading}
+              onClick={() => void triggerScan()}
+              disabled={isScanning || loading}
               className="button"
+              style={{
+                background: 'linear-gradient(135deg, #10b981 0%, #059669 100%)',
+                color: '#ffffff',
+                fontWeight: 600,
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: 8,
+                boxShadow: '0 0 12px rgba(16, 185, 129, 0.35)',
+              }}
             >
-              {loading ? 'Scanning…' : '⟳ Refresh'}
+              {isScanning ? (
+                <>
+                  <span className="spinner" style={{ width: 14, height: 14, borderWidth: 2 }} />
+                  <span>Scanning Market…</span>
+                </>
+              ) : (
+                <>
+                  <span>⚡</span>
+                  <span>Scan Now</span>
+                </>
+              )}
+            </button>
+            <button
+              type="button"
+              onClick={() => void load()}
+              disabled={loading || isScanning}
+              className="button-secondary"
+            >
+              {loading ? 'Refreshing…' : '⟳ Refresh'}
             </button>
             {isAdmin && (
               <Link href="/admin#scanner-management" className="button-secondary" style={{ padding: '8px 12px', fontSize: 12 }}>
@@ -302,6 +390,41 @@ function StandardSignals({
             )}
           </div>
         </div>
+
+        {scanNotice && (
+          <div style={{
+            padding: '12px 16px',
+            background: isScanning ? 'rgba(59, 130, 246, 0.1)' : 'rgba(16, 185, 129, 0.1)',
+            border: isScanning ? '1px solid rgba(59, 130, 246, 0.3)' : '1px solid rgba(16, 185, 129, 0.3)',
+            borderRadius: 8,
+            display: 'flex',
+            justifyContent: 'space-between',
+            alignItems: 'center',
+            flexWrap: 'wrap',
+            gap: 10,
+            fontSize: 13,
+          }}>
+            <div>
+              <strong style={{ color: isScanning ? '#3b82f6' : '#10b981' }}>
+                {isScanning ? '⏳ SCAN IN PROGRESS' : '✓ SCAN COMPLETE'}:
+              </strong>{' '}
+              <span>{scanNotice}</span>
+            </div>
+            {scanResult && (
+              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', fontSize: 11 }}>
+                <span className="mono" style={{ background: 'var(--surface-subtle)', padding: '3px 8px', borderRadius: 4 }}>
+                  Batch {scanResult.batchIndex}/{scanResult.totalBatches}
+                </span>
+                <span className="mono" style={{ background: 'var(--surface-subtle)', padding: '3px 8px', borderRadius: 4 }}>
+                  Cycle: {scanResult.cycleId}
+                </span>
+                <span className="mono" style={{ background: 'var(--surface-subtle)', padding: '3px 8px', borderRadius: 4 }}>
+                  Duration: {scanResult.durationMs}ms
+                </span>
+              </div>
+            )}
+          </div>
+        )}
 
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 12 }}>
           <label>
@@ -390,9 +513,45 @@ function StandardSignals({
         {error && <div className="error" role="alert">{error}</div>}
         {notificationWarning && <div className="error" role="status">{notificationWarning}</div>}
 
+        {/* Radar and Signal Setups */}
+        {ready.length === 0 && (
+          <div style={{ marginBottom: 20 }}>
+            <ScannerRadar
+              state={isScanning ? 'SCANNING' : (scanResult ? (scanResult.qualifiedCount > 0 ? 'SCAN_COMPLETED' : 'NO_QUALIFIED_SIGNALS') : (loading ? 'FETCHING_MARKET_DATA' : 'WAITING'))}
+              scannedCount={scanResult?.scannedCount ?? candidates.length}
+              totalEligible={data?.eligibleCount ?? 300}
+              strategy={`Standard Multi-Indicator Confluence (${timeframe.toUpperCase()})`}
+              lastScanTime={scanResult?.scannedAt ?? (data?.universeSyncedAt || null)}
+              rejectionReasons={scanResult?.rejections}
+              onScanNow={() => void triggerScan()}
+              isScanning={isScanning}
+              emptyStateTitle="Scanning Active — Awaiting High-Conviction Confluence Setups"
+              emptyStateSubtitle="The quantitative scanner evaluated live market candles. Signals trigger only when multi-indicator alignment (EMA 9/21/50/200, Supertrend, ADX > 20, RSI bounds) reaches score ≥ 60."
+              emptyStateFooter="Market conditions are continuously monitored. Run an on-demand scan anytime or switch timeframes."
+            />
+          </div>
+        )}
+
+        {ready.length > 0 && (
+          <div style={{ marginBottom: 12 }}>
+            <h3 style={{ margin: '0 0 4px', fontSize: 16, color: '#10b981' }}>
+              ⚡ Qualified Confluence Signals ({ready.length} Active)
+            </h3>
+            <p className="muted" style={{ margin: 0, fontSize: 12 }}>
+              High-conviction setups with Confluence Score ≥ 60 meeting all risk, trend, and momentum requirements.
+            </p>
+          </div>
+        )}
+
         {/* Signals List */}
         {candidates.length > 0 ? (
-          <div className="scanner-signal-list">
+          <div>
+            {ready.length === 0 && (
+              <h4 style={{ margin: '0 0 12px', fontSize: 14, color: 'var(--text-muted)' }}>
+                Monitored Market Candidates (Score &lt; 60 · Awaiting Confluence Confirmation)
+              </h4>
+            )}
+            <div className="scanner-signal-list">
             {candidates.map((item) => {
               const signal = signalMetadata?.signals[item.symbol];
               const entryZone = item.setup && signal?.entryZone;
@@ -509,48 +668,34 @@ function StandardSignals({
                 </article>
               );
             })}
+            </div>
           </div>
         ) : (
-          <div className="card" style={{ textAlign: 'center', padding: '40px 20px' }}>
-            <span style={{ fontSize: 36, display: 'block', marginBottom: 12 }}>📊</span>
-            <h3 style={{ margin: '0 0 8px', fontSize: 18 }}>Scanner Operational — Monitoring Market Feeds</h3>
-            <p className="muted" style={{ maxWidth: 600, margin: '0 auto 18px', fontSize: 13, lineHeight: 1.6 }}>
-              The SmartExit quantitative engine is scanning all Binance USDⓈ-M perpetual contracts. When a coin meets strict multi-indicator confluence (EMA 9/21/50/200 stack, Supertrend, ADX &gt; 20, RSI bounds) with score ≥ 60, actionable setup cards appear here automatically.
+          <div style={{ textAlign: 'center', padding: '24px 16px' }}>
+            <p className="muted" style={{ maxWidth: 560, margin: '0 auto 16px', fontSize: 13, lineHeight: 1.6 }}>
+              No candidates matching current filter criteria. Use on-demand scan or reset filters to analyze the market.
             </p>
             <div style={{ display: 'flex', justifyContent: 'center', gap: 10 }}>
-              <button type="button" onClick={() => void load()} className="button">
-                Scan Again Now
+              <button type="button" onClick={() => void triggerScan()} className="button" disabled={isScanning}>
+                {isScanning ? 'Scanning…' : '⚡ Scan Market Now'}
               </button>
-              <Link href="/scanner/history" className="button-secondary" style={{ padding: '10px 16px', borderRadius: 8 }}>
+              <Link href="/scanner/history" className="button-secondary" style={{ padding: '8px 14px', borderRadius: 6, fontSize: 13 }}>
                 View Signal History
               </Link>
             </div>
           </div>
         )}
 
-        {/* Pagination */}
-        {data && (page > 1 || data.matchingCount > data.selection.limit) && (
-          <nav style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 16 }}>
-            <button
-              type="button"
-              className="button-secondary"
-              disabled={page === 1 || loading}
-              onClick={() => setSelection({ ...selection, page: page - 1 })}
-            >
-              Previous
-            </button>
-            <span className="mono">
-              Page {page} of {pageCount} ({data.matchingCount} pairs)
-            </span>
-            <button
-              type="button"
-              className="button-secondary"
-              disabled={page >= pageCount || loading}
-              onClick={() => setSelection({ ...selection, page: page + 1 })}
-            >
-              Next
-            </button>
-          </nav>
+        {/* Global Reusable Pagination */}
+        {data && (
+          <Pagination
+            page={page}
+            totalPages={pageCount}
+            totalItems={data.matchingCount}
+            pageSize={data.selection.limit}
+            onPageChange={(nextPage) => setSelection({ ...selection, page: nextPage })}
+            itemLabel="pairs"
+          />
         )}
       </section>
     </main>
