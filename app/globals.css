@@ -800,6 +800,11 @@ html[data-theme='dark'] .success {
   stroke-width: 1.8;
 }
 
+/* Universal hidden support with author override immunity */
+[hidden] {
+  display: none !important;
+}
+
 /* Topbar Popovers */
 
 .panel-topbar-popover {
@@ -814,7 +819,11 @@ html[data-theme='dark'] .success {
   border-radius: 12px;
   background: var(--surface);
   box-shadow: 0 16px 40px rgb(15 23 42 / 0.16);
-  z-index: 40;
+  z-index: 100;
+}
+
+.panel-topbar-popover[hidden] {
+  display: none !important;
 }
 
 .panel-topbar-account {

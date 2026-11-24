@@ -238,6 +238,14 @@ export function PanelNavigation() {
     return () => window.removeEventListener('news-unread-count', updateUnread);
   }, []);
 
+  // Dismiss any open popovers on route or query/tab change
+  const currentRouteKey = `${pathname}?tab=${currentTab ?? ''}#${hash}`;
+  const [prevRouteKey, setPrevRouteKey] = useState(currentRouteKey);
+  if (prevRouteKey !== currentRouteKey) {
+    setPrevRouteKey(currentRouteKey);
+    setOpenPanel(null);
+  }
+
   useEffect(() => {
     if (!isPanelPage || !openPanel) return;
     const trigger = {
@@ -249,6 +257,7 @@ export function PanelNavigation() {
     const handlePanelKey = (event: KeyboardEvent) => {
       if (event.defaultPrevented) return;
       if (event.key === 'Escape') {
+        event.preventDefault();
         setOpenPanel(null);
         trigger.current?.focus();
       }
@@ -266,9 +275,12 @@ export function PanelNavigation() {
         }
       }
     };
-    const closeOnOutsideClick = (event: PointerEvent) => {
+    const closeOnOutsideClick = (event: Event) => {
       if (openPanel === 'navigation' || !(event.target instanceof Node)) return;
-      if (trigger.current?.contains(event.target) || document.getElementById(`panel-${openPanel}`)?.contains(event.target)) return;
+      const targetNode = event.target as Node;
+      const triggerEl = trigger.current;
+      const popoverEl = document.getElementById(openPanel === 'account' ? 'panel-account' : 'panel-notifications');
+      if (triggerEl?.contains(targetNode) || popoverEl?.contains(targetNode)) return;
       setOpenPanel(null);
     };
     const desktop = window.matchMedia('(min-width: 761px)');
@@ -276,11 +288,13 @@ export function PanelNavigation() {
       if (desktop.matches && openPanel === 'navigation') setOpenPanel(null);
     };
     document.addEventListener('keydown', handlePanelKey);
-    document.addEventListener('pointerdown', closeOnOutsideClick);
+    document.addEventListener('pointerdown', closeOnOutsideClick, true);
+    document.addEventListener('touchstart', closeOnOutsideClick, { capture: true, passive: true });
     desktop.addEventListener('change', closeDrawerOnDesktop);
     return () => {
       document.removeEventListener('keydown', handlePanelKey);
-      document.removeEventListener('pointerdown', closeOnOutsideClick);
+      document.removeEventListener('pointerdown', closeOnOutsideClick, true);
+      document.removeEventListener('touchstart', closeOnOutsideClick, true);
       desktop.removeEventListener('change', closeDrawerOnDesktop);
     };
   }, [isPanelPage, openPanel]);
@@ -587,39 +601,45 @@ export function PanelNavigation() {
             id="panel-account"
             className="panel-topbar-popover panel-topbar-account"
             aria-labelledby="panel-account-title"
+            role="dialog"
+            aria-modal="false"
             hidden={openPanel !== 'account'}
           >
-            <h2 id="panel-account-title">Account</h2>
-            {user && <p className="muted panel-account-identity">{user.email}</p>}
-            {user && subscription && (() => {
-              const badge = membershipLabel(subscription);
-              return (
-                <Link
-                  className={`membership-badge ${badge.className}`}
-                  href="/dashboard#subscription"
-                  title={badge.title}
-                  onClick={() => setOpenPanel(null)}
-                >
-                  {badge.label}
-                </Link>
-              );
-            })()}
-            {user && subscriptionUnavailable && (
-              <span className="membership-badge is-unavailable">Membership unavailable</span>
-            )}
-            {user ? (
+            {openPanel === 'account' && (
               <>
-                <Link href="/settings" onClick={() => setOpenPanel(null)} className="panel-account-link">
-                  Account settings
-                </Link>
-                {openPanel === 'account' && <LogoutButton />}
+                <h2 id="panel-account-title">Account</h2>
+                {user && <p className="muted panel-account-identity">{user.email}</p>}
+                {user && subscription && (() => {
+                  const badge = membershipLabel(subscription);
+                  return (
+                    <Link
+                      className={`membership-badge ${badge.className}`}
+                      href="/dashboard#subscription"
+                      title={badge.title}
+                      onClick={() => setOpenPanel(null)}
+                    >
+                      {badge.label}
+                    </Link>
+                  );
+                })()}
+                {user && subscriptionUnavailable && (
+                  <span className="membership-badge is-unavailable">Membership unavailable</span>
+                )}
+                {user ? (
+                  <>
+                    <Link href="/settings" onClick={() => setOpenPanel(null)} className="panel-account-link">
+                      Account settings
+                    </Link>
+                    <LogoutButton />
+                  </>
+                ) : subscriptionUnavailable ? (
+                  <Link href="/login" onClick={() => setOpenPanel(null)} className="panel-account-link">
+                    Sign in
+                  </Link>
+                ) : (
+                  <p className="muted">Loading account…</p>
+                )}
               </>
-            ) : subscriptionUnavailable ? (
-              <Link href="/login" onClick={() => setOpenPanel(null)} className="panel-account-link">
-                Sign in
-              </Link>
-            ) : (
-              <p className="muted">Loading account…</p>
             )}
           </section>
         </div>

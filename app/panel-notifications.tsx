@@ -15,6 +15,13 @@ type NotificationFeed =
   | { state: 'loading' | 'error' }
   | { state: 'ready'; unreadCount: number; notifications: Notification[] };
 
+async function getCsrfToken() {
+  const response = await fetch('/api/csrf', { cache: 'no-store' });
+  const body = (await response.json()) as { data?: { csrfToken: string } };
+  if (!response.ok || !body.data) throw new Error('Secure session unavailable.');
+  return body.data.csrfToken;
+}
+
 export function PanelNotifications({ access, newsUnread, onUnreadCount, onNavigate }: {
   access: 'available' | 'pending' | 'restricted' | 'unavailable';
   newsUnread: number;
@@ -23,6 +30,7 @@ export function PanelNotifications({ access, newsUnread, onUnreadCount, onNaviga
 }) {
   const [feed, setFeed] = useState<NotificationFeed>({ state: 'loading' });
   const [attempt, setAttempt] = useState(0);
+  const [marking, setMarking] = useState(false);
 
   useEffect(() => {
     if (access !== 'available') return;
@@ -49,9 +57,50 @@ export function PanelNotifications({ access, newsUnread, onUnreadCount, onNaviga
     return () => controller.abort();
   }, [access, attempt, onUnreadCount]);
 
+  async function handleMarkAllRead() {
+    setMarking(true);
+    try {
+      const csrf = await getCsrfToken();
+      await Promise.allSettled([
+        fetch('/api/notifications', {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrf },
+          body: JSON.stringify({ action: 'mark_all_read' }),
+        }),
+        fetch('/api/news', {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrf },
+          body: JSON.stringify({ action: 'mark_read' }),
+        }),
+      ]);
+      onUnreadCount(0);
+      window.dispatchEvent(new CustomEvent('news-unread-count', { detail: 0 }));
+      setFeed((prev) => prev.state === 'ready' ? { ...prev, unreadCount: 0, notifications: prev.notifications.map((n) => ({ ...n, read_at: new Date().toISOString() })) } : prev);
+    } catch {
+      // Graceful fallback
+    } finally {
+      setMarking(false);
+    }
+  }
+
+  const hasUnread = (feed.state === 'ready' && feed.unreadCount > 0) || newsUnread > 0;
+
   return (
     <section aria-labelledby="panel-notifications-title">
-      <h2 id="panel-notifications-title">Notifications</h2>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
+        <h2 id="panel-notifications-title" style={{ margin: 0, fontSize: 16 }}>Notifications</h2>
+        {hasUnread && (
+          <button
+            type="button"
+            className="button-secondary"
+            disabled={marking}
+            onClick={() => void handleMarkAllRead()}
+            style={{ fontSize: 11, padding: '4px 8px' }}
+          >
+            {marking ? 'Clearing…' : 'Mark all as read'}
+          </button>
+        )}
+      </div>
       <div className="panel-notification-status" aria-live="polite">
         {access === 'pending' && <p className="muted">Checking notification access…</p>}
         {access === 'unavailable' && <p className="muted">Notification access is unavailable.</p>}
@@ -75,9 +124,9 @@ export function PanelNotifications({ access, newsUnread, onUnreadCount, onNaviga
           </ul> : <p className="muted">No recent signal notifications.</p>}
         </>}
       </div>
-      <div className="panel-notification-links">
-        {access === 'available' && <Link href="/dashboard#notifications" onClick={onNavigate}>View signal notifications</Link>}
-        <Link href="/news" onClick={onNavigate}>Crypto news{newsUnread > 0 ? ` (${newsUnread} unread)` : ''}</Link>
+      <div className="panel-notification-links" style={{ display: 'flex', justifyContent: 'space-between', marginTop: 12, paddingTop: 10, borderTop: '1px solid var(--surface-border)', fontSize: 12 }}>
+        {access === 'available' && <Link href="/dashboard#notifications" onClick={onNavigate}>Signal alerts</Link>}
+        <Link href="/news" onClick={onNavigate}>Crypto news{newsUnread > 0 ? ` (${newsUnread})` : ''}</Link>
       </div>
     </section>
   );
