@@ -58,7 +58,6 @@ export function PositionsPanel() {
 
   const visible = positions.filter((position) => showClosed ? position.status === 'CLOSED' : position.status === 'ENTERED');
   return <main className="shell">
-    <header className="topbar"><span className="brand">ETHCRYPTOHUB</span></header>
     <section className="hero">
       <p className="mono">USER-RECORDED SIGNAL ENTRIES</p>
       <h1>Position records.</h1>

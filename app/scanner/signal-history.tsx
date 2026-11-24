@@ -1,6 +1,5 @@
 'use client';
 
-import Link from 'next/link';
 import { useCallback, useEffect, useRef, useState } from 'react';
 
 type SignalItem = {
@@ -139,7 +138,6 @@ export function SignalHistory({ successfulOnly = false, initialScannerType = '' 
   const title = successfulOnly ? 'Successful Signals' : 'Signal History';
 
   return <main className="shell">
-    <header className="topbar"><Link className="brand" href="/">ETHCRYPTOHUB</Link><nav className="links"><Link href="/scanner">Scanner</Link><Link href="/scanner/performance">Performance</Link><Link href="/dashboard">Dashboard</Link></nav></header>
     <section className="hero scanner-hero"><p className="mono">PERSISTED SIGNAL RECORDS</p><h1>{title}</h1>
       <p className="muted">{successfulOnly ? 'Target achievements are milestones, not proof of a completed profitable trade.' : 'Generated signals and immutable lifecycle events. Records are retained; filters do not delete data.'}</p>
     </section>

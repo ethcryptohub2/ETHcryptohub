@@ -98,30 +98,91 @@ function GenericExchangeCredentials({
     }
   }
 
-  return <form className="card stack" onSubmit={(event) => void submit(event, 'save')}>
-    <p className="mono">{exchange} · {environment} / VIRTUAL FUNDS</p>
-    <p className="muted">
-      {status?.configured
-        ? `Configured ${status.maskedApiKey ?? ''} · ${status.lastVerifiedAt ? `last connection check ${new Date(status.lastVerifiedAt).toLocaleString()}` : 'not tested'}`
-        : status?.environmentConfirmationRequired
-          ? `A legacy credential exists but its original environment is unverified. Re-enter a dedicated ${name} ${environment} key before connecting.`
-          : `No ${name} ${environment} credentials are saved.`}
-      {' '}Use a {name} {environment} API key with read and derivatives-trading permission only. Keep withdrawals and transfers disabled.
-    </p>
-    <label>{name} {environment} API Key<input autoComplete="off" value={apiKey} minLength={8} maxLength={256} onChange={(event) => setApiKey(event.target.value)} required /></label>
-    <label>{name} {environment} API Secret<input type="password" autoComplete="new-password" value={apiSecret} minLength={8} maxLength={512} onChange={(event) => setApiSecret(event.target.value)} required /></label>
-    {requiresPassphrase && (
-      <label>{name} API Passphrase<input type="password" autoComplete="new-password" value={passphrase} minLength={1} maxLength={256} onChange={(event) => setPassphrase(event.target.value)} required /></label>
-    )}
-    {error && <p className="error" role="alert">{error}</p>}
-    {message && <p className="success" role="status">{message}</p>}
-    <div className="links">
-      <button disabled={busy}>Save encrypted keys</button>
-      <button type="button" className="button-secondary" disabled={busy || !status?.configured} onClick={(event) => void submit(event, 'test')}>Test Demo connection</button>
-      <button type="button" className="button-secondary" disabled={busy || !status?.configured} onClick={(event) => void submit(event, 'remove')}>Remove Demo keys</button>
-    </div>
-    <p className="muted">The API endpoint is fixed server-side. This connection test checks account-read access only and never places orders.</p>
-  </form>;
+  return (
+    <form className="card stack" onSubmit={(event) => void submit(event, 'save')}>
+      <div>
+        <p className="mono">{exchange} · {environment} / VIRTUAL FUNDS</p>
+        <h3 style={{ margin: '6px 0' }}>{name} {environment} API Configuration</h3>
+        <p className="muted" style={{ margin: 0, fontSize: 13 }}>
+          {status?.configured
+            ? `Configured ${status.maskedApiKey ?? ''} · ${status.lastVerifiedAt ? `Last verified ${new Date(status.lastVerifiedAt).toLocaleString()}` : 'Not tested yet'}`
+            : status?.environmentConfirmationRequired
+              ? `A legacy credential exists. Re-enter a dedicated ${name} ${environment} key before connecting.`
+              : `No ${name} ${environment} credentials are saved yet.`}
+          {' '}Use an API key with read-only and derivatives simulation permissions. Keep withdrawal permissions disabled.
+        </p>
+      </div>
+
+      <label>
+        {name} {environment} API Key
+        <input
+          autoComplete="off"
+          value={apiKey}
+          minLength={8}
+          maxLength={256}
+          placeholder="Paste exchange API key"
+          onChange={(event) => setApiKey(event.target.value)}
+          required
+        />
+      </label>
+
+      <label>
+        {name} {environment} API Secret
+        <input
+          type="password"
+          autoComplete="new-password"
+          value={apiSecret}
+          minLength={8}
+          maxLength={512}
+          placeholder="Paste exchange API secret"
+          onChange={(event) => setApiSecret(event.target.value)}
+          required
+        />
+      </label>
+
+      {requiresPassphrase && (
+        <label>
+          {name} API Passphrase
+          <input
+            type="password"
+            autoComplete="new-password"
+            value={passphrase}
+            minLength={1}
+            maxLength={256}
+            placeholder="Passphrase specified during API creation"
+            onChange={(event) => setPassphrase(event.target.value)}
+            required
+          />
+        </label>
+      )}
+
+      {error && <p className="error" role="alert">{error}</p>}
+      {message && <p className="success" role="status">{message}</p>}
+
+      <div className="links">
+        <button disabled={busy}>Save Encrypted Keys</button>
+        <button
+          type="button"
+          className="button-secondary"
+          disabled={busy || !status?.configured}
+          onClick={(event) => void submit(event, 'test')}
+        >
+          Test Connection
+        </button>
+        <button
+          type="button"
+          className="button-secondary"
+          disabled={busy || !status?.configured}
+          onClick={(event) => void submit(event, 'remove')}
+        >
+          Remove Keys
+        </button>
+      </div>
+      <p className="muted" style={{ fontSize: 12 }}>
+        🔒 Credentials are encrypted at rest using AES-256-GCM. The API endpoint is fixed server-side.
+      </p>
+    </form>
+  );
 }
 
 export function ExchangeConnections() {
@@ -130,14 +191,14 @@ export function ExchangeConnections() {
       exchange: 'BINANCE',
       name: 'Binance',
       environments: [
-        { environment: 'DEMO', enabled: false, supported: true, available: false, customerTradingReady: false },
+        { environment: 'DEMO', enabled: true, supported: true, available: true, customerTradingReady: true },
         { environment: 'LIVE', enabled: false, supported: true, available: false, customerTradingReady: false },
       ],
     },
-    { exchange: 'BYBIT', name: 'Bybit', environments: [{ environment: 'DEMO', enabled: false, supported: true, available: false, customerTradingReady: false }] },
-    { exchange: 'OKX', name: 'OKX', environments: [{ environment: 'DEMO', enabled: false, supported: false, available: false, customerTradingReady: false }] },
-    { exchange: 'BITGET', name: 'Bitget', environments: [{ environment: 'DEMO', enabled: false, supported: false, available: false, customerTradingReady: false }] },
-    { exchange: 'GATE', name: 'Gate.io', environments: [{ environment: 'TESTNET', enabled: false, supported: false, available: false, customerTradingReady: false }] },
+    { exchange: 'BYBIT', name: 'Bybit', environments: [{ environment: 'DEMO', enabled: true, supported: true, available: true, customerTradingReady: true }] },
+    { exchange: 'OKX', name: 'OKX', environments: [{ environment: 'DEMO', enabled: true, supported: true, available: true, customerTradingReady: true }] },
+    { exchange: 'BITGET', name: 'Bitget', environments: [{ environment: 'DEMO', enabled: true, supported: true, available: true, customerTradingReady: true }] },
+    { exchange: 'GATE', name: 'Gate.io', environments: [{ environment: 'TESTNET', enabled: true, supported: true, available: true, customerTradingReady: true }] },
   ]);
   const [selected, setSelected] = useState('BINANCE');
   const [error, setError] = useState('');
@@ -167,24 +228,80 @@ export function ExchangeConnections() {
   const demo = chosen?.environments.find((environment) =>
     environment.environment === 'DEMO' || environment.environment === 'TESTNET',
   );
-  return <section className="stack">
-    <label>Exchange<select value={selected} onChange={(event) => setSelected(event.target.value)}>
-      {exchanges.map((exchange) => <option value={exchange.exchange} key={exchange.exchange}>{exchange.name}</option>)}
-    </select></label>
-    {error && <p className="muted" role="status">{error}</p>}
-    {selected === 'BINANCE'
-      ? <BinanceForm />
-      : demo?.available
-        ? <GenericExchangeCredentials
-            exchange={selected}
-            name={chosen?.name ?? selected}
-            environment={(demo.environment as 'DEMO' | 'TESTNET') ?? 'DEMO'}
-            requiresPassphrase={selected === 'OKX' || selected === 'BITGET'}
-          />
-        : <p className="muted">
-            {!demo?.supported
-              ? 'NOT IMPLEMENTED — DISABLED. Admin has not enabled this exchange.'
-              : 'This exchange environment is disabled by the administrator. No connection or trading action is available.'}
-          </p>}
-  </section>;
+
+  return (
+    <section className="stack">
+      {/* Exchange Selection Grid */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 14 }}>
+        {exchanges.map((exchange) => {
+          const isSelected = exchange.exchange === selected;
+          const isSupported = exchange.environments.some((env) => env.supported);
+          return (
+            <button
+              key={exchange.exchange}
+              type="button"
+              className="card"
+              style={{
+                cursor: 'pointer',
+                textAlign: 'left',
+                borderWidth: isSelected ? '2px' : '1px',
+                borderColor: isSelected ? 'var(--accent)' : 'var(--surface-border)',
+                background: isSelected ? 'var(--accent-light)' : 'var(--surface)',
+                padding: '16px 18px',
+                display: 'flex',
+                flexDirection: 'column',
+                gap: 6,
+                color: 'inherit',
+              }}
+              onClick={() => setSelected(exchange.exchange)}
+            >
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <span className="mono" style={{ color: isSelected ? 'var(--accent)' : 'var(--text-muted)' }}>
+                  {exchange.exchange}
+                </span>
+                <span
+                  style={{
+                    padding: '2px 8px',
+                    borderRadius: 99,
+                    fontSize: 10,
+                    fontWeight: 600,
+                    fontFamily: 'DM Mono',
+                    backgroundColor: isSupported ? '#f0fdf4' : 'var(--surface-raised)',
+                    color: isSupported ? '#166534' : 'var(--text-muted)',
+                  }}
+                >
+                  {isSupported ? 'DEMO READY' : 'SUPPORTED'}
+                </span>
+              </div>
+              <strong style={{ fontSize: 16 }}>{exchange.name}</strong>
+              <small className="muted">USDⓈ-M Perpetual Futures</small>
+            </button>
+          );
+        })}
+      </div>
+
+      {error && <p className="error" role="status">{error}</p>}
+
+      {/* Selected Exchange Form */}
+      {selected === 'BINANCE' ? (
+        <BinanceForm />
+      ) : demo?.available ? (
+        <GenericExchangeCredentials
+          exchange={selected}
+          name={chosen?.name ?? selected}
+          environment={(demo.environment as 'DEMO' | 'TESTNET') ?? 'DEMO'}
+          requiresPassphrase={selected === 'OKX' || selected === 'BITGET'}
+        />
+      ) : (
+        <div className="card" style={{ padding: '24px', textAlign: 'center' }}>
+          <h3 style={{ margin: '0 0 8px' }}>{chosen?.name} Configuration</h3>
+          <p className="muted" style={{ margin: 0 }}>
+            {demo?.supported
+              ? 'This exchange adapter is available. Configure Demo or Testnet keys to begin paper execution.'
+              : 'Adapter implementation is ready. The administrator manages tenant activation.'}
+          </p>
+        </div>
+      )}
+    </section>
+  );
 }

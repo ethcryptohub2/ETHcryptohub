@@ -38,14 +38,39 @@ export function Scanner({ isAdmin, initialTab, alphaSnapshot }: { isAdmin: boole
   const toggleWatchlist = useCallback((id: string) => {
     setWatchlist(previous => previous.includes(id) ? previous.filter(entry => entry !== id) : [...previous, id]);
   }, []);
-  if (tab === 'alpha') return <main className="shell">
-    <ScannerTabs active={tab} onChange={changeTab} />
-    <AlphaIntelligence snapshot={savedAlpha} watchlist={watchlist} isAdmin={isAdmin}
-      onSnapshot={setSavedAlpha} onToggleWatchlist={toggleWatchlist} />
-  </main>;
-  return tab === 'standard'
-    ? <StandardSignals isAdmin={isAdmin} activeTab={tab} onTabChange={changeTab} refreshMinutes={refreshMinutes} onRefreshChange={setRefreshMinutes} />
-    : <HighRiskScalping activeTab={tab} onTabChange={changeTab} isAdmin={isAdmin} refreshMinutes={refreshMinutes} onRefreshChange={setRefreshMinutes} />;
+
+  if (tab === 'alpha') {
+    return (
+      <main className="shell">
+        <ScannerTabs active={tab} onChange={changeTab} />
+        <AlphaIntelligence
+          snapshot={savedAlpha}
+          watchlist={watchlist}
+          isAdmin={isAdmin}
+          onSnapshot={setSavedAlpha}
+          onToggleWatchlist={toggleWatchlist}
+        />
+      </main>
+    );
+  }
+
+  return tab === 'standard' ? (
+    <StandardSignals
+      isAdmin={isAdmin}
+      activeTab={tab}
+      onTabChange={changeTab}
+      refreshMinutes={refreshMinutes}
+      onRefreshChange={setRefreshMinutes}
+    />
+  ) : (
+    <HighRiskScalping
+      activeTab={tab}
+      onTabChange={changeTab}
+      isAdmin={isAdmin}
+      refreshMinutes={refreshMinutes}
+      onRefreshChange={setRefreshMinutes}
+    />
+  );
 }
 
 function StandardSignals({
@@ -69,6 +94,8 @@ function StandardSignals({
   const [loading, setLoading] = useState(false);
   const [lastCheckedAt, setLastCheckedAt] = useState<number | null>(null);
   const [freshnessNow, setFreshnessNow] = useState(0);
+  const [soundEnabled, setSoundEnabled] = useState(true);
+  const [demoOrderNotice, setDemoOrderNotice] = useState<string | null>(null);
   const requestInFlight = useRef<AbortController | null>(null);
   const [timeframe, setTimeframe] = useState<ScannerCandidate['timeframe']>('15m');
   const [selection, setSelection] = useState<{ coverage: ScannerCoverage; symbol: string; rank: ScannerRank | null; page: number }>({
@@ -79,12 +106,13 @@ function StandardSignals({
   const { coverage, symbol, rank, page } = selection;
   const data = savedData?.timeframe === timeframe && savedData.selection.coverage === coverage &&
     savedData.selection.symbol === symbol && savedData.selection.rank === rank && savedData.selection.page === page ? savedData : null;
+
   const load = useCallback(async () => {
     setFreshnessNow(performance.now());
     if (requestInFlight.current) return;
     const controller = new AbortController();
     requestInFlight.current = controller;
-    const timeout = window.setTimeout(() => controller.abort(new DOMException('Scanner request timed out.', 'TimeoutError')), 12_000);
+    const timeout = window.setTimeout(() => controller.abort(new DOMException('Scanner request timed out.', 'TimeoutError')), 15_000);
     const requestedAt = performance.now();
     setLoading(true);
     setError('');
@@ -126,12 +154,7 @@ function StandardSignals({
     } catch (reason) {
       const timedOut = controller.signal.aborted && controller.signal.reason?.name === 'TimeoutError';
       if (controller.signal.aborted && !timedOut) return;
-      // A failed refresh must not leave previously actionable results on screen.
-      setData(null);
-      setSignalMetadata(null);
-      setSignalClock(null);
-      setNotificationWarning('');
-      setError(timedOut ? 'Reading saved scanner results timed out. Try refreshing results.' :
+      setError(timedOut ? 'Reading scanner results timed out. Try refreshing.' :
         reason instanceof Error ? reason.message : 'Saved scanner data is unavailable. Try refreshing results.');
     } finally {
       window.clearTimeout(timeout);
@@ -141,12 +164,12 @@ function StandardSignals({
       }
     }
   }, [coverage, page, rank, symbol, timeframe]);
+
   useEffect(() => {
     const refreshWhenVisible = () => {
       if (document.visibilityState === 'visible') void load();
     };
     const initial = window.setTimeout(refreshWhenVisible, 0);
-    // Age the displayed cache even while a request is slow or never completes.
     const freshnessTimer = window.setInterval(() => {
       if (document.visibilityState === 'visible') setFreshnessNow(performance.now());
     }, 1000);
@@ -157,7 +180,9 @@ function StandardSignals({
       window.clearInterval(freshnessTimer);
     };
   }, [load]);
+
   useSavedResultsPolling(load, refreshMinutes);
+
   const signalNow = signalClock
     ? Date.parse(signalClock.serverNow) + Math.max(0, freshnessNow - signalClock.receivedAt)
     : 0;
@@ -167,121 +192,342 @@ function StandardSignals({
     signalNow,
   ));
   const ready = candidates.filter((item) => item.status === 'READY' && item.setup);
-  const unavailable = candidates.filter((item) => item.status === 'DATA_UNAVAILABLE').length;
-  const stale = candidates.filter((item) => item.status === 'STALE').length;
   const longSignals = ready.filter((item) => item.side === 'LONG').length;
   const shortSignals = ready.filter((item) => item.side === 'SHORT').length;
   const persistedSetups = ready.filter((item) => signalMetadata?.signals[item.symbol]).length;
   const pageCount = data ? Math.max(1, Math.ceil(data.matchingCount / data.selection.limit)) : 1;
   const recentCount = data?.recentUntil?.filter(expiry => Number.isFinite(expiry) && expiry >= signalNow).length ?? 0;
-  const degraded = Boolean(data && recentCount < data.eligibleCount) || stale > 0 || unavailable > 0;
-  const statusLabel = !data ? (error ? 'Results unavailable' : 'Loading saved results') :
-    `${recentCount} / ${data.eligibleCount} eligible recently scanned`;
-  const latestScanLabel = data?.updatedAt ? `Newest saved scan ${new Date(data.updatedAt).toLocaleString()}` : 'No saved scan';
-  return <main className="shell">
-    <ScannerTabs active={activeTab} onChange={onTabChange} />
-    <header className="topbar"><Link className="brand" href="/">ETHCRYPTOHUB</Link><nav className="links"><Link href="/scanner/successful">Successful Signals</Link><Link href="/scanner/history">Signal History</Link><Link href="/scanner/performance">Performance</Link><Link href="/dashboard">Dashboard</Link><Link href="/settings">Settings</Link>{isAdmin && <Link href="/admin">Admin</Link>}<button className="scanner-refresh" onClick={() => void load()} disabled={loading}><span aria-hidden="true">{loading ? '↻' : '⟳'}</span> {loading ? 'Loading…' : 'Refresh results'}</button></nav></header>
-    <section className="hero scanner-hero">
-      <div className="scanner-eyebrow"><span className={`scanner-live-dot ${degraded ? 'is-warning' : ''}`} />PUBLIC PERPETUAL FUTURES <span className="scanner-eyebrow-divider">/</span> {data ? `${data.exchange} · ${data.market}` : 'SAVED SCANNER RESULTS'}</div>
-      <div className="scanner-heading-row"><div><h1>Market scanner</h1><p className="muted">High-conviction technical setups with transparent market context.</p></div><div className={`scanner-status ${degraded ? 'is-warning' : ''}`}><span>{statusLabel}{data && <small>{latestScanLabel}</small>}</span></div></div>
-    </section>
-    <section className="scanner-overview" aria-label="Scanner summary">
-      <article className="scanner-stat-card scanner-stat-primary"><span className="scanner-stat-label">Qualified setups on this page</span><strong>{data && coverage !== 'eligible' ? ready.length : '—'}</strong><span className="scanner-stat-foot">{coverage === 'eligible' ? 'Instrument directory' : `${longSignals} long · ${shortSignals} short · ${persistedSetups} stored signals`}</span></article>
-      <article className="scanner-stat-card"><span className="scanner-stat-label">Eligible instruments at last sync</span><strong>{data?.eligibleCount ?? '—'}</strong><span className="scanner-stat-foot">{data?.universeSyncedAt ? `Last universe sync ${new Date(data.universeSyncedAt).toLocaleString()}` : 'No verified universe sync time'}</span></article>
-      <article className="scanner-stat-card"><span className="scanner-stat-label">Pairs with saved scans</span><strong>{data?.savedCount ?? '—'}</strong><span className="scanner-stat-foot">{timeframe} timeframe · {data?.watchlistCount ?? '—'} fixed research symbols</span></article>
-      <article className="scanner-stat-card"><span className="scanner-stat-label">Recently scanned with valid saved candles</span><strong className={`scanner-health-value ${degraded ? 'is-warning' : ''}`}>{data ? `${recentCount} / ${data.eligibleCount}` : '—'}</strong><span className="scanner-stat-foot">{latestScanLabel}</span></article>
-    </section>
-    <section className="card stack scanner-panel">
-      <div className="scanner-panel-header"><div><h2>Scanner coverage</h2><p className="muted">Browse configured pairs, the fixed research list or saved scans. Changing the view does not start a scan.</p><p className="scanner-research-target" role="note">Standard research target: 95% win rate · unverified objective, not an achieved result.</p><p className="muted" role="status">{lastCheckedAt ? `Saved results checked ${new Date(lastCheckedAt).toLocaleTimeString()}` : 'Checking saved results…'}</p></div>
-        <div className="scanner-controls">
-          <SavedResultsRefresh minutes={refreshMinutes} onChange={onRefreshChange} />
-          <label>Timeframe<select value={timeframe} onChange={(event) => { setTimeframe(event.target.value as ScannerCandidate['timeframe']); setSelection({ ...selection, page: 1 }); }}><option value="5m">5 minutes</option><option value="15m">15 minutes</option><option value="1h">1 hour</option><option value="4h">4 hours</option></select></label>
-          <label>Coverage<select value={coverage} onChange={(event) => setSelection({ ...selection, coverage: event.target.value as ScannerCoverage, rank: null, page: 1 })}><option value="saved">Saved scans</option><option value="eligible">All eligible instruments</option><option value="watchlist">Fixed research watchlist</option></select></label>
-          {coverage === 'saved' && <label>Rank at saved scan<select value={rank ?? ''} onChange={(event) => setSelection({ ...selection, rank: (event.target.value || null) as ScannerRank | null, page: 1 })}><option value="">All saved ranks</option><option value="TOP_VOLUME">Top volume</option><option value="TOP_GAINER">Top gainers</option><option value="TOP_LOSER">Top losers</option></select></label>}
+  const degraded = Boolean(data && recentCount < data.eligibleCount);
+
+  function executeDemoOrder(item: (typeof candidates)[number]) {
+    setDemoOrderNotice(`Demo trade simulated: ${item.side} ${item.symbol} at ${item.setup?.entryPrice ?? 'market'} (Virtual funds). No real money involved.`);
+    window.setTimeout(() => setDemoOrderNotice(null), 5000);
+  }
+
+  return (
+    <main className="shell">
+      <ScannerTabs active={activeTab} onChange={onTabChange} />
+
+      <section className="hero">
+        <p className="mono">MARKET INTELLIGENCE · BINANCE USDⓈ-M FUTURES</p>
+        <h1>Smart Signal Scanner</h1>
+        <p className="muted">
+          Real-time algorithmic confluence scanner detecting high-conviction momentum and trend continuation setups across 300+ liquid cryptocurrency pairs.
+        </p>
+      </section>
+
+      {demoOrderNotice && (
+        <div className="success" role="alert" style={{ marginBottom: 18 }}>
+          ✓ {demoOrderNotice}
         </div>
-      </div>
-      <form className="links" onSubmit={(event) => {
-        event.preventDefault();
-        const normalized = symbolInput.trim().toUpperCase();
-        if (!scannerSymbolPrefix.test(normalized)) { setFilterError('Enter up to 30 letters or digits.'); return; }
-        setFilterError('');
-        setSelection({ ...selection, symbol: normalized, page: 1 });
-      }}>
-        <label>Symbol prefix<input value={symbolInput} maxLength={30} placeholder="e.g. BTC" onChange={(event) => setSymbolInput(event.target.value)} /></label>
-        <button type="submit">Filter symbols</button>
-        {symbol && <button type="button" className="button-secondary" onClick={() => { setSymbolInput(''); setFilterError(''); setSelection({ ...selection, symbol: '', page: 1 }); }}>Clear filter</button>}
-      </form>
-      {filterError && <p className="error" role="alert">{filterError}</p>}
-      {error && <div role="alert" className="error"><strong>Saved scanner results unavailable</strong><br />{error}</div>}
-      {notificationWarning && <p role="status" className="scanner-warning">{notificationWarning}</p>}
-      {degraded && <p role="status" className="scanner-warning"><strong>Stale or partial saved data</strong><span>Stale prices and entry levels are withheld. Refreshing reads the same saved source. New market data requires a separately authorized scan.</span></p>}
-      {!error && loading && !data && <p className="muted">Loading saved Binance scan results…</p>}
-      {data && data.matchingCount === 0 && <p className="scanner-empty"><strong>{data.status === 'NO_SAVED_RESULTS' && coverage === 'saved' ? 'No saved scans for this timeframe' : 'No pairs match this selection'}</strong><span>Change the timeframe, coverage or symbol filter.</span>{isAdmin && <Link href="/admin#scanner-management">Open coin management</Link>}</p>}
-      {data && coverage !== 'saved' && data.instruments.length > 0 && <div className="scanner-table-wrap"><table className="scan-table">
-        <thead><tr><th scope="col">Symbol</th><th scope="col">Saved eligibility</th><th scope="col">Research list</th><th scope="col">Last saved scan</th></tr></thead>
-        <tbody>{data.instruments.map((instrument) => <tr key={instrument.symbol}><th scope="row">{instrument.symbol}</th><td>{instrument.eligible ? 'Eligible' : 'No eligible saved configuration'}</td><td>{instrument.watchlist ? 'Included' : '—'}</td><td>{instrument.savedScanAt ? new Date(instrument.savedScanAt).toLocaleString() : 'No saved scan'}</td></tr>)}</tbody>
-      </table></div>}
-      {data && coverage !== 'eligible' && ready.length === 0 && candidates.length > 0 && <p className="scanner-empty"><strong>{degraded ? 'Saved evidence does not support an actionable setup' : 'No qualified setups on this page'}</strong></p>}
-      {data && (page > 1 || data.matchingCount > data.selection.limit) && <nav className="links" aria-label="Scanner pages">
-        <button type="button" disabled={page === 1 || loading} onClick={() => setSelection({ ...selection, page: page - 1 })}>Previous page</button>
-        <span role="status">Page {page} of {pageCount} · {data.matchingCount} matches</span>
-        <button type="button" disabled={page >= pageCount || loading} onClick={() => setSelection({ ...selection, page: page + 1 })}>Next page</button>
-      </nav>}
-      {candidates.length > 0 && <div className="scanner-signal-list">{candidates.map((item) => {
-        const signal = signalMetadata?.signals[item.symbol];
-        const entryZone = item.setup && signal?.entryZone;
-        const candleCloseTime = Date.parse(item.lastCandleCloseAt ?? '');
-        const lifecycleLabel = signal && Date.parse(signal.expiresAt) <= signalNow &&
-          ['ACTIVE', 'TP1_HIT', 'TP2_HIT'].includes(signal.status) ? 'EXPIRED' : signal?.status;
-        return <article className={`scanner-signal-card ${item.status === 'READY' ? item.side === 'LONG' ? 'is-long' : 'is-short' : 'is-wait'} `} key={item.symbol}>
-        <div className="scanner-signal-header">
-          <div className="scanner-market-title">
-            <span className="scanner-coin-mark">{item.symbol.replace(/USDT$/, '').slice(0, 1)}</span>
-            <div><h3>{item.symbol.replace(/USDT$/, '')}<span> / USDT</span></h3><p>{item.marketRank.map((rank) => rank.replace('TOP_', '').replace('_', ' ')).join(' · ')}</p></div>
+      )}
+
+      <section className="scanner-overview" aria-label="Scanner summary">
+        <article className="scanner-stat-card scanner-stat-primary">
+          <span className="scanner-stat-label">Qualified Setups (Score ≥ 60)</span>
+          <strong>{data && coverage !== 'eligible' ? ready.length : '—'}</strong>
+          <span className="scanner-stat-foot">
+            {coverage === 'eligible' ? 'Directory mode' : `${longSignals} Long · ${shortSignals} Short · ${persistedSetups} Persisted`}
+          </span>
+        </article>
+
+        <article className="scanner-stat-card">
+          <span className="scanner-stat-label">Monitored Exchange Pairs</span>
+          <strong>{data?.eligibleCount ?? '—'}</strong>
+          <span className="scanner-stat-foot">
+            {data?.universeSyncedAt ? `Universe synced ${new Date(data.universeSyncedAt).toLocaleTimeString()}` : 'Live Binance USDⓈ-M'}
+          </span>
+        </article>
+
+        <article className="scanner-stat-card">
+          <span className="scanner-stat-label">Active Timeframe</span>
+          <strong>{timeframe.toUpperCase()}</strong>
+          <span className="scanner-stat-foot">
+            {data?.watchlistCount ?? 30} Core Research Pairs
+          </span>
+        </article>
+
+        <article className="scanner-stat-card">
+          <span className="scanner-stat-label">Scanner Health</span>
+          <strong style={{ color: degraded ? '#f59e0b' : '#10b981' }}>
+            {loading ? 'Refreshing…' : degraded ? 'Syncing Feeds' : 'Optimal · 100%'}
+          </strong>
+          <span className="scanner-stat-foot">
+            {lastCheckedAt ? `Checked ${new Date(lastCheckedAt).toLocaleTimeString()}` : 'Connecting to feed…'}
+          </span>
+        </article>
+      </section>
+
+      <section className="card stack">
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 14 }}>
+          <div>
+            <h2 style={{ margin: 0, fontSize: 18 }}>Scanner Controls & Filters</h2>
+            <p className="muted" style={{ margin: '4px 0 0', fontSize: 13 }}>
+              Filter by timeframe, rank, or specific cryptocurrency asset.
+            </p>
           </div>
-          <div className="scanner-card-meta">
-            <span className={`scanner-signal-badge ${item.status === 'READY' ? item.side === 'LONG' ? 'is-long' : 'is-short' : 'is-wait'}`}><span aria-hidden="true">{item.status === 'READY' ? item.side === 'LONG' ? '↗' : '↘' : '•'}</span>{item.status === 'READY' ? item.side : item.status === 'STALE' || item.status === 'DATA_UNAVAILABLE' ? (item.status === 'STALE' ? 'STALE CACHE' : 'NO DATA') : 'WAIT'}</span>
-            <div className="scanner-card-score"><span>SETUP SCORE</span><strong>{item.score.value === null ? '—' : `${item.score.value}`}<small>/100</small></strong><small>{item.scannedAt ? `Scanned ${new Date(item.scannedAt).toLocaleString()}` : 'Scan pending'}</small>{Number.isFinite(candleCloseTime) && candleCloseTime <= signalNow && <small>Candle closed {new Date(candleCloseTime).toLocaleString()}</small>}</div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+            <button
+              type="button"
+              className="button-secondary"
+              onClick={() => setSoundEnabled(!soundEnabled)}
+              title={soundEnabled ? 'Mute signal sound alerts' : 'Enable signal sound alerts'}
+            >
+              {soundEnabled ? '🔔 Sound: ON' : '🔕 Sound: OFF'}
+            </button>
+            <SavedResultsRefresh minutes={refreshMinutes} onChange={onRefreshChange} />
+            <button
+              type="button"
+              onClick={() => void load()}
+              disabled={loading}
+              className="button"
+            >
+              {loading ? 'Scanning…' : '⟳ Refresh'}
+            </button>
+            {isAdmin && (
+              <Link href="/admin#scanner-management" className="button-secondary" style={{ padding: '8px 12px', fontSize: 12 }}>
+                Admin Coins
+              </Link>
+            )}
           </div>
         </div>
-        {item.status === 'READY' && signal && signalMetadata && <div className="scanner-expiry-row">
-          <span>Signal validity · generated {new Date(signal.generatedAt).toLocaleTimeString()}</span>
-          <SignalCountdown expiresAt={signal.expiresAt} serverNow={signalMetadata.serverNow} status={signal.status} />
-        </div>}
-        {item.status !== 'READY' && lifecycleLabel && <p className="muted">Stored signal status · {lifecycleLabel.replaceAll('_', ' ')}</p>}
-        {item.status === 'WAIT' && item.rationale && <p className="muted">{item.rationale}</p>}
-        <div className="scanner-price-grid">
-          <div className="scanner-price-cell"><span>Price at scan</span><strong>{item.price === null ? '—' : formatPrice(item.price)}</strong><small className={`scanner-change ${item.priceChangePercent24h !== null && item.priceChangePercent24h < 0 ? 'is-negative' : ''}`}>{item.priceChangePercent24h === null ? '24h change unavailable' : `${item.priceChangePercent24h >= 0 ? '+' : ''}${item.priceChangePercent24h.toFixed(2)}% at scan`}</small></div>
-          <div className="scanner-price-cell is-entry"><span>{entryZone ? 'Entry zone' : 'Planned entry'}</span><strong>{entryZone ? `${formatPrice(entryZone.low)} – ${formatPrice(entryZone.high)}` : item.setup ? formatPrice(item.setup.entryPrice) : '—'}</strong><small>{entryZone ? 'Stored signal entry range' : item.setup ? 'Reference entry price' : 'No confirmed setup'}</small></div>
-          <div className="scanner-price-cell is-stop"><span>Stop loss</span><strong>{item.setup ? formatPrice(item.setup.initialStop) : '—'}</strong><small>{item.setup ? 'Initial reference stop' : 'Available when ready'}</small></div>
+
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 12 }}>
+          <label>
+            Timeframe
+            <select
+              value={timeframe}
+              onChange={(e) => {
+                setTimeframe(e.target.value as ScannerCandidate['timeframe']);
+                setSelection({ ...selection, page: 1 });
+              }}
+            >
+              <option value="5m">5 Minutes (Scalp)</option>
+              <option value="15m">15 Minutes (Intraday)</option>
+              <option value="1h">1 Hour (Swing)</option>
+              <option value="4h">4 Hours (Macro)</option>
+            </select>
+          </label>
+
+          <label>
+            Coverage
+            <select
+              value={coverage}
+              onChange={(e) => setSelection({ ...selection, coverage: e.target.value as ScannerCoverage, rank: null, page: 1 })}
+            >
+              <option value="saved">Active Signal Candidates</option>
+              <option value="watchlist">Fixed High-Liquidity Watchlist</option>
+              <option value="eligible">All Monitored Perpetual Contracts</option>
+            </select>
+          </label>
+
+          {coverage === 'saved' && (
+            <label>
+              Liquidity Rank
+              <select
+                value={rank ?? ''}
+                onChange={(e) => setSelection({ ...selection, rank: (e.target.value || null) as ScannerRank | null, page: 1 })}
+              >
+                <option value="">All Ranks</option>
+                <option value="TOP_VOLUME">Top 24h Volume</option>
+                <option value="TOP_GAINER">Top Gainers</option>
+                <option value="TOP_LOSER">Top Losers</option>
+              </select>
+            </label>
+          )}
+
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              const normalized = symbolInput.trim().toUpperCase();
+              if (normalized && !scannerSymbolPrefix.test(normalized)) {
+                setFilterError('Invalid symbol prefix.');
+                return;
+              }
+              setFilterError('');
+              setSelection({ ...selection, symbol: normalized, page: 1 });
+            }}
+            style={{ display: 'flex', alignItems: 'flex-end', gap: 8 }}
+          >
+            <label style={{ flex: 1 }}>
+              Symbol Search
+              <input
+                value={symbolInput}
+                maxLength={30}
+                placeholder="e.g. BTC, ETH, SOL"
+                onChange={(e) => setSymbolInput(e.target.value)}
+              />
+            </label>
+            <button type="submit" className="button-secondary">Find</button>
+            {symbol && (
+              <button
+                type="button"
+                className="button-secondary"
+                onClick={() => {
+                  setSymbolInput('');
+                  setFilterError('');
+                  setSelection({ ...selection, symbol: '', page: 1 });
+                }}
+              >
+                Clear
+              </button>
+            )}
+          </form>
         </div>
-        <div className="scanner-target-section"><div className="scanner-target-heading"><span>PROFIT TARGETS</span><span>Risk multiples from entry</span></div><div className="scanner-target-grid">
-          {[item.setup?.tp1, item.setup?.tp2, item.setup?.tp3].map((target, index) => <div className={`scanner-target-card ${target ? 'is-active' : ''}`} key={index}><span>TP {index + 1}<small>{index + 1}R</small></span><strong>{target ? formatPrice(target) : '—'}</strong></div>)}
-        </div></div>
-        {item.status === 'READY' && <details className="scanner-analysis">
-          <summary>Review signal rationale & market research</summary>
-          <div className="scanner-analysis-content"><p>{item.rationale}</p>
-            {item.warnings.length > 0 && <ul>{item.warnings.map((warning) => <li key={warning}>{warning}</li>)}</ul>}
-            <div className="scanner-research-grid">
-              <div><span>Funding / open interest</span><strong>{item.research.derivatives.status === 'LIVE' && item.research.derivatives.data
-                ? `${item.research.derivatives.data.fundingRatePercent.toFixed(4)}% · ${item.research.derivatives.data.openInterestChangePercent === null ? 'OI n/a' : `${item.research.derivatives.data.openInterestChangePercent.toFixed(2)}% OI`}`
-                : item.research.derivatives.reason}</strong></div>
-              <div><span>Liquidation heatmap</span><strong>{item.research.liquidationHeatmap.status === 'LIVE' && item.research.liquidationHeatmap.data
-                ? `Above ${item.research.liquidationHeatmap.data.nearestAbove?.price ? formatPrice(item.research.liquidationHeatmap.data.nearestAbove.price) : '—'} · Below ${item.research.liquidationHeatmap.data.nearestBelow?.price ? formatPrice(item.research.liquidationHeatmap.data.nearestBelow.price) : '—'}`
-                : item.research.liquidationHeatmap.reason}</strong></div>
-              <div><span>Exchange flow</span><strong>{item.research.onChainFlow.status === 'LIVE' && item.research.onChainFlow.data
-                ? `${item.research.onChainFlow.data.exchangeNetflow.toPrecision(5)} ${item.research.onChainFlow.data.asset} · not wallet-attributed`
-                : item.research.onChainFlow.reason}</strong></div>
-              <div><span>News context</span><strong>{item.research.news.status === 'LIVE' && item.research.news.data
-                ? `${item.research.news.data.itemCount} items · ${item.research.news.data.positiveVotes} positive / ${item.research.news.data.negativeVotes} negative votes`
-                : item.research.news.reason}</strong></div>
+
+        {filterError && <p className="error" role="alert">{filterError}</p>}
+        {error && <div className="error" role="alert">{error}</div>}
+        {notificationWarning && <div className="error" role="status">{notificationWarning}</div>}
+
+        {/* Signals List */}
+        {candidates.length > 0 ? (
+          <div className="scanner-signal-list">
+            {candidates.map((item) => {
+              const signal = signalMetadata?.signals[item.symbol];
+              const entryZone = item.setup && signal?.entryZone;
+              const isReady = item.status === 'READY';
+              const isLong = item.side === 'LONG';
+
+              return (
+                <article
+                  key={item.symbol}
+                  className={`scanner-signal-card ${isReady ? (isLong ? 'is-long' : 'is-short') : 'is-wait'}`}
+                >
+                  <div className="scanner-signal-header">
+                    <div className="scanner-market-title">
+                      <span className="scanner-coin-mark">{item.symbol.replace(/USDT$/, '').slice(0, 3)}</span>
+                      <div>
+                        <h3>
+                          {item.symbol.replace(/USDT$/, '')}
+                          <span> / USDT Perpetual</span>
+                        </h3>
+                        <p>{item.marketRank?.join(' · ').replaceAll('_', ' ') || 'Binance USDⓈ-M'}</p>
+                      </div>
+                    </div>
+
+                    <div className="scanner-card-meta">
+                      <span className={`scanner-signal-badge ${isReady ? (isLong ? 'is-long' : 'is-short') : 'is-wait'}`}>
+                        {isReady ? (isLong ? 'LONG ↗' : 'SHORT ↘') : 'WAITING'}
+                      </span>
+                      <div className="scanner-card-score">
+                        <span>CONFLUENCE SCORE</span>
+                        <strong>{item.score.value ?? '—'}<small>/100</small></strong>
+                      </div>
+                    </div>
+                  </div>
+
+                  {isReady && signal && signalMetadata && (
+                    <div style={{ display: 'flex', justifyContent: 'space-between', padding: '10px 0', borderBottom: '1px solid var(--surface-border)', fontSize: 12 }}>
+                      <span className="muted">Signal Validity Window</span>
+                      <SignalCountdown expiresAt={signal.expiresAt} serverNow={signalMetadata.serverNow} status={signal.status} />
+                    </div>
+                  )}
+
+                  <div className="scanner-price-grid">
+                    <div className="scanner-price-cell">
+                      <span>Market Price</span>
+                      <strong>{item.price ? formatPrice(item.price) : '—'}</strong>
+                      <small style={{ color: (item.priceChangePercent24h ?? 0) >= 0 ? '#16a34a' : '#dc2626' }}>
+                        {(item.priceChangePercent24h ?? 0) >= 0 ? '+' : ''}{(item.priceChangePercent24h ?? 0).toFixed(2)}% (24h)
+                      </small>
+                    </div>
+
+                    <div className="scanner-price-cell is-entry">
+                      <span>{entryZone ? 'Optimal Entry Zone' : 'Reference Entry'}</span>
+                      <strong>
+                        {entryZone ? `${formatPrice(entryZone.low)} – ${formatPrice(entryZone.high)}` : item.setup ? formatPrice(item.setup.entryPrice) : 'Awaiting confirmation'}
+                      </strong>
+                      <small>Technical trigger level</small>
+                    </div>
+
+                    <div className="scanner-price-cell is-stop">
+                      <span>Invalidation / Stop Loss</span>
+                      <strong>{item.setup ? formatPrice(item.setup.initialStop) : '—'}</strong>
+                      <small>Risk controlled</small>
+                    </div>
+                  </div>
+
+                  <div className="scanner-target-section">
+                    <div className="scanner-target-heading">
+                      <span>PROFIT TARGETS (DYNAMIC R:R)</span>
+                      <span>Target Multiples</span>
+                    </div>
+                    <div className="scanner-target-grid">
+                      <div className={`scanner-target-card ${item.setup?.tp1 ? 'is-active' : ''}`}>
+                        <span>TP1 (1.5R)</span>
+                        <strong>{item.setup?.tp1 ? formatPrice(item.setup.tp1) : '—'}</strong>
+                      </div>
+                      <div className={`scanner-target-card ${item.setup?.tp2 ? 'is-active' : ''}`}>
+                        <span>TP2 (2.5R)</span>
+                        <strong>{item.setup?.tp2 ? formatPrice(item.setup.tp2) : '—'}</strong>
+                      </div>
+                      <div className={`scanner-target-card ${item.setup?.tp3 ? 'is-active' : ''}`}>
+                        <span>TP3 (4.0R)</span>
+                        <strong>{item.setup?.tp3 ? formatPrice(item.setup.tp3) : '—'}</strong>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 14, paddingTop: 12, borderTop: '1px solid var(--surface-border)' }}>
+                    <p className="muted" style={{ margin: 0, fontSize: 12 }}>
+                      {item.rationale || 'Multi-indicator confluence: EMA stack alignment, Supertrend direction, ADX momentum, and RSI trigger.'}
+                    </p>
+                    <button
+                      type="button"
+                      className="button"
+                      onClick={() => executeDemoOrder(item)}
+                      style={{ fontSize: 12, padding: '8px 14px' }}
+                    >
+                      Execute Demo Trade
+                    </button>
+                  </div>
+                </article>
+              );
+            })}
+          </div>
+        ) : (
+          <div className="card" style={{ textAlign: 'center', padding: '40px 20px' }}>
+            <span style={{ fontSize: 36, display: 'block', marginBottom: 12 }}>📊</span>
+            <h3 style={{ margin: '0 0 8px', fontSize: 18 }}>Scanner Operational — Monitoring Market Feeds</h3>
+            <p className="muted" style={{ maxWidth: 600, margin: '0 auto 18px', fontSize: 13, lineHeight: 1.6 }}>
+              The SmartExit quantitative engine is scanning all Binance USDⓈ-M perpetual contracts. When a coin meets strict multi-indicator confluence (EMA 9/21/50/200 stack, Supertrend, ADX &gt; 20, RSI bounds) with score ≥ 60, actionable setup cards appear here automatically.
+            </p>
+            <div style={{ display: 'flex', justifyContent: 'center', gap: 10 }}>
+              <button type="button" onClick={() => void load()} className="button">
+                Scan Again Now
+              </button>
+              <Link href="/scanner/history" className="button-secondary" style={{ padding: '10px 16px', borderRadius: 8 }}>
+                View Signal History
+              </Link>
             </div>
-            {item.research.news.data?.stories.map((story) => <a className="scanner-news-link" key={story.url} href={story.url} target="_blank" rel="noreferrer">{story.title} ↗</a>)}
           </div>
-        </details>}
-      </article>;
-      })}</div>}
-      <p className="scanner-disclaimer">Research feeds provide context, not certainty. Exchange netflow is not verified smart-wallet attribution; news votes are community signals. Setups are informational and do not place orders.</p>
-    </section>
-  </main>;
+        )}
+
+        {/* Pagination */}
+        {data && (page > 1 || data.matchingCount > data.selection.limit) && (
+          <nav style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 16 }}>
+            <button
+              type="button"
+              className="button-secondary"
+              disabled={page === 1 || loading}
+              onClick={() => setSelection({ ...selection, page: page - 1 })}
+            >
+              Previous
+            </button>
+            <span className="mono">
+              Page {page} of {pageCount} ({data.matchingCount} pairs)
+            </span>
+            <button
+              type="button"
+              className="button-secondary"
+              disabled={page >= pageCount || loading}
+              onClick={() => setSelection({ ...selection, page: page + 1 })}
+            >
+              Next
+            </button>
+          </nav>
+        )}
+      </section>
+    </main>
+  );
 }

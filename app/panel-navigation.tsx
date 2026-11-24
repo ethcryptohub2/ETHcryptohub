@@ -6,6 +6,7 @@ import { useEffect, useRef, useState, useSyncExternalStore, type ReactNode } fro
 import { LogoutButton } from './logout-button';
 import { PanelNotifications } from './panel-notifications';
 import { ThemeToggle } from './theme-toggle';
+import { Breadcrumbs } from './breadcrumbs';
 
 type PanelUser = { role: 'user' | 'admin'; email: string } | null;
 type Subscription = {
@@ -39,7 +40,14 @@ function membershipLabel(subscription: Subscription) {
   };
 }
 
-type NavigationLink = { href: string; label: string; icon: string };
+export type NavigationItem = { href: string; label: string; icon: string; badge?: number | string };
+export type NavigationSection = {
+  id: string;
+  title: string;
+  icon: string;
+  items: NavigationItem[];
+};
+
 type HeaderPanel = 'navigation' | 'account' | 'notifications';
 
 const SIDEBAR_CHANGE_EVENT = 'ethcryptohub-sidebar-change';
@@ -76,34 +84,15 @@ function getHashSnapshot() {
   return window.location.hash;
 }
 
-const userLinks: NavigationLink[] = [
-  { href: '/dashboard', label: 'Overview', icon: 'overview' },
-  { href: '/scanner', label: 'Live signals', icon: 'scanner' },
-  { href: '/intelligence', label: 'Research workspace', icon: 'activity' },
-  { href: '/scanner/history', label: 'Signal history', icon: 'history' },
-  { href: '/scanner/performance', label: 'Performance', icon: 'performance' },
-  { href: '/positions', label: 'Open positions', icon: 'positions' },
-  { href: '/news', label: 'Crypto news', icon: 'news' },
-  { href: '/settings', label: 'Account settings', icon: 'settings' },
-  { href: '/binance', label: 'Exchange connection', icon: 'exchange' },
-];
-
-const adminLinks: NavigationLink[] = [
-  { href: '/admin', label: 'Admin overview', icon: 'overview' },
-  { href: '/admin/intelligence', label: 'Feed & paper readiness', icon: 'system' },
-  { href: '/admin#scanner-management', label: 'Scanner management', icon: 'scanner' },
-  { href: '/admin#admin-signal-management', label: 'Signal management', icon: 'activity' },
-  { href: '/admin#admin-news', label: 'News management', icon: 'news' },
-  { href: '/admin#admin-subscriptions', label: 'Subscriptions', icon: 'subscriptions' },
-  { href: '/admin/exchanges', label: 'Exchange control', icon: 'exchange' },
-  { href: '/admin#admin-users', label: 'User management', icon: 'users' },
-  { href: '/admin#system-diagnostics', label: 'System health', icon: 'system' },
-];
+function getSearchSnapshot() {
+  return window.location.search;
+}
 
 function NavigationIcon({ name }: { name: string }) {
   const paths: Record<string, ReactNode> = {
     overview: <><rect x="3" y="3" width="8" height="8" rx="1.5" /><rect x="13" y="3" width="8" height="5" rx="1.5" /><rect x="13" y="10" width="8" height="11" rx="1.5" /><rect x="3" y="13" width="8" height="8" rx="1.5" /></>,
     scanner: <><circle cx="10.8" cy="10.8" r="6.8" /><path d="m16 16 5 5M10.8 7v4l2.5 1.5" /></>,
+    scalping: <><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2" /></>,
     history: <><path d="M3 11a9 9 0 1 1 2.4 6.1L3 15.5" /><path d="M3 20v-4.5h4.5M12 7v5l3 2" /></>,
     performance: <><path d="M3 3v18h18M7 14l4-4 3 3 6-7" /><path d="M16 6h4v4" /></>,
     positions: <><rect x="3" y="7" width="18" height="14" rx="2" /><path d="M8 7V5a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2M3 12h18m-11 0v2h4v-2" /></>,
@@ -114,18 +103,42 @@ function NavigationIcon({ name }: { name: string }) {
     subscriptions: <><rect x="3" y="5" width="18" height="14" rx="2" /><path d="M3 10h18M7 15h4" /></>,
     users: <><path d="M16 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2m6-10a4 4 0 1 0 0-8 4 4 0 0 0 0 8Zm7-7.5a4 4 0 0 1 0 7.8M20 21v-2a4 4 0 0 0-3-3.9" /></>,
     system: <><rect x="3" y="4" width="18" height="13" rx="2" /><path d="M8 21h8m-4-4v4M7 9h4m-4 4h8m3-4h.01" /></>,
+    chevron: <><path d="m6 9 6 6 6-6" /></>,
+    chevronRight: <><path d="m9 18 6-6-6-6" /></>,
   };
-  return <svg className="panel-navigation-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">{paths[name] ?? paths.overview}</svg>;
+  return (
+    <svg
+      className="panel-navigation-icon"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.7"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      {paths[name] ?? paths.overview}
+    </svg>
+  );
 }
 
 export function PanelNavigation() {
   const pathname = usePathname();
+  const search = useSyncExternalStore(subscribeToHash, getSearchSnapshot, () => '');
+  const currentTab = new URLSearchParams(search).get('tab');
   const [user, setUser] = useState<PanelUser>(null);
   const [newsUnread, setNewsUnread] = useState(0);
   const [signalUnread, setSignalUnread] = useState(0);
   const [subscription, setSubscription] = useState<Subscription | null>(null);
   const [subscriptionUnavailable, setSubscriptionUnavailable] = useState(false);
   const [openPanel, setOpenPanel] = useState<HeaderPanel | null>(null);
+  const [expandedSections, setExpandedSections] = useState<Record<string, boolean>>({
+    'intelligence': true,
+    'trading': true,
+    'admin': true,
+    'account': true,
+  });
+
   const navigationTrigger = useRef<HTMLButtonElement>(null);
   const navigationDrawer = useRef<HTMLElement>(null);
   const navigationDismiss = useRef<HTMLButtonElement>(null);
@@ -139,6 +152,7 @@ export function PanelNavigation() {
     () => false,
   );
   const hash = useSyncExternalStore(subscribeToHash, getHashSnapshot, () => '');
+
   const isPanelPage = pathname.startsWith('/dashboard') ||
     pathname.startsWith('/intelligence') ||
     pathname.startsWith('/scanner') ||
@@ -191,8 +205,8 @@ export function PanelNavigation() {
       try {
         const unreadResponse = await fetch('/api/news/unread', { cache: 'no-store' });
         if (unreadResponse.ok) {
-          const unread = await unreadResponse.json() as { data?: { unreadCount: number } };
-          if (active && unread.data) setNewsUnread(unread.data.unreadCount);
+          const unreadData = await unreadResponse.json() as { data?: { unreadCount: number } };
+          if (active && unreadData.data) setNewsUnread(unreadData.data.unreadCount);
         }
         if (subscription?.hasPremiumAccess) {
           const notificationResponse = await fetch('/api/notifications', { cache: 'no-store' });
@@ -285,7 +299,7 @@ export function PanelNavigation() {
   function toggleSidebar() {
     const collapsed = !sidebarCollapsed;
     sidebarPreference = collapsed;
-    document.documentElement.style.setProperty('--sidebar-width', collapsed ? '76px' : '256px');
+    document.documentElement.style.setProperty('--sidebar-width', collapsed ? '76px' : '260px');
     try {
       window.localStorage.setItem('ethcryptohub-sidebar', collapsed ? 'collapsed' : 'expanded');
     } catch (error) {
@@ -294,96 +308,322 @@ export function PanelNavigation() {
     window.dispatchEvent(new Event(SIDEBAR_CHANGE_EVENT));
   }
 
-  const renderLinks = (links: NavigationLink[]) => links.map(({ href, label, icon }) => {
-    const currentPath = href.split('#')[0];
-    const targetHash = href.includes('#') ? `#${href.split('#')[1]}` : '';
-    const active = targetHash
-      ? pathname === currentPath && hash === targetHash
-      : pathname === currentPath || (currentPath === '/scanner' && pathname.startsWith('/scanner/') &&
-        !pathname.startsWith('/scanner/history') && !pathname.startsWith('/scanner/performance'));
-    return <Link key={href} href={href} aria-current={active ? 'page' : undefined} onClick={() => setOpenPanel(null)} title={sidebarCollapsed ? label : undefined}>
-      <NavigationIcon name={icon} />
-      <span className="panel-navigation-label">{label}</span>
-      {href === '/news' && newsUnread > 0 && <span className="panel-navigation-badge">{newsUnread > 99 ? '99+' : newsUnread}</span>}
-    </Link>;
-  });
-  return <>
-  {menuOpen && <button className="panel-navigation-backdrop" type="button" aria-label="Dismiss navigation" tabIndex={-1} onClick={closeNavigation} />}
-  <aside ref={navigationDrawer} className={`panel-navigation${sidebarCollapsed ? ' is-collapsed' : ''}${menuOpen ? ' is-mobile-open' : ''}`} aria-label="Application navigation">
-    <div className="panel-navigation-brand">
-      <Link href="/dashboard" onClick={() => setOpenPanel(null)} aria-label="ETHcryptohub overview">ETH<span>CRYPTOHUB</span></Link>
-      <button
-        ref={navigationDismiss}
-        className="panel-menu-toggle"
-        type="button"
-        aria-label="Close navigation"
-        onClick={closeNavigation}
-      >Close</button>
-    </div>
-    <div className={`panel-navigation-content${menuOpen ? ' is-open' : ''}`}>
-      <nav id="panel-navigation-links" aria-label="Main menu">
-        <p className="panel-navigation-group-label">Workspace</p>
-        {renderLinks(userLinks)}
-        {user?.role === 'admin' && <>
-          <p className="panel-navigation-group-label">Administration</p>
-          {renderLinks(adminLinks)}
-        </>}
-      </nav>
-      {user && <div className="panel-navigation-profile">
-        <span className="panel-avatar" aria-hidden="true">{user.email.slice(0, 1).toUpperCase()}</span>
-        <span className="panel-profile-text"><strong>{user.role === 'admin' ? 'Administrator' : 'Account'}</strong><small>{user.email}</small></span>
-      </div>}
-      <button className="panel-sidebar-collapse" type="button" onClick={toggleSidebar} aria-label={sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'} title={sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}>
-        <span aria-hidden="true">{sidebarCollapsed ? '›' : '‹'}</span><span className="panel-navigation-label">{sidebarCollapsed ? 'Expand menu' : 'Collapse menu'}</span>
-      </button>
-    </div>
-  </aside>
-  <header className="panel-topbar" aria-label="Workspace header">
-    <button ref={navigationTrigger} className="panel-mobile-toggle" type="button" aria-expanded={menuOpen} aria-controls="panel-navigation-links" onClick={() => togglePanel('navigation')} aria-label="Navigation">
-      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h16" /></svg>
-    </button>
-    <span className="panel-topbar-role">{user?.role === 'admin' ? 'Admin portal' : 'Workspace'}<strong>{pathname.startsWith('/admin') ? 'Administration' : pathname === '/news' ? 'Crypto news' : pathname.startsWith('/scanner') ? 'Market scanner' : pathname.startsWith('/positions') ? 'Open positions' : pathname.startsWith('/settings') ? 'Account settings' : pathname.startsWith('/binance') ? 'Exchange connection' : pathname.startsWith('/signals') ? 'Signal details' : 'Overview'}</strong></span>
-    <div className="panel-topbar-actions">
-      <ThemeToggle />
-      <button ref={notificationTrigger} type="button" className="panel-topbar-icon" aria-label="Notifications"
-        aria-expanded={openPanel === 'notifications'} aria-controls="panel-notifications"
-        aria-describedby={unread > 0 ? 'panel-notification-unread' : undefined} onClick={() => togglePanel('notifications')}>
-        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 8a6 6 0 0 0-12 0c0 7-2 8-2 8h16s-2-1-2-8m-8 12a2 2 0 0 0 4 0" /></svg>
-        {unread > 0 && <>
-          <span className="panel-topbar-count" aria-hidden="true">{unread > 99 ? '99+' : unread}</span>
-          <span id="panel-notification-unread" hidden>{unread} unread {unread === 1 ? 'item' : 'items'}</span>
-        </>}
-      </button>
-      <div id="panel-notifications" className="panel-topbar-popover" hidden={openPanel !== 'notifications'}>
-        {openPanel === 'notifications' && <PanelNotifications
-          access={subscription ? subscription.hasPremiumAccess ? 'available' : 'restricted' : subscriptionUnavailable ? 'unavailable' : 'pending'}
-          newsUnread={newsUnread}
-          onUnreadCount={setSignalUnread}
-          onNavigate={() => setOpenPanel(null)}
-        />}
+  function toggleSection(sectionId: string) {
+    setExpandedSections((prev) => ({
+      ...prev,
+      [sectionId]: !prev[sectionId],
+    }));
+  }
+
+  const userSections: NavigationSection[] = [
+    {
+      id: 'intelligence',
+      title: 'Market Intelligence',
+      icon: 'scanner',
+      items: [
+        { href: '/scanner', label: 'Live Signals', icon: 'scanner' },
+        { href: '/scanner?tab=scalping', label: 'High-Risk Scalping', icon: 'scalping' },
+        { href: '/scanner?tab=alpha', label: 'Alpha Intelligence', icon: 'activity' },
+        { href: '/scanner/history', label: 'Signal History', icon: 'history' },
+        { href: '/scanner/performance', label: 'Performance Analytics', icon: 'performance' },
+        { href: '/intelligence', label: 'Research Workspace', icon: 'activity' },
+        { href: '/news', label: 'Crypto News', icon: 'news', badge: newsUnread > 0 ? (newsUnread > 99 ? '99+' : newsUnread) : undefined },
+      ],
+    },
+    {
+      id: 'trading',
+      title: 'Trading & Execution',
+      icon: 'positions',
+      items: [
+        { href: '/dashboard', label: 'Dashboard Overview', icon: 'overview' },
+        { href: '/positions', label: 'Open Positions', icon: 'positions' },
+        { href: '/binance', label: 'Exchange API Setup', icon: 'exchange' },
+      ],
+    },
+    {
+      id: 'account',
+      title: 'Account',
+      icon: 'settings',
+      items: [
+        { href: '/settings', label: 'Account Settings', icon: 'settings' },
+      ],
+    },
+  ];
+
+  const adminSections: NavigationSection[] = [
+    {
+      id: 'admin',
+      title: 'Administration',
+      icon: 'system',
+      items: [
+        { href: '/admin', label: 'Command Center', icon: 'overview' },
+        { href: '/admin/exchanges', label: 'Exchange Control', icon: 'exchange' },
+        { href: '/admin/exchanges/testing', label: 'Demo Testing Lab', icon: 'exchange' },
+        { href: '/admin/intelligence', label: 'Feed & Paper Readiness', icon: 'activity' },
+        { href: '/admin#scanner-management', label: 'Scanner Management', icon: 'scanner' },
+        { href: '/admin#admin-signal-management', label: 'Signal Management', icon: 'activity' },
+        { href: '/admin#admin-news', label: 'News Management', icon: 'news' },
+        { href: '/admin#admin-subscriptions', label: 'Subscriptions', icon: 'subscriptions' },
+        { href: '/admin#admin-users', label: 'User Management', icon: 'users' },
+        { href: '/admin#system-diagnostics', label: 'System Health', icon: 'system' },
+      ],
+    },
+  ];
+
+  const checkIsActive = (href: string) => {
+    const url = new URL(href, 'https://cryptohub.local');
+    const path = url.pathname;
+    const targetHash = url.hash;
+    const tabParam = url.searchParams.get('tab');
+
+    if (targetHash) {
+      return pathname === path && hash === targetHash;
+    }
+    if (tabParam) {
+      return pathname === path && currentTab === tabParam;
+    }
+    if (path === '/scanner') {
+      return pathname === '/scanner' && !currentTab;
+    }
+    return pathname === path;
+  };
+
+  const renderSection = (section: NavigationSection) => {
+    const isExpanded = expandedSections[section.id] ?? true;
+    const hasActiveChild = section.items.some((item) => checkIsActive(item.href));
+
+    return (
+      <div key={section.id} className={`panel-nav-group ${hasActiveChild ? 'is-active-group' : ''}`}>
+        {!sidebarCollapsed && (
+          <button
+            type="button"
+            className="panel-nav-group-header"
+            onClick={() => toggleSection(section.id)}
+            aria-expanded={isExpanded}
+          >
+            <span className="panel-nav-group-title">
+              <NavigationIcon name={section.icon} />
+              <span>{section.title}</span>
+            </span>
+            <span className={`panel-nav-group-chevron ${isExpanded ? 'is-open' : ''}`}>
+              <NavigationIcon name="chevron" />
+            </span>
+          </button>
+        )}
+        <div className={`panel-nav-group-items ${!isExpanded && !sidebarCollapsed ? 'is-collapsed-group' : ''}`}>
+          {section.items.map(({ href, label, icon, badge }) => {
+            const active = checkIsActive(href);
+            return (
+              <Link
+                key={href}
+                href={href}
+                aria-current={active ? 'page' : undefined}
+                className={`panel-nav-link ${active ? 'is-active' : ''}`}
+                onClick={() => setOpenPanel(null)}
+                title={sidebarCollapsed ? label : undefined}
+              >
+                <NavigationIcon name={icon} />
+                <span className="panel-navigation-label">{label}</span>
+                {badge && <span className="panel-navigation-badge">{badge}</span>}
+              </Link>
+            );
+          })}
+        </div>
       </div>
-      <button ref={accountTrigger} type="button" className="panel-topbar-icon" aria-label="Account"
-        aria-expanded={openPanel === 'account'} aria-controls="panel-account" onClick={() => togglePanel('account')}>
-        <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="8" r="3.5" /><path d="M5 21v-2a6 6 0 0 1 6-6h2a6 6 0 0 1 6 6v2" /></svg>
-      </button>
-      <section id="panel-account" className="panel-topbar-popover panel-topbar-account" aria-labelledby="panel-account-title" hidden={openPanel !== 'account'}>
-        <h2 id="panel-account-title">Account</h2>
-        {user && <p className="muted panel-account-identity">{user.email}</p>}
-        {user && subscription && (() => {
-          const badge = membershipLabel(subscription);
-          return <Link className={`membership-badge ${badge.className}`} href="/dashboard#subscription" title={badge.title} onClick={() => setOpenPanel(null)}>
-            {badge.label}
-          </Link>;
-        })()}
-        {user && subscriptionUnavailable && <span className="membership-badge is-unavailable">Membership unavailable</span>}
-        {user ? <>
-          <Link href="/settings" onClick={() => setOpenPanel(null)}>Account settings</Link>
-          {openPanel === 'account' && <LogoutButton />}
-        </> : subscriptionUnavailable
-          ? <Link href="/login" onClick={() => setOpenPanel(null)}>Sign in</Link>
-          : <p className="muted">Loading account…</p>}
-      </section>
-    </div>
-  </header>
-  </>;
+    );
+  };
+
+  return (
+    <>
+      {menuOpen && (
+        <button
+          className="panel-navigation-backdrop"
+          type="button"
+          aria-label="Dismiss navigation"
+          tabIndex={-1}
+          onClick={closeNavigation}
+        />
+      )}
+      <aside
+        ref={navigationDrawer}
+        className={`panel-navigation${sidebarCollapsed ? ' is-collapsed' : ''}${menuOpen ? ' is-mobile-open' : ''}`}
+        aria-label="Application navigation"
+      >
+        <div className="panel-navigation-brand">
+          <Link href="/dashboard" onClick={() => setOpenPanel(null)} aria-label="SmartExit overview" className="panel-brand-link">
+            <span className="panel-brand-logo">SE</span>
+            <span className="panel-brand-text">
+              SMART<strong>EXIT</strong>
+              <small>TRADING INTELLIGENCE</small>
+            </span>
+          </Link>
+          <button
+            ref={navigationDismiss}
+            className="panel-menu-toggle"
+            type="button"
+            aria-label="Close navigation"
+            onClick={closeNavigation}
+          >
+            ✕
+          </button>
+        </div>
+
+        <div className={`panel-navigation-content${menuOpen ? ' is-open' : ''}`}>
+          <nav id="panel-navigation-links" aria-label="Main menu" className="panel-nav-scroll">
+            {userSections.map(renderSection)}
+            {user?.role === 'admin' && (
+              <>
+                <div className="panel-nav-divider" />
+                {adminSections.map(renderSection)}
+              </>
+            )}
+          </nav>
+
+          {user && (
+            <div className="panel-navigation-profile">
+              <span className="panel-avatar" aria-hidden="true">
+                {user.email.slice(0, 1).toUpperCase()}
+              </span>
+              <div className="panel-profile-text">
+                <strong>{user.role === 'admin' ? 'Administrator' : 'Trader'}</strong>
+                <small title={user.email}>{user.email}</small>
+              </div>
+            </div>
+          )}
+
+          <button
+            className="panel-sidebar-collapse"
+            type="button"
+            onClick={toggleSidebar}
+            aria-label={sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+            title={sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+          >
+            <span aria-hidden="true" className="collapse-icon">
+              <NavigationIcon name={sidebarCollapsed ? 'chevronRight' : 'chevron'} />
+            </span>
+            <span className="panel-navigation-label">
+              {sidebarCollapsed ? 'Expand' : 'Collapse'}
+            </span>
+          </button>
+        </div>
+      </aside>
+
+      <header className="panel-topbar" aria-label="Workspace header">
+        <div className="panel-topbar-left">
+          <button
+            ref={navigationTrigger}
+            className="panel-mobile-toggle"
+            type="button"
+            aria-expanded={menuOpen}
+            aria-controls="panel-navigation-links"
+            onClick={() => togglePanel('navigation')}
+            aria-label="Navigation menu"
+          >
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M4 6h16M4 12h16M4 18h16" />
+            </svg>
+          </button>
+          <Breadcrumbs />
+        </div>
+
+        <div className="panel-topbar-actions">
+          <div className="system-status-pill" title="Production Cluster: Mumbai (bom1) · Connected to Supabase ap-south-1">
+            <span className="system-status-dot is-online" />
+            <span className="system-status-text">Production · Mumbai</span>
+          </div>
+
+          <ThemeToggle />
+
+          <button
+            ref={notificationTrigger}
+            type="button"
+            className="panel-topbar-icon"
+            aria-label="Notifications"
+            aria-expanded={openPanel === 'notifications'}
+            aria-controls="panel-notifications"
+            aria-describedby={unread > 0 ? 'panel-notification-unread' : undefined}
+            onClick={() => togglePanel('notifications')}
+          >
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M18 8a6 6 0 0 0-12 0c0 7-2 8-2 8h16s-2-1-2-8m-8 12a2 2 0 0 0 4 0" />
+            </svg>
+            {unread > 0 && (
+              <>
+                <span className="panel-topbar-count" aria-hidden="true">
+                  {unread > 99 ? '99+' : unread}
+                </span>
+                <span id="panel-notification-unread" hidden>
+                  {unread} unread {unread === 1 ? 'item' : 'items'}
+                </span>
+              </>
+            )}
+          </button>
+          <div id="panel-notifications" className="panel-topbar-popover" hidden={openPanel !== 'notifications'}>
+            {openPanel === 'notifications' && (
+              <PanelNotifications
+                access={subscription ? subscription.hasPremiumAccess ? 'available' : 'restricted' : subscriptionUnavailable ? 'unavailable' : 'pending'}
+                newsUnread={newsUnread}
+                onUnreadCount={setSignalUnread}
+                onNavigate={() => setOpenPanel(null)}
+              />
+            )}
+          </div>
+
+          <button
+            ref={accountTrigger}
+            type="button"
+            className="panel-topbar-icon"
+            aria-label="Account"
+            aria-expanded={openPanel === 'account'}
+            aria-controls="panel-account"
+            onClick={() => togglePanel('account')}
+          >
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <circle cx="12" cy="8" r="3.5" />
+              <path d="M5 21v-2a6 6 0 0 1 6-6h2a6 6 0 0 1 6 6v2" />
+            </svg>
+          </button>
+          <section
+            id="panel-account"
+            className="panel-topbar-popover panel-topbar-account"
+            aria-labelledby="panel-account-title"
+            hidden={openPanel !== 'account'}
+          >
+            <h2 id="panel-account-title">Account</h2>
+            {user && <p className="muted panel-account-identity">{user.email}</p>}
+            {user && subscription && (() => {
+              const badge = membershipLabel(subscription);
+              return (
+                <Link
+                  className={`membership-badge ${badge.className}`}
+                  href="/dashboard#subscription"
+                  title={badge.title}
+                  onClick={() => setOpenPanel(null)}
+                >
+                  {badge.label}
+                </Link>
+              );
+            })()}
+            {user && subscriptionUnavailable && (
+              <span className="membership-badge is-unavailable">Membership unavailable</span>
+            )}
+            {user ? (
+              <>
+                <Link href="/settings" onClick={() => setOpenPanel(null)} className="panel-account-link">
+                  Account settings
+                </Link>
+                {openPanel === 'account' && <LogoutButton />}
+              </>
+            ) : subscriptionUnavailable ? (
+              <Link href="/login" onClick={() => setOpenPanel(null)} className="panel-account-link">
+                Sign in
+              </Link>
+            ) : (
+              <p className="muted">Loading account…</p>
+            )}
+          </section>
+        </div>
+      </header>
+    </>
+  );
 }

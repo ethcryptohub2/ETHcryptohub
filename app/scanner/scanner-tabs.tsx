@@ -9,15 +9,35 @@ export function ScannerTabs({
   active: ScannerTab;
   onChange: (tab: ScannerTab) => void;
 }) {
-  return <div className="scanner-tabs" role="tablist" aria-label="Market scanner mode">
-    <button type="button" role="tab" aria-selected={active === 'standard'} className={active === 'standard' ? 'is-active' : 'button-secondary'} onClick={() => onChange('standard')}>
-      Standard Signals
-    </button>
-    <button type="button" role="tab" aria-selected={active === 'scalping'} className={active === 'scalping' ? 'is-active' : 'button-secondary'} onClick={() => onChange('scalping')}>
-      High-Risk Scalping
-    </button>
-    <button type="button" role="tab" aria-selected={active === 'alpha'} className={active === 'alpha' ? 'is-active' : 'button-secondary'} onClick={() => onChange('alpha')}>
-      Alpha Intelligence
-    </button>
-  </div>;
+  return (
+    <div className="scanner-tabs" role="tablist" aria-label="Market scanner mode">
+      <button
+        type="button"
+        role="tab"
+        aria-selected={active === 'standard'}
+        className={active === 'standard' ? 'is-active' : ''}
+        onClick={() => onChange('standard')}
+      >
+        <span>● Standard Signals</span>
+      </button>
+      <button
+        type="button"
+        role="tab"
+        aria-selected={active === 'scalping'}
+        className={active === 'scalping' ? 'is-active' : ''}
+        onClick={() => onChange('scalping')}
+      >
+        <span>⚡ High-Risk Scalping</span>
+      </button>
+      <button
+        type="button"
+        role="tab"
+        aria-selected={active === 'alpha'}
+        className={active === 'alpha' ? 'is-active' : ''}
+        onClick={() => onChange('alpha')}
+      >
+        <span>✦ Alpha Intelligence</span>
+      </button>
+    </div>
+  );
 }

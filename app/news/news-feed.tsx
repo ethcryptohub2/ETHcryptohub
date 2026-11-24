@@ -214,7 +214,6 @@ export function NewsFeed() {
   }
 
   return <main className="shell">
-    <header className="topbar"><span className="brand">ETHCRYPTOHUB</span></header>
     <section className="hero news-hero">
       <p className="mono">VERIFIED SOURCES · MARKET CONTEXT</p>
       <h1>Crypto news.</h1>
