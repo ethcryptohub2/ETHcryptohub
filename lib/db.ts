@@ -16,8 +16,13 @@ function validateSslMode(mode: string | undefined) {
 }
 
 function certificateAuthority(certificate: string | undefined) {
-  const value = certificate?.trim();
+  if (!certificate) return undefined;
+  let value = certificate.trim();
   if (!value) return undefined;
+
+  if (value.includes('\\n')) {
+    value = value.replace(/\\n/g, '\n');
+  }
 
   try {
     if (!new X509Certificate(value).ca) throw new Error();
