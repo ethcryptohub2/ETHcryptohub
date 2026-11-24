@@ -80,7 +80,10 @@ export async function runSignalScan(
 
     const batchLimit = options.limit ?? DEFAULT_SYMBOL_BATCH_SIZE;
     if (liquidSnapshotPairs.length > 0) {
-      symbols = liquidSnapshotPairs.slice(0, Math.min(batchLimit, enabledSymbols.length));
+      const offset = (scanSlot * batchLimit) % liquidSnapshotPairs.length;
+      symbols = Array.from({ length: Math.min(batchLimit, liquidSnapshotPairs.length) }, (_, index) =>
+        liquidSnapshotPairs[(offset + index) % liquidSnapshotPairs.length]!,
+      );
     } else {
       const offset = (scanSlot * batchLimit) % enabledSymbols.length;
       symbols = Array.from({ length: Math.min(batchLimit, enabledSymbols.length) }, (_, index) =>

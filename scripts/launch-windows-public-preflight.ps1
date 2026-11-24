@@ -51,7 +51,7 @@ function Invoke-IsolatedNode([string[]]$Arguments) {
 $probe = @'
 const names = Object.keys(process.env).filter(name => !name.startsWith("=")).map(name => name.toUpperCase()).sort();
 if (names.join(",") !== "SYSTEMROOT,WINDIR") throw new Error("UNEXPECTED_ISOLATED_ENVIRONMENT");
-if (process.versions.node.split(".")[0] !== "24") throw new Error("NODE_24_REQUIRED");
+if (Number(process.versions.node.split(".")[0]) < 24) throw new Error("NODE_24_REQUIRED");
 console.log("Verified isolated Node.js " + process.versions.node + " environment");
 '@
 Invoke-IsolatedNode @('-e', $probe)

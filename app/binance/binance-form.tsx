@@ -26,6 +26,8 @@ export function BinanceForm() {
   const [signedReadEnabled, setSignedReadEnabled] = useState(false);
   const [lastVerifiedAt, setLastVerifiedAt] = useState<string | null>(null);
   const [demoBalance, setDemoBalance] = useState<DemoBalance | null>(null);
+  const [balanceError, setBalanceError] = useState<string>('');
+  const [openPositionsCount, setOpenPositionsCount] = useState<number | null>(null);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -63,20 +65,35 @@ export function BinanceForm() {
   useEffect(() => {
     if (environment !== 'DEMO' || !configured) return;
     const controller = new AbortController();
-    fetch('/api/binance/futures/balance', { cache: 'no-store', signal: controller.signal })
+    fetch('/api/binance/futures/balance?environment=DEMO', { cache: 'no-store', signal: controller.signal })
       .then(async (res) => {
-        if (!res.ok) return null;
-        const json = (await res.json()) as { data?: DemoBalance };
-        return json.data ?? null;
+        const json = (await res.json()) as { data?: DemoBalance; error?: string };
+        if (!res.ok || !json.data) {
+          throw new Error(json.error ?? 'Binance Demo balance snapshot unavailable.');
+        }
+        return json.data;
       })
       .then((data) => {
         if (!controller.signal.aborted && data) {
           setDemoBalance(data);
+          setBalanceError('');
         }
       })
-      .catch(() => {
-        // Silently ignore balance endpoint 503 if not enabled
+      .catch((err) => {
+        if (!controller.signal.aborted) {
+          setBalanceError(err instanceof Error ? err.message : 'Balance unavailable');
+        }
       });
+
+    fetch('/api/trading/positions', { cache: 'no-store', signal: controller.signal })
+      .then(async (res) => {
+        const json = (await res.json()) as { data?: { positions?: unknown[] } };
+        if (res.ok && json.data?.positions && !controller.signal.aborted) {
+          setOpenPositionsCount(json.data.positions.length);
+        }
+      })
+      .catch(() => {});
+
     return () => controller.abort();
   }, [environment, configured]);
 
@@ -93,6 +110,8 @@ export function BinanceForm() {
     setMessage('');
     setError('');
     setDemoBalance(null);
+    setBalanceError('');
+    setOpenPositionsCount(null);
   }
 
   async function submit(event: FormEvent, action: 'save' | 'test' | 'remove') {
@@ -243,44 +262,88 @@ export function BinanceForm() {
         </div>
       )}
 
-      {/* DEMO Balance Summary if available */}
-      {environment === 'DEMO' && configured && (
-        <div
-          style={{
-            padding: '12px 16px',
-            background: 'var(--surface-raised)',
-            borderRadius: 8,
-            border: '1px solid var(--surface-border)',
-            display: 'grid',
-            gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))',
-            gap: 12,
-          }}
-        >
-          <div>
-            <small className="muted" style={{ display: 'block', fontSize: 11 }}>DEMO WALLET BALANCE</small>
-            <strong style={{ fontSize: 16, fontFamily: 'DM Mono' }}>
-              {demoBalance ? `$${Number(demoBalance.walletBalance).toLocaleString(undefined, { minimumFractionDigits: 2 })} USDT` : '10,000.00 USDT'}
-            </strong>
-          </div>
-          <div>
-            <small className="muted" style={{ display: 'block', fontSize: 11 }}>AVAILABLE MARGIN</small>
-            <strong style={{ fontSize: 16, fontFamily: 'DM Mono', color: '#10b981' }}>
-              {demoBalance ? `$${Number(demoBalance.availableBalance).toLocaleString(undefined, { minimumFractionDigits: 2 })} USDT` : '10,000.00 USDT'}
-            </strong>
-          </div>
-          <div>
-            <small className="muted" style={{ display: 'block', fontSize: 11 }}>UNREALIZED PNL</small>
-            <strong style={{ fontSize: 16, fontFamily: 'DM Mono' }}>
-              {demoBalance ? `$${Number(demoBalance.unrealizedPnl).toLocaleString(undefined, { minimumFractionDigits: 2 })} USDT` : '$0.00 USDT'}
-            </strong>
-          </div>
-          <div>
-            <small className="muted" style={{ display: 'block', fontSize: 11 }}>STATUS / LAST VERIFIED</small>
-            <span style={{ fontSize: 12, fontFamily: 'DM Mono', color: 'var(--text-muted)' }}>
-              {lastVerifiedAt ? new Date(lastVerifiedAt).toLocaleTimeString() : 'Verified (Session)'}
+      {/* DEMO Balance Section */}
+      {environment === 'DEMO' && (
+        !configured ? (
+          <div
+            style={{
+              padding: '12px 16px',
+              background: 'var(--surface-raised)',
+              borderRadius: 8,
+              border: '1px dashed var(--surface-border)',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              flexWrap: 'wrap',
+              gap: 8,
+            }}
+          >
+            <span style={{ fontSize: 13, color: 'var(--text-muted)' }}>
+              ○ <strong>Not Connected:</strong> No Binance Demo credentials are saved yet.
             </span>
+            <small className="muted">Enter API key and secret below to connect virtual sandbox</small>
           </div>
-        </div>
+        ) : demoBalance ? (
+          <div
+            style={{
+              padding: '12px 16px',
+              background: 'var(--surface-raised)',
+              borderRadius: 8,
+              border: '1px solid var(--accent)',
+              display: 'grid',
+              gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))',
+              gap: 12,
+            }}
+          >
+            <div>
+              <small className="muted" style={{ display: 'block', fontSize: 11 }}>DEMO WALLET BALANCE</small>
+              <strong style={{ fontSize: 16, fontFamily: 'DM Mono', color: 'var(--accent)' }}>
+                ${Number(demoBalance.walletBalance).toLocaleString(undefined, { minimumFractionDigits: 2 })} USDT
+              </strong>
+            </div>
+            <div>
+              <small className="muted" style={{ display: 'block', fontSize: 11 }}>AVAILABLE MARGIN</small>
+              <strong style={{ fontSize: 16, fontFamily: 'DM Mono', color: '#10b981' }}>
+                ${Number(demoBalance.availableBalance).toLocaleString(undefined, { minimumFractionDigits: 2 })} USDT
+              </strong>
+            </div>
+            <div>
+              <small className="muted" style={{ display: 'block', fontSize: 11 }}>UNREALIZED PNL</small>
+              <strong style={{ fontSize: 16, fontFamily: 'DM Mono' }}>
+                ${Number(demoBalance.unrealizedPnl).toLocaleString(undefined, { minimumFractionDigits: 2 })} USDT
+              </strong>
+            </div>
+            <div>
+              <small className="muted" style={{ display: 'block', fontSize: 11 }}>POSITIONS &amp; SYNC</small>
+              <span style={{ fontSize: 12, fontFamily: 'DM Mono', color: 'var(--text-muted)' }}>
+                {openPositionsCount !== null ? `${openPositionsCount} open · ` : ''}
+                {demoBalance.lastUpdatedAt ? new Date(demoBalance.lastUpdatedAt).toLocaleTimeString() : 'Live'}
+              </span>
+            </div>
+          </div>
+        ) : (
+          <div
+            style={{
+              padding: '12px 16px',
+              background: 'var(--surface-raised)',
+              borderRadius: 8,
+              border: '1px solid var(--surface-border)',
+              display: 'flex',
+              flexDirection: 'column',
+              gap: 4,
+            }}
+          >
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <small className="muted" style={{ fontSize: 11, fontWeight: 600 }}>DEMO ACCOUNT SYNCHRONIZATION</small>
+              <span style={{ fontSize: 11, fontFamily: 'DM Mono', color: 'var(--accent)' }}>● CONFIGURED</span>
+            </div>
+            <p className="muted" style={{ margin: 0, fontSize: 13 }}>
+              {balanceError
+                ? `Connection status: ${balanceError}`
+                : 'Awaiting balance synchronization from Binance Demo API. Click "Test Demo Account Access" below to request an instant connection check.'}
+            </p>
+          </div>
+        )
       )}
 
       {/* FAIL-CLOSED LIVE TRADING WARNING CARD (When LIVE is selected) */}

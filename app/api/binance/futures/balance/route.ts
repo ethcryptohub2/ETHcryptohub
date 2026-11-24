@@ -1,3 +1,4 @@
+import { NextRequest } from 'next/server';
 import { AuthError, requireUser } from '../../../../../lib/auth';
 import { BinanceFuturesError, getFuturesBalance, isTradingEnvironment } from '../../../../../lib/binance-futures';
 import { isCredentialEncryptionConfigured } from '../../../../../lib/binance-credentials';
@@ -8,7 +9,7 @@ export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 const noStore = { 'Cache-Control': 'no-store' };
 
-export async function GET() {
+export async function GET(request?: NextRequest) {
   try {
     const user = await requireUser();
     if (process.env.SMARTEXIT_BINANCE_BALANCE_READ_ENABLED !== 'true' || !isCredentialEncryptionConfigured()) {
@@ -17,11 +18,14 @@ export async function GET() {
       });
     }
     await assertExchangeFoundationReady();
+    const requested = request && 'nextUrl' in request ? request.nextUrl.searchParams.get('environment') : null;
     const settings = await query<{ active_environment: unknown }>(
       'SELECT active_environment FROM public.user_trading_settings WHERE user_id = $1',
       [user.id],
     );
-    const environment = settings.rows[0]?.active_environment;
+    const environment = requested && isTradingEnvironment(requested)
+      ? requested
+      : settings.rows[0]?.active_environment;
     if (!isTradingEnvironment(environment)) {
       return Response.json({ error: 'Select an approved trading environment before requesting an account balance.' }, {
         status: 422, headers: noStore,

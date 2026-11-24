@@ -235,6 +235,43 @@ export async function listUserSignalEntries(userId: number) {
   return result.rows;
 }
 
+export async function getPaperTradingSummary(userId: number) {
+  const result = await query<{
+    total_entries: string;
+    open_entries: string;
+    closed_entries: string;
+    total_realized_pnl: string | null;
+    winning_trades: string;
+    losing_trades: string;
+  }>(
+    `SELECT COUNT(*)::TEXT AS total_entries,
+            COUNT(*) FILTER (WHERE status = 'ENTERED')::TEXT AS open_entries,
+            COUNT(*) FILTER (WHERE status = 'CLOSED')::TEXT AS closed_entries,
+            COALESCE(SUM(realized_pnl) FILTER (WHERE status = 'CLOSED'), 0)::TEXT AS total_realized_pnl,
+            COUNT(*) FILTER (WHERE status = 'CLOSED' AND realized_pnl > 0)::TEXT AS winning_trades,
+            COUNT(*) FILTER (WHERE status = 'CLOSED' AND realized_pnl <= 0)::TEXT AS losing_trades
+       FROM public.signal_user_entries
+      WHERE user_id = $1`,
+    [userId],
+  );
+  const row = result.rows[0];
+  const startingBalance = 10000.0;
+  const realizedPnl = Number(row?.total_realized_pnl ?? 0);
+  const closedCount = Number(row?.closed_entries ?? 0);
+  const winningCount = Number(row?.winning_trades ?? 0);
+  const winRate = closedCount > 0 ? (winningCount / closedCount) * 100 : 0;
+  return {
+    startingBalance,
+    totalRealizedPnl: realizedPnl,
+    currentVirtualEquity: startingBalance + realizedPnl,
+    openPositionsCount: Number(row?.open_entries ?? 0),
+    closedTradesCount: closedCount,
+    winRatePercent: Math.round(winRate * 100) / 100,
+    storageType: 'DATABASE_PERSISTENT' as const,
+    table: 'public.signal_user_entries' as const,
+  };
+}
+
 const aggregateQuery = `
   WITH event_totals AS (
     SELECT signal_id,

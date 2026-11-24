@@ -5,7 +5,7 @@ import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 
 const launcher = fileURLToPath(new URL('./launch-windows-public-preflight.ps1', import.meta.url));
-const windowsNode24 = process.platform === 'win32' && process.versions.node.startsWith('24.');
+const windowsNode24 = process.platform === 'win32' && Number(process.versions.node.split('.')[0]) >= 24;
 
 function invokeLauncher(args) {
   const powershell = path.join(process.env.SystemRoot, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe');

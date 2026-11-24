@@ -25,6 +25,17 @@ type Position = {
   signal_status: string;
 };
 
+type VirtualAccountSummary = {
+  startingBalance: number;
+  totalRealizedPnl: number;
+  currentVirtualEquity: number;
+  openPositionsCount: number;
+  closedTradesCount: number;
+  winRatePercent: number;
+  storageType: string;
+  table: string;
+};
+
 function price(value: string | null) {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed.toLocaleString(undefined, { maximumSignificantDigits: 8 }) : '—';
@@ -32,6 +43,7 @@ function price(value: string | null) {
 
 export function PositionsPanel() {
   const [positions, setPositions] = useState<Position[]>([]);
+  const [summary, setSummary] = useState<VirtualAccountSummary | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [showClosed, setShowClosed] = useState(false);
@@ -41,9 +53,17 @@ export function PositionsPanel() {
     setError('');
     try {
       const response = await fetch('/api/positions', { cache: 'no-store' });
-      const body = await response.json() as { data?: Position[]; error?: string };
+      const body = (await response.json()) as {
+        data?: Position[] | { positions: Position[]; summary: VirtualAccountSummary };
+        error?: string;
+      };
       if (!response.ok || !body.data) throw new Error(body.error ?? 'Position records could not be loaded.');
-      setPositions(body.data);
+      if (Array.isArray(body.data)) {
+        setPositions(body.data);
+      } else {
+        setPositions(body.data.positions ?? []);
+        setSummary(body.data.summary ?? null);
+      }
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : 'Position records could not be loaded.');
     } finally {
@@ -65,6 +85,58 @@ export function PositionsPanel() {
         These are simulated positions tracked in your local virtual ledger with 0 capital risk. Remote signed exchange orders are tracked in the Authenticated Exchange Demo Positions panel below.
       </p>
     </section>
+    {summary && (
+      <section
+        className="card"
+        style={{
+          padding: '16px 20px',
+          display: 'grid',
+          gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))',
+          gap: 16,
+          background: 'var(--surface-raised)',
+          border: '1px solid var(--accent)',
+          borderRadius: 8,
+          marginBottom: 16,
+        }}
+      >
+        <div>
+          <small className="muted" style={{ display: 'block', fontSize: 11 }}>VIRTUAL PAPER EQUITY</small>
+          <strong style={{ fontSize: 18, fontFamily: 'DM Mono', color: 'var(--accent)' }}>
+            ${summary.currentVirtualEquity.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} USDT
+          </strong>
+          <small className="muted" style={{ display: 'block', fontSize: 10 }}>Base: ${summary.startingBalance.toLocaleString()} USDT</small>
+        </div>
+        <div>
+          <small className="muted" style={{ display: 'block', fontSize: 11 }}>TOTAL REALIZED PNL</small>
+          <strong
+            style={{
+              fontSize: 18,
+              fontFamily: 'DM Mono',
+              color: summary.totalRealizedPnl >= 0 ? '#10b981' : '#ef4444',
+            }}
+          >
+            {summary.totalRealizedPnl >= 0 ? '+' : ''}${summary.totalRealizedPnl.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} USDT
+          </strong>
+          <small className="muted" style={{ display: 'block', fontSize: 10 }}>
+            {summary.closedTradesCount} closed ({summary.winRatePercent}% win rate)
+          </small>
+        </div>
+        <div>
+          <small className="muted" style={{ display: 'block', fontSize: 11 }}>ACTIVE OPEN POSITIONS</small>
+          <strong style={{ fontSize: 18, fontFamily: 'DM Mono' }}>
+            {summary.openPositionsCount}
+          </strong>
+          <small className="muted" style={{ display: 'block', fontSize: 10 }}>Simulated positions</small>
+        </div>
+        <div>
+          <small className="muted" style={{ display: 'block', fontSize: 11 }}>PERSISTENCE ENGINE</small>
+          <span style={{ fontSize: 12, fontFamily: 'DM Mono', color: '#10b981', fontWeight: 600 }}>
+            ✓ POSTGRESQL PERSISTENT
+          </span>
+          <small className="muted" style={{ display: 'block', fontSize: 10 }}>public.signal_user_entries</small>
+        </div>
+      </section>
+    )}
     <ExchangePositionsPanel />
     <section className="card stack">
       <div className="position-toolbar">
