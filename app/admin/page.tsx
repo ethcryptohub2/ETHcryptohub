@@ -10,6 +10,7 @@ import { AdminDiagnostics } from './diagnostics';
 import { AdminScalping } from './scalping';
 import { AdminSignalManagement } from './signal-management';
 import { AdminNewsSettings } from './news-settings';
+import { AdminWorkerDashboard } from './worker-dashboard';
 
 export const dynamic = 'force-dynamic';
 
@@ -61,11 +62,15 @@ export default async function AdminPage() {
           <a href="#admin-news" className="button-secondary" style={{ padding: '6px 12px', fontSize: 12 }}>
             News Settings
           </a>
+          <a href="#admin-worker-dashboard" className="button-secondary" style={{ padding: '6px 12px', fontSize: 12, border: '1px solid var(--accent)' }}>
+            24×7 Worker
+          </a>
         </div>
       </section>
 
       {/* Main Administrative Modules */}
       <div className="stack" style={{ gap: 24 }}>
+        <AdminWorkerDashboard />
         <AdminDiagnostics />
         <AdminSubscriptions />
         <AdminNotifications />

@@ -1,0 +1,30 @@
+# SmartExit 24x7 Isolated Demo Trading Worker Container
+FROM node:20-alpine
+
+WORKDIR /app
+
+# Install dependencies first for layer caching
+COPY package*.json ./
+RUN npm ci --omit=dev
+
+# Copy application code
+COPY . .
+
+# Set strict isolated sandbox environment variables
+ENV NODE_ENV=production
+ENV SMARTEXIT_TRADING_ENVIRONMENT=DEMO
+ENV SMARTEXIT_EMERGENCY_STOP=false
+
+# Non-root user for security
+USER node
+
+# Healthcheck checking heartbeat freshness within 90 seconds
+HEALTHCHECK --interval=30s --timeout=10s --start-period=15s --retries=3 \
+  CMD node -e "
+    const fs = require('fs');
+    const hb = JSON.parse(fs.readFileSync('storage/demo-worker/worker-heartbeat.json', 'utf8'));
+    if (Date.now() - hb.timestamp > 90000 || hb.status !== 'RUNNING') process.exit(1);
+  "
+
+# Run the persistent demo worker daemon
+CMD ["node", "scripts/demo-trading-worker.mjs"]

@@ -279,10 +279,10 @@ async function persistCandleTransitions(
         if (terminal) break;
         const eventType = `TP${target.rank}_HIT`;
         const targetStatus = eventType as LifecycleStatus;
-        const completedHighRiskTarget = signal.scanner_type === 'HIGH_RISK' && target.rank === 2;
+        const completedTarget = target.rank === 3 || (signal.scanner_type === 'HIGH_RISK' && !signal.tp3 && target.rank === 2);
         await record(
           eventType,
-          completedHighRiskTarget ? 'COMPLETED' : targetStatus,
+          completedTarget ? 'COMPLETED' : targetStatus,
           target.price,
           eventAt,
           { ...candleData, triggerLevel: target.price },

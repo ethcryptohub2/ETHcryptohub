@@ -236,27 +236,16 @@ export async function listUserSignalEntries(userId: number) {
 }
 
 export async function getPaperTradingSummary(userId: number) {
-  const [closedStats, openPositions] = await Promise.all([
+  const [closedTrades, openPositions] = await Promise.all([
     query<{
-      total_entries: string;
-      open_entries: string;
-      closed_entries: string;
-      total_realized_pnl: string | null;
-      winning_trades: string;
-      losing_trades: string;
-      gross_profit: string | null;
-      gross_loss: string | null;
+      entry_price: string;
+      exit_price: string | null;
+      side: string;
     }>(
-      `SELECT COUNT(*)::TEXT AS total_entries,
-              COUNT(*) FILTER (WHERE status = 'ENTERED')::TEXT AS open_entries,
-              COUNT(*) FILTER (WHERE status = 'CLOSED')::TEXT AS closed_entries,
-              COALESCE(SUM(realized_pnl) FILTER (WHERE status = 'CLOSED'), 0)::TEXT AS total_realized_pnl,
-              COUNT(*) FILTER (WHERE status = 'CLOSED' AND realized_pnl > 0)::TEXT AS winning_trades,
-              COUNT(*) FILTER (WHERE status = 'CLOSED' AND realized_pnl <= 0)::TEXT AS losing_trades,
-              COALESCE(SUM(realized_pnl) FILTER (WHERE status = 'CLOSED' AND realized_pnl > 0), 0)::TEXT AS gross_profit,
-              COALESCE(SUM(realized_pnl) FILTER (WHERE status = 'CLOSED' AND realized_pnl < 0), 0)::TEXT AS gross_loss
-         FROM public.signal_user_entries
-        WHERE user_id = $1`,
+      `SELECT e.entry_price::TEXT, e.exit_price::TEXT, s.side
+         FROM public.signal_user_entries e
+         JOIN public.market_signals s ON s.id = e.signal_id
+        WHERE e.user_id = $1 AND e.status = 'CLOSED'`,
       [userId],
     ),
     query<{
@@ -272,38 +261,64 @@ export async function getPaperTradingSummary(userId: number) {
     ),
   ]);
 
-  const row = closedStats.rows[0];
   const startingBalance = 10000.0;
   const standardNotionalPerPosition = 100.0;
   const takerFeeRate = 0.0004; // 0.04% standard Binance VIP0 taker fee per fill
 
-  const realizedPnl = Number(row?.total_realized_pnl ?? 0);
-  const closedCount = Number(row?.closed_entries ?? 0);
-  const openCount = Number(row?.open_entries ?? 0);
-  const winningCount = Number(row?.winning_trades ?? 0);
-  const losingCount = Number(row?.losing_trades ?? 0);
-  const grossProfit = Number(row?.gross_profit ?? 0);
-  const grossLoss = Number(row?.gross_loss ?? 0);
+  let realizedGrossPnl = 0;
+  let totalClosedFees = 0;
+  let winningCount = 0;
+  let losingCount = 0;
+  let grossProfit = 0;
+  let grossLoss = 0;
 
-  // Mark-to-market unrealized PnL calculation on open positions
-  let unrealizedPnl = 0;
-  for (const pos of openPositions.rows) {
-    const entry = Number(pos.entry_price);
-    const latest = Number(pos.latest_price);
-    if (entry > 0 && latest > 0) {
-      if (pos.side === 'LONG') {
-        unrealizedPnl += ((latest - entry) / entry) * standardNotionalPerPosition;
-      } else if (pos.side === 'SHORT') {
-        unrealizedPnl += ((entry - latest) / entry) * standardNotionalPerPosition;
+  for (const trade of closedTrades.rows) {
+    const entry = Number(trade.entry_price);
+    const exit = Number(trade.exit_price);
+    if (entry > 0 && exit > 0) {
+      const quantity = standardNotionalPerPosition / entry;
+      const exitNotional = quantity * exit;
+      const tradePnl = trade.side === 'LONG'
+        ? exitNotional - standardNotionalPerPosition
+        : standardNotionalPerPosition - exitNotional;
+
+      const entryFee = standardNotionalPerPosition * takerFeeRate;
+      const exitFee = exitNotional * takerFeeRate;
+      totalClosedFees += entryFee + exitFee;
+
+      realizedGrossPnl += tradePnl;
+      if (tradePnl > 0) {
+        winningCount += 1;
+        grossProfit += tradePnl;
+      } else {
+        losingCount += 1;
+        grossLoss += tradePnl;
       }
     }
   }
 
-  // Trading fees: 2 fills per closed trade (entry + exit), 1 fill per open position (entry)
-  const totalFills = closedCount * 2 + openCount * 1;
-  const estimatedTradingFees = totalFills * standardNotionalPerPosition * takerFeeRate;
+  // Mark-to-market unrealized PnL and entry fees on open positions
+  let unrealizedPnl = 0;
+  let totalOpenFees = 0;
+  for (const pos of openPositions.rows) {
+    const entry = Number(pos.entry_price);
+    const latest = Number(pos.latest_price);
+    if (entry > 0 && latest > 0) {
+      const quantity = standardNotionalPerPosition / entry;
+      const currentNotional = quantity * latest;
+      const posPnl = pos.side === 'LONG'
+        ? currentNotional - standardNotionalPerPosition
+        : standardNotionalPerPosition - currentNotional;
 
-  const currentVirtualEquity = startingBalance + realizedPnl + unrealizedPnl - estimatedTradingFees;
+      unrealizedPnl += posPnl;
+      totalOpenFees += standardNotionalPerPosition * takerFeeRate;
+    }
+  }
+
+  const closedCount = closedTrades.rows.length;
+  const openCount = openPositions.rows.length;
+  const estimatedTradingFees = totalClosedFees + totalOpenFees;
+  const currentVirtualEquity = startingBalance + realizedGrossPnl + unrealizedPnl - estimatedTradingFees;
   const winRate = closedCount > 0 ? (winningCount / closedCount) * 100 : 0;
   const profitFactor = Math.abs(grossLoss) > 0
     ? Math.round((grossProfit / Math.abs(grossLoss)) * 100) / 100
@@ -313,7 +328,7 @@ export async function getPaperTradingSummary(userId: number) {
 
   return {
     startingBalance,
-    totalRealizedPnl: Math.round(realizedPnl * 100) / 100,
+    totalRealizedPnl: Math.round(realizedGrossPnl * 100) / 100,
     unrealizedPnl: Math.round(unrealizedPnl * 100) / 100,
     estimatedTradingFees: Math.round(estimatedTradingFees * 100) / 100,
     currentVirtualEquity: Math.round(currentVirtualEquity * 100) / 100,

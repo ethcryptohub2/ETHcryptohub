@@ -24,6 +24,7 @@ export interface ScalpingSetup {
   stop: number;
   tp1: number;
   tp2: number;
+  tp3?: number | null;
   lastPrice: number;
   candleOpenAt: string;
   context: {

@@ -164,6 +164,7 @@ function scoreSetup(input: {
   const stop = input.side === 'LONG' ? input.price - risk : input.price + risk;
   const tp1 = input.side === 'LONG' ? input.price + risk : input.price - risk;
   const tp2 = input.side === 'LONG' ? input.price + risk * 1.5 : input.price - risk * 1.5;
+  const tp3 = input.side === 'LONG' ? input.price + risk * 2.5 : input.price - risk * 2.5;
   return {
     score,
     atr,
@@ -178,6 +179,7 @@ function scoreSetup(input: {
     stop,
     tp1,
     tp2,
+    tp3,
     btcAligned,
     breakout,
   };
@@ -224,6 +226,7 @@ export function analyzeHighRiskScalpingSetup(input: {
       stop: analysis.stop,
       tp1: analysis.tp1,
       tp2: analysis.tp2,
+      tp3: analysis.tp3,
       lastPrice: input.price,
       candleOpenAt: new Date(latest.openTime).toISOString(),
       lastCandleCloseAt: new Date(latest.closeTime).toISOString(),
@@ -321,7 +324,7 @@ export async function insertHighRiskSignal(
        latest_price, last_candle_close_at, candle_open_at, expires_at, entry_expires_at, entry_status,
        research_snapshot, source_metadata
      ) VALUES ($1, 'HIGH_RISK', 'BINANCE', 'HIGH_RISK_SCALPING', $2, $3, $4, $5,
-               $6, $7, $8, $9, $10, $11, NULL, $12, $18, $13,
+               $6, $7, $8, $9, $10, $11, $19, $12, $18, $13,
                NOW() + ($14 * INTERVAL '1 minute'),
                NOW() + ($15 * INTERVAL '1 minute'), 'OPEN', $16::JSONB, $17::JSONB)
      ON CONFLICT DO NOTHING RETURNING id::text`,
@@ -333,6 +336,7 @@ export async function insertHighRiskSignal(
       JSON.stringify(setup.context),
       JSON.stringify({ priceSource: 'BINANCE_USDM_TICKER_LAST_PRICE', market: 'USD-M_PERPETUAL' }),
       setup.lastCandleCloseAt,
+      setup.tp3 ?? null,
     ],
   );
   if (!central.rowCount) return null;
