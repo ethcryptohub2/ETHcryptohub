@@ -44,8 +44,8 @@ export function isEligibleScannerCoin(coin: Pick<ScannerCoin,
     coin.trading_status === 'TRADING' &&
     coin.is_enabled &&
     /^[\p{L}\p{N}]{2,30}$/u.test(coin.symbol) &&
-    /^[\p{L}\p{N}]{1,20}$/u.test(coin.base_asset) &&
-    coin.symbol === `${coin.base_asset}USDT`;
+    coin.symbol.endsWith('USDT') &&
+    coin.symbol.length >= 6;
 }
 
 function safeErrorMessage(error: unknown): string {

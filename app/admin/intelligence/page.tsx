@@ -9,7 +9,7 @@ export default async function AdminIntelligencePage() {
   if (!user) redirect('/login');
   if (user.role !== 'admin') redirect('/dashboard');
   const status = await readIntelligenceStatus(user);
-  return <main className="shell"><section className="hero"><p className="mono">ADMIN · FEED AND PAPER OPERATIONS</p>
+  return <main className="shell"><section className="hero"><p className="mono">ADMIN · FEED &amp; EXCHANGE READINESS</p>
     <h1>Intelligence operations.</h1><p className="muted">Activation readiness is separate from application health. No worker, schedule or execution is started here.</p>
     <nav className="links"><Link href="/intelligence">Customer research view</Link><Link href="/admin/backtesting">Backtesting</Link></nav></section>
     <section className="grid">

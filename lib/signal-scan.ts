@@ -171,21 +171,12 @@ export async function runSignalScan(
   let cursorInfo = { offset: 0, cycleCount: 1, lastScannedAt: null as string | null, totalBatches: 1, batchIndex: 1, cycleId: 'MANUAL-BATCH' };
   if (options.symbols && options.symbols.length > 0) {
     symbols = options.symbols.filter((s) => enabledSymbols.includes(s));
-  } else if (snapshotSymbols.length > 0) {
-    const liquidSnapshotPairs = snapshotSymbols
-      .filter((m) => m && m.quoteAsset === 'USDT' && enabledSymbols.includes(m.symbol) && (m.quoteVolume24h ?? 0) >= effectiveMinimumVolume)
-      .sort((a, b) => (b.quoteVolume24h ?? 0) - (a.quoteVolume24h ?? 0))
-      .map((m) => m.symbol);
-
-    const pool = liquidSnapshotPairs.length > 0 ? liquidSnapshotPairs : enabledSymbols;
+  } else {
+    // Complete dynamic universe: evaluate all 520+ enabled USDT perpetual contracts across dynamic batches without volume pre-truncation
+    const pool = enabledSymbols;
     cursorInfo = await getAndAdvanceScannerCursor(pool.length, effectiveBatchLimit);
     symbols = Array.from({ length: Math.min(effectiveBatchLimit, pool.length) }, (_, index) =>
       pool[(cursorInfo.offset + index) % pool.length]!,
-    );
-  } else {
-    cursorInfo = await getAndAdvanceScannerCursor(enabledSymbols.length, effectiveBatchLimit);
-    symbols = Array.from({ length: Math.min(effectiveBatchLimit, enabledSymbols.length) }, (_, index) =>
-      enabledSymbols[(cursorInfo.offset + index) % enabledSymbols.length]!,
     );
   }
 

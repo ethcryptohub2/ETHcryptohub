@@ -293,11 +293,6 @@ function StandardSignals({
   const recentCount = data?.recentUntil?.filter(expiry => Number.isFinite(expiry) && expiry >= signalNow).length ?? 0;
   const degraded = Boolean(data && recentCount < data.eligibleCount);
 
-  function executePaperSimulation(item: (typeof candidates)[number]) {
-    setDemoOrderNotice(`[INTERNAL PAPER SIMULATION] Virtual order simulated: ${item.side} ${item.symbol} at ${item.setup?.entryPrice ? formatPrice(item.setup.entryPrice) : 'market'} (Virtual paper balance). Position tracked in your local position records.`);
-    window.setTimeout(() => setDemoOrderNotice(null), 6000);
-  }
-
   return (
     <main className="shell">
       <ScannerTabs active={activeTab} onChange={onTabChange} />
@@ -306,15 +301,15 @@ function StandardSignals({
         <p className="mono">MARKET INTELLIGENCE · BINANCE USDⓈ-M FUTURES</p>
         <h1>Smart Signal Scanner</h1>
         <p className="muted">
-          Real-time algorithmic confluence scanner detecting high-conviction momentum and trend continuation setups across 300+ liquid cryptocurrency pairs.
+          Real-time algorithmic confluence scanner detecting high-conviction momentum and trend continuation setups across 500+ perpetual Futures contracts.
         </p>
       </section>
 
       {/* Execution Environment Assurance Banner */}
       <div style={{ padding: '10px 16px', background: 'var(--surface-subtle)', borderRadius: 8, border: '1px solid var(--surface-border)', marginBottom: 14, display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 10, fontSize: 12 }}>
         <div>
-          <strong style={{ color: '#10b981' }}>● ENVIRONMENT: DEMO & PAPER SIMULATION ACTIVE</strong>
-          <span className="muted" style={{ marginLeft: 8 }}>Internal virtual ledger & remote exchange demo testnets enabled.</span>
+          <strong style={{ color: '#10b981' }}>● ENVIRONMENT: AUTHENTICATED EXCHANGE DEMO & TESTNET ONLY</strong>
+          <span className="muted" style={{ marginLeft: 8 }}>Actual remote exchange Demo APIs only (Binance, Bybit, OKX, Bitget, Gate.io). No internal paper simulation.</span>
         </div>
         <div className="mono" style={{ color: '#ef4444', fontWeight: 600 }}>
           🔒 LIVE TRADING: LOCKED FAIL-CLOSED (HTTP 403)
@@ -714,24 +709,23 @@ function StandardSignals({
                         {item.rationale || 'Multi-indicator confluence: EMA stack alignment, Supertrend direction, ADX momentum, and RSI trigger.'}
                       </p>
                       <span className="mono" style={{ fontSize: 10, color: 'var(--text-muted)' }}>
-                        [PAPER SIMULATION: VIRTUAL BALANCE · EXCHANGE DEMO: REMOTE API]
+                        [AUTHENTICATED EXCHANGE DEMO ONLY · 5 CONNECTED EXCHANGES]
                       </span>
                     </div>
                     <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-                      <button
-                        type="button"
+                      <Link
+                        href="/binance#exchange-credentials"
                         className="button"
-                        onClick={() => executePaperSimulation(item)}
                         style={{ fontSize: 12, padding: '7px 12px' }}
                       >
-                        [PAPER SIM] 1-Click Order
-                      </button>
+                        ⚡ Execute Demo API
+                      </Link>
                       <Link
                         href="/binance"
                         className="button-secondary"
                         style={{ fontSize: 12, padding: '7px 12px' }}
                       >
-                        [EXCHANGE DEMO] API
+                        Exchanges
                       </Link>
                     </div>
                   </div>

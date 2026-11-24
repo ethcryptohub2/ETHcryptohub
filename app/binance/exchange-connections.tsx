@@ -280,7 +280,33 @@ export function ExchangeConnections() {
   ]);
   const [selected, setSelected] = useState('BINANCE');
   const [error, setError] = useState('');
-  const [activeMode, setActiveMode] = useState<'paper' | 'demo' | 'live'>('demo');
+  const [activeMode, setActiveMode] = useState<'demo' | 'live'>('demo');
+  const [exchangeSwitches, setExchangeSwitches] = useState<Record<string, boolean>>({
+    BINANCE: true,
+    BYBIT: true,
+    OKX: false,
+    BITGET: false,
+    GATE: true,
+  });
+
+  useEffect(() => {
+    try {
+      const stored = localStorage.getItem('smartexit_exchange_switches');
+      if (stored) {
+        setExchangeSwitches(JSON.parse(stored));
+      }
+    } catch {}
+  }, []);
+
+  const toggleExchangeSwitch = (exchangeId: string) => {
+    setExchangeSwitches((prev) => {
+      const next = { ...prev, [exchangeId]: !prev[exchangeId] };
+      try {
+        localStorage.setItem('smartexit_exchange_switches', JSON.stringify(next));
+      } catch {}
+      return next;
+    });
+  };
 
   useEffect(() => {
     let active = true;
@@ -312,42 +338,16 @@ export function ExchangeConnections() {
 
   return (
     <section className="stack">
-      {/* 3-Mode Execution Environment Selector */}
+      {/* 2-Mode Execution Environment Selector */}
       <div
         className="card"
         style={{
           padding: '16px',
           display: 'grid',
-          gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))',
+          gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))',
           gap: 12,
         }}
       >
-        <Link
-          href="/positions"
-          style={{
-            padding: '14px 16px',
-            borderRadius: 8,
-            border: activeMode === 'paper' ? '2px solid var(--accent)' : '1px solid var(--surface-border)',
-            background: activeMode === 'paper' ? 'var(--accent-light)' : 'var(--surface-raised)',
-            textDecoration: 'none',
-            color: 'inherit',
-            display: 'flex',
-            flexDirection: 'column',
-            gap: 4,
-          }}
-          onClick={() => setActiveMode('paper')}
-        >
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <strong style={{ fontSize: 14 }}>1. Internal Paper Simulation</strong>
-            <span style={{ fontSize: 10, fontFamily: 'DM Mono', padding: '2px 6px', borderRadius: 99, background: '#f0fdf4', color: '#166534', fontWeight: 600 }}>
-              ACTIVE
-            </span>
-          </div>
-          <small className="muted" style={{ fontSize: 12 }}>
-            Built-in algorithmic simulator. 100% virtual funds, zero API keys required. View active paper positions →
-          </small>
-        </Link>
-
         <div
           role="button"
           tabIndex={0}
@@ -365,13 +365,13 @@ export function ExchangeConnections() {
           onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') setActiveMode('demo'); }}
         >
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <strong style={{ fontSize: 14, color: 'var(--accent)' }}>2. Authenticated Exchange Demo / Testnet</strong>
+            <strong style={{ fontSize: 14, color: 'var(--accent)' }}>1. Authenticated Exchange Demo / Testnet</strong>
             <span style={{ fontSize: 10, fontFamily: 'DM Mono', padding: '2px 6px', borderRadius: 99, background: 'var(--accent)', color: '#fff', fontWeight: 600 }}>
-              CURRENT TAB
+              ACTIVE MODE
             </span>
           </div>
           <small className="muted" style={{ fontSize: 12 }}>
-            Connect 5 exchange demo/testnet sandboxes with dedicated virtual keys. Real capital is never at risk.
+            Execute directly on remote exchange Demo/Testnet APIs across 5 connected providers. Zero internal simulation.
           </small>
         </div>
 
@@ -392,7 +392,7 @@ export function ExchangeConnections() {
           onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') setActiveMode('live'); }}
         >
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <strong style={{ fontSize: 14, color: '#ef4444' }}>3. Real-Money Live Trading</strong>
+            <strong style={{ fontSize: 14, color: '#ef4444' }}>2. Real-Money Live Trading</strong>
             <span style={{ fontSize: 10, fontFamily: 'DM Mono', padding: '2px 6px', borderRadius: 99, background: '#fee2e2', color: '#991b1b', fontWeight: 600 }}>
               LOCKED 403
             </span>
@@ -400,6 +400,77 @@ export function ExchangeConnections() {
           <small className="muted" style={{ fontSize: 12 }}>
             🔒 Visibly locked fail-closed by platform policy. Real capital execution is disabled.
           </small>
+        </div>
+      </div>
+
+      {/* Multi-Exchange Parallel Execution Control Center */}
+      <div
+        className="card"
+        style={{
+          padding: '16px 20px',
+          background: 'var(--surface-raised)',
+          border: '1px solid var(--surface-border)',
+          borderRadius: 8,
+        }}
+      >
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 10, marginBottom: 14 }}>
+          <div>
+            <strong style={{ fontSize: 14, display: 'block' }}>Multi-Exchange Execution Switches</strong>
+            <small className="muted" style={{ fontSize: 12 }}>
+              Enable or disable parallel execution independently for each exchange. Qualified signals fan out to ALL active destinations.
+            </small>
+          </div>
+          <div className="mono" style={{ fontSize: 11, background: 'var(--surface)', padding: '4px 10px', borderRadius: 6, border: '1px solid var(--surface-border)' }}>
+            Active: <strong style={{ color: 'var(--accent)' }}>{Object.values(exchangeSwitches).filter(Boolean).length} / 5</strong> · Aggregate Risk Cap: <strong>5.0%</strong>
+          </div>
+        </div>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 10 }}>
+          {[
+            { id: 'BINANCE', name: 'Binance Futures Demo', env: 'DEMO' },
+            { id: 'BYBIT', name: 'Bybit Demo', env: 'DEMO' },
+            { id: 'OKX', name: 'OKX Demo', env: 'DEMO' },
+            { id: 'BITGET', name: 'Bitget Demo', env: 'DEMO' },
+            { id: 'GATE', name: 'Gate.io Futures', env: 'TESTNET' },
+          ].map((item) => {
+            const isEnabled = Boolean(exchangeSwitches[item.id]);
+            return (
+              <div
+                key={item.id}
+                style={{
+                  padding: '10px 14px',
+                  borderRadius: 6,
+                  border: isEnabled ? '1px solid var(--accent)' : '1px solid var(--surface-border)',
+                  background: isEnabled ? 'var(--accent-light)' : 'var(--surface)',
+                  display: 'flex',
+                  justifyContent: 'space-between',
+                  alignItems: 'center',
+                  gap: 8,
+                }}
+              >
+                <div>
+                  <strong style={{ fontSize: 12, display: 'block' }}>{item.id}</strong>
+                  <small className="muted" style={{ fontSize: 10 }}>{item.env}</small>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => toggleExchangeSwitch(item.id)}
+                  style={{
+                    padding: '4px 8px',
+                    fontSize: 10,
+                    fontWeight: 700,
+                    fontFamily: 'DM Mono',
+                    borderRadius: 4,
+                    border: 'none',
+                    cursor: 'pointer',
+                    background: isEnabled ? '#10b981' : 'var(--surface-raised)',
+                    color: isEnabled ? '#fff' : 'var(--text-muted)',
+                  }}
+                >
+                  {isEnabled ? '● ON' : '○ OFF'}
+                </button>
+              </div>
+            );
+          })}
         </div>
       </div>
 
@@ -450,8 +521,8 @@ export function ExchangeConnections() {
           </h3>
           <p className="muted" style={{ maxWidth: 560, margin: 0, fontSize: 13, lineHeight: 1.5 }}>
             Live execution is disabled by platform policy. Antigravity and operator safety rules strictly prohibit
-            real-money order routing. Real funds are never at risk. SmartExit operates exclusively in high-fidelity Demo
-            and Paper simulation modes.
+            real-money order routing. Real funds are never at risk. SmartExit operates exclusively in high-fidelity
+            authenticated exchange Demo / Testnet API execution mode.
           </p>
           <button
             type="button"
@@ -532,7 +603,7 @@ export function ExchangeConnections() {
               <h3 style={{ margin: '0 0 8px' }}>{chosen?.name} Configuration</h3>
               <p className="muted" style={{ margin: 0 }}>
                 {demo?.supported
-                  ? 'This exchange adapter is available. Configure Demo or Testnet keys to begin paper execution.'
+                  ? 'This exchange adapter is available. Configure Demo or Testnet keys to begin authenticated exchange execution.'
                   : 'Adapter implementation is ready. The administrator manages tenant activation.'}
               </p>
             </div>

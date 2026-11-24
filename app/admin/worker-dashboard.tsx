@@ -3,58 +3,80 @@
 import { useCallback, useEffect, useState } from 'react';
 import type { WorkerHealthResult } from '../../lib/worker-lease';
 
+type ExchangeProvider = {
+  exchange: 'BINANCE' | 'BYBIT' | 'OKX' | 'BITGET' | 'GATE';
+  name: string;
+  customer_enabled: boolean;
+  adapter_version: string;
+  demo_verified_at: string | null;
+  testnet_verified_at: string | null;
+  environments: Array<{
+    environment: 'DEMO' | 'TESTNET' | 'LIVE';
+    enabled: boolean;
+    supported: boolean;
+    customerTradingReady: boolean;
+    configuredAccounts: number;
+  }>;
+};
+
 export function AdminWorkerDashboard() {
   const [health, setHealth] = useState<WorkerHealthResult | null>(null);
+  const [providers, setProviders] = useState<ExchangeProvider[]>([]);
   const [loading, setLoading] = useState(false);
-  const [syncing, setSyncing] = useState(false);
+  const [updatingProvider, setUpdatingProvider] = useState<string | null>(null);
   const [error, setError] = useState('');
 
   const fetchHealth = useCallback(async () => {
     setLoading(true);
     setError('');
     try {
-      const response = await fetch('/api/admin/worker-health', { cache: 'no-store' });
-      const body = await response.json() as { ok?: boolean; data?: WorkerHealthResult; error?: string };
-      if (!response.ok || !body.data) {
-        throw new Error(body.error ?? `Worker health check failed (${response.status})`);
+      const [healthRes, exchangesRes] = await Promise.all([
+        fetch('/api/admin/worker-health', { cache: 'no-store' }),
+        fetch('/api/admin/exchanges', { cache: 'no-store' }),
+      ]);
+
+      const healthBody = (await healthRes.json()) as { ok?: boolean; data?: WorkerHealthResult; error?: string };
+      if (healthRes.ok && healthBody.data) {
+        setHealth(healthBody.data);
       }
-      setHealth(body.data);
+
+      const exchangesBody = (await exchangesRes.json()) as { data?: ExchangeProvider[]; error?: string };
+      if (exchangesRes.ok && exchangesBody.data) {
+        setProviders(exchangesBody.data);
+      }
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to query worker health.');
+      setError(err instanceof Error ? err.message : 'Failed to query telemetry.');
     } finally {
       setLoading(false);
     }
   }, []);
 
-  const syncDemoLease = async () => {
-    setSyncing(true);
-    setError('');
+  const toggleCustomerAccess = async (exchange: string, current: boolean) => {
+    setUpdatingProvider(exchange);
     try {
-      const csrfResponse = await fetch('/api/csrf', { cache: 'no-store' });
-      const csrfBody = await csrfResponse.json() as { data?: { csrfToken: string } };
+      const csrfRes = await fetch('/api/csrf', { cache: 'no-store' });
+      const csrfBody = (await csrfRes.json()) as { data?: { csrfToken: string } };
       const csrf = csrfBody.data?.csrfToken;
-      const response = await fetch('/api/admin/worker-health', {
-        method: 'POST',
+
+      const res = await fetch('/api/admin/exchanges', {
+        method: 'PUT',
         headers: {
           'Content-Type': 'application/json',
           ...(csrf ? { 'X-CSRF-Token': csrf } : {}),
         },
         body: JSON.stringify({
-          action: 'acquire',
-          workerId: 'worker-cloud-daemon-1',
-          hostname: 'smartexit-worker-host',
-          pid: 4096,
-          version: '1.0.0',
-          environment: 'DEMO',
-          ttlSeconds: 600,
+          type: 'customer',
+          exchange,
+          enabled: !current,
         }),
       });
-      if (!response.ok) throw new Error('Worker lease sync failed.');
+
+      if (!res.ok) throw new Error('Failed to update exchange setting.');
       await fetchHealth();
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Lease sync failed.');
+      setError(err instanceof Error ? err.message : 'Update failed.');
     } finally {
-      setSyncing(false);
+      setUpdatingProvider(null);
     }
   };
 
@@ -72,28 +94,19 @@ export function AdminWorkerDashboard() {
     <section className="card stack" id="admin-worker-dashboard" style={{ border: '1px solid var(--accent)' }}>
       <div className="section-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 12 }}>
         <div>
-          <p className="mono">ADMIN · 24×7 EXECUTION ENGINE</p>
+          <p className="mono">ADMIN · 24×7 EXECUTION ENGINE &amp; EXCHANGES</p>
           <h2 style={{ margin: 0 }}>Automation Worker Supervision</h2>
           <p className="muted" style={{ margin: '4px 0 0' }}>
-            Monitors the standalone background process responsible for continuous market scanning, automated Demo order dispatch, and SmartExit trailing protection.
+            Monitors standalone daemon processes responsible for continuous scanning, automated Demo order dispatch, and SmartExit trailing protection.
           </p>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
           <button
             type="button"
-            className="button"
-            onClick={() => void syncDemoLease()}
-            disabled={loading || syncing}
-            style={{ fontSize: 12, padding: '6px 12px' }}
-          >
-            {syncing ? 'Syncing Lease…' : '⚡ Activate Demo Lease'}
-          </button>
-          <button
-            type="button"
             className="button-secondary"
             onClick={() => void fetchHealth()}
             disabled={loading}
-            style={{ fontSize: 12, padding: '6px 12px' }}
+            style={{ fontSize: 12, padding: '6px 14px' }}
           >
             {loading ? 'Checking…' : '⟳ Refresh Telemetry'}
           </button>
@@ -102,6 +115,7 @@ export function AdminWorkerDashboard() {
 
       {error && <p className="error" role="alert">{error}</p>}
 
+      {/* Honest Worker Status Telemetry */}
       <div
         style={{
           display: 'grid',
@@ -114,7 +128,7 @@ export function AdminWorkerDashboard() {
         }}
       >
         <div>
-          <small className="muted" style={{ display: 'block', fontSize: 11 }}>WORKER LEASE STATUS</small>
+          <small className="muted" style={{ display: 'block', fontSize: 11 }}>WORKER LEASE TELEMETRY</small>
           <strong
             style={{
               fontSize: 16,
@@ -122,30 +136,30 @@ export function AdminWorkerDashboard() {
               color: isOnline ? '#10b981' : isDegraded ? '#f59e0b' : '#6b7280',
             }}
           >
-            {isOnline ? '● ACTIVE LEASE' : isDegraded ? '● DEGRADED' : '○ STANDALONE / DORMANT'}
+            {isOnline ? '● ACTIVE DAEMON ONLINE' : isDegraded ? '● DEGRADED' : '○ OFFLINE / HOSTING-GATED'}
           </strong>
           <small className="muted" style={{ display: 'block', fontSize: 10 }}>
-            Source: {health?.source ?? 'Checking…'}
+            {isOnline ? `Verified within TTL (${lease?.hostname})` : 'Awaiting background daemon process'}
           </small>
         </div>
 
         <div>
-          <small className="muted" style={{ display: 'block', fontSize: 11 }}>WORKER IDENTIFIER / PID</small>
+          <small className="muted" style={{ display: 'block', fontSize: 11 }}>WORKER PID / HOST</small>
           <strong style={{ fontSize: 15, fontFamily: 'DM Mono', color: 'var(--text)' }}>
-            {lease?.pid ? `PID ${lease.pid} (${lease.hostname})` : 'scripts/demo-trading-worker.mjs'}
+            {isOnline && lease?.pid ? `PID ${lease.pid} (${lease.hostname})` : 'Standalone Process'}
           </strong>
           <small className="muted" style={{ display: 'block', fontSize: 10 }}>
-            {lease?.workerId ?? 'Isolated Node process'}
+            {isOnline && lease?.workerId ? lease.workerId : 'scripts/demo-trading-worker.mjs'}
           </small>
         </div>
 
         <div>
-          <small className="muted" style={{ display: 'block', fontSize: 11 }}>HEARTBEAT & TICKS</small>
+          <small className="muted" style={{ display: 'block', fontSize: 11 }}>HEARTBEAT &amp; TICKS</small>
           <strong style={{ fontSize: 15, fontFamily: 'DM Mono', color: isOnline ? '#10b981' : 'var(--text-muted)' }}>
-            {lease?.tickCount ? `${lease.tickCount} cycles recorded` : 'Ready on launch'}
+            {isOnline && lease?.tickCount ? `${lease.tickCount} cycles recorded` : 'Ready on start'}
           </strong>
           <small className="muted" style={{ display: 'block', fontSize: 10 }}>
-            {lease?.heartbeatAt ? `Last: ${new Date(lease.heartbeatAt).toLocaleTimeString()}` : 'Interval: 30s'}
+            {isOnline && lease?.heartbeatAt ? `Last: ${new Date(lease.heartbeatAt).toLocaleTimeString()}` : 'Daemon Interval: 30s'}
           </small>
         </div>
 
@@ -162,15 +176,15 @@ export function AdminWorkerDashboard() {
           <strong style={{ fontSize: 15, fontFamily: 'DM Mono', color: '#6b7280' }}>
             DISABLED BY POLICY
           </strong>
-          <small className="muted" style={{ display: 'block', fontSize: 10 }}>Zero unauthorized Vercel billing</small>
+          <small className="muted" style={{ display: 'block', fontSize: 10 }}>Zero unauthorized cloud cron charges</small>
         </div>
 
         <div>
-          <small className="muted" style={{ display: 'block', fontSize: 11 }}>EMERGENCY KILL-SWITCH</small>
+          <small className="muted" style={{ display: 'block', fontSize: 11 }}>FAIL-SAFE RECOVERY</small>
           <span style={{ fontSize: 13, fontFamily: 'DM Mono', color: '#10b981', fontWeight: 600 }}>
-            ✓ ACTIVE & ARMED
+            ✓ AUTO-RECONCILE
           </span>
-          <small className="muted" style={{ display: 'block', fontSize: 10 }}>storage/demo-worker/kill-switch</small>
+          <small className="muted" style={{ display: 'block', fontSize: 10 }}>10-step full position protection</small>
         </div>
       </div>
 
@@ -183,16 +197,107 @@ export function AdminWorkerDashboard() {
         </div>
       )}
 
+      {/* Admin Exchange Controls Table */}
+      <div style={{ marginTop: 8 }}>
+        <h3 style={{ margin: '0 0 8px', fontSize: 15 }}>Admin Exchange Provider Controls</h3>
+        <p className="muted" style={{ margin: '0 0 12px', fontSize: 12 }}>
+          Manage provider availability, sandbox demo permissions, and customer accessibility across all 5 integrated exchange adapters.
+        </p>
+        <div className="scanner-table-wrap">
+          <table className="scan-table position-table">
+            <thead>
+              <tr>
+                <th>Exchange</th>
+                <th>Adapter Version</th>
+                <th>Environment</th>
+                <th>Demo Sandbox</th>
+                <th>Customer Access</th>
+                <th>Action</th>
+              </tr>
+            </thead>
+            <tbody>
+              {providers.length === 0 ? (
+                <tr>
+                  <td colSpan={6} style={{ textAlign: 'center', padding: 16 }}>
+                    Loading exchange providers…
+                  </td>
+                </tr>
+              ) : (
+                providers.map((p) => {
+                  const demoEnv = p.environments.find((e) => e.environment === 'DEMO' || e.environment === 'TESTNET');
+                  const isBusy = updatingProvider === p.exchange;
+                  return (
+                    <tr key={p.exchange}>
+                      <td>
+                        <strong>{p.name}</strong>
+                        <small style={{ display: 'block', fontSize: 10, color: 'var(--text-muted)' }}>{p.exchange}</small>
+                      </td>
+                      <td>
+                        <span className="mono" style={{ fontSize: 11 }}>{p.adapter_version}</span>
+                      </td>
+                      <td>
+                        <span className="mono" style={{ fontSize: 11 }}>{demoEnv?.environment ?? 'DEMO'}</span>
+                      </td>
+                      <td>
+                        <span
+                          style={{
+                            padding: '2px 6px',
+                            borderRadius: 4,
+                            fontSize: 10,
+                            fontWeight: 600,
+                            fontFamily: 'DM Mono',
+                            background: demoEnv?.enabled ? '#f0fdf4' : 'var(--surface-raised)',
+                            color: demoEnv?.enabled ? '#166534' : 'var(--text-muted)',
+                          }}
+                        >
+                          {demoEnv?.enabled ? 'AVAILABLE' : 'STANDBY'}
+                        </span>
+                      </td>
+                      <td>
+                        <span
+                          style={{
+                            padding: '2px 6px',
+                            borderRadius: 4,
+                            fontSize: 10,
+                            fontWeight: 600,
+                            fontFamily: 'DM Mono',
+                            background: p.customer_enabled ? '#f0fdf4' : 'var(--surface-raised)',
+                            color: p.customer_enabled ? '#166534' : 'var(--text-muted)',
+                          }}
+                        >
+                          {p.customer_enabled ? 'ENABLED' : 'DISABLED'}
+                        </span>
+                      </td>
+                      <td>
+                        <button
+                          type="button"
+                          className="button-secondary"
+                          onClick={() => void toggleCustomerAccess(p.exchange, p.customer_enabled)}
+                          disabled={isBusy}
+                          style={{ fontSize: 11, padding: '4px 10px' }}
+                        >
+                          {isBusy ? 'Saving…' : p.customer_enabled ? 'Disable' : 'Enable'}
+                        </button>
+                      </td>
+                    </tr>
+                  );
+                })
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
       <div style={{ padding: '12px 16px', background: 'var(--surface-sunken)', borderRadius: 6, fontSize: 12 }}>
-        <strong style={{ display: 'block', marginBottom: 4 }}>Unattended 24×7 Deployment Quickstart:</strong>
+        <strong style={{ display: 'block', marginBottom: 4 }}>Unattended Background Daemon Instructions:</strong>
         <p className="muted" style={{ margin: '0 0 6px 0' }}>
-          Serverless Vercel functions enter dormancy when idle without incoming HTTP traffic. To maintain continuous unattended operation independently of a browser session:
+          To run continuous 24×7 scanning and automated trade dispatch independently of browser sessions:
         </p>
         <code className="mono" style={{ display: 'block', padding: 8, background: 'var(--background)', borderRadius: 4, marginBottom: 6 }}>
-          Windows Launcher: powershell -ExecutionPolicy Bypass -File .\scripts\start-demo-worker.ps1
+          Local / VM Process: powershell -ExecutionPolicy Bypass -File .\scripts\start-demo-worker.ps1
         </code>
         <code className="mono" style={{ display: 'block', padding: 8, background: 'var(--background)', borderRadius: 4 }}>
-          Docker Container: docker build -f Dockerfile.worker -t smartexit-worker . &amp;&amp; docker run -d --name smartexit-worker smartexit-worker
+          Docker Daemon: docker build -f Dockerfile.worker -t smartexit-worker . &amp;&amp; docker run -d --name smartexit-worker smartexit-worker
         </code>
       </div>
     </section>

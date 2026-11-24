@@ -22,7 +22,7 @@ export default async function BinancePage() {
             ← Back to Dashboard
           </Link>
           <Link className="button-secondary" href="/positions">
-            View Paper Positions
+            View Exchange Positions
           </Link>
           <Link className="button-secondary" href="/scanner">
             Smart Scanner

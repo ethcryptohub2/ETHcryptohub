@@ -44,19 +44,19 @@ export default async function DashboardPage() {
       <section className="grid" style={{ marginBottom: 20 }}>
         <article className="card">
           <p className="mono">EXECUTION ENVIRONMENTS</p>
-          <h2 style={{ margin: '8px 0', fontSize: 20, color: '#10b981' }}>Demo & Paper Mode (Active)</h2>
+          <h2 style={{ margin: '8px 0', fontSize: 20, color: '#10b981' }}>Exchange Demo Only (Active)</h2>
           <p className="muted" style={{ margin: 0, fontSize: 13, lineHeight: 1.5 }}>
-            <strong>[PAPER SIMULATION]:</strong> Virtual ledger tracking with zero exchange keys.<br />
-            <strong>[EXCHANGE DEMO]:</strong> Remote signed API orders on testnet accounts.<br />
+            <strong>[EXCHANGE DEMO]:</strong> Remote signed API execution across 5 connected exchanges.<br />
+            <strong>[ZERO SIMULATION]:</strong> No internal paper wallets or artificial balances.<br />
             <strong>[LIVE TRADING]:</strong> Locked fail-closed (HTTP 403) for complete safety.
           </p>
         </article>
 
         <article className="card">
           <p className="mono">MARKET SCANNER STATUS</p>
-          <h2 style={{ margin: '8px 0', fontSize: 20 }}>300+ Pairs Active</h2>
+          <h2 style={{ margin: '8px 0', fontSize: 20 }}>500+ Contracts Active</h2>
           <p className="muted" style={{ margin: 0, fontSize: 13 }}>
-            Continuous technical analysis on Binance USDⓈ-M Futures with EMA, Supertrend, ADX & RSI confluence.
+            Continuous algorithmic confluence scan across all 522 active Binance USDⓈ-M perpetual Futures.
           </p>
         </article>
 

@@ -6,210 +6,282 @@ import { ExchangePositionsPanel } from './exchange-positions-panel';
 import { POSITIONS_PAGE_SIZE } from '../../lib/pagination';
 import { Pagination } from '../../components/pagination';
 
-type Position = {
+type ExecutionItem = {
+  id: string;
   signal_id: string;
-  scanner_type: 'STANDARD' | 'HIGH_RISK';
+  exchange: 'BINANCE' | 'BYBIT' | 'OKX' | 'BITGET' | 'GATE';
+  strategy: 'STANDARD' | 'HIGH_RISK_SCALPING';
+  environment: 'DEMO' | 'LIVE';
   symbol: string;
   side: 'LONG' | 'SHORT';
-  timeframe: string;
-  strategy_name: string;
-  reference_entry: string;
+  quantity: string;
+  notional_usdt: string;
+  leverage: number;
+  entry_price: string;
+  actual_fill_price: string | null;
   stop_loss: string;
-  take_profit_1: string;
-  take_profit_2: string;
-  take_profit_3: string | null;
-  actual_entry: string;
-  actual_exit: string | null;
+  take_profit: string;
+  tp1_price: string;
+  tp2_price: string;
+  tp3_price: string | null;
+  protection_status: string;
   realized_pnl: string | null;
-  status: 'ENTERED' | 'CLOSED';
-  entered_at: string;
-  closed_at: string | null;
-  signal_status: string;
+  execution_status: string;
+  execution_mode: string;
+  created_at: string;
+  updated_at: string;
 };
 
-type VirtualAccountSummary = {
-  startingBalance: number;
-  totalRealizedPnl: number;
-  unrealizedPnl: number;
-  estimatedTradingFees: number;
-  currentVirtualEquity: number;
-  openPositionsCount: number;
-  closedTradesCount: number;
-  winRatePercent: number;
-  profitFactor: number;
-  takerFeeRatePercent: number;
-  storageType: string;
-  table: string;
+type ExecutionResponse = {
+  data?: {
+    items: ExecutionItem[];
+    total: number;
+    page: number;
+    pageSize: number;
+    performance: {
+      DEMO: { total: number; protected: number; failed: number };
+      LIVE: { total: number; protected: number; failed: number };
+    };
+  };
+  error?: string;
 };
 
-function price(value: string | null) {
+function formatPrice(value: string | null | undefined): string {
+  if (!value) return '—';
   const parsed = Number(value);
-  return Number.isFinite(parsed) ? parsed.toLocaleString(undefined, { maximumSignificantDigits: 8 }) : '—';
+  return Number.isFinite(parsed) ? parsed.toLocaleString(undefined, { maximumSignificantDigits: 8 }) : value;
+}
+
+function exchangeBadgeColor(exchange: string): { bg: string; color: string; border: string } {
+  switch (exchange) {
+    case 'BINANCE':
+      return { bg: '#fef3c7', color: '#92400e', border: '#fcd34d' };
+    case 'BYBIT':
+      return { bg: '#e0e7ff', color: '#3730a3', border: '#a5b4fc' };
+    case 'OKX':
+      return { bg: '#f3f4f6', color: '#111827', border: '#d1d5db' };
+    case 'BITGET':
+      return { bg: '#ccfbf1', color: '#115e59', border: '#5eead4' };
+    case 'GATE':
+      return { bg: '#fce7f3', color: '#9d174d', border: '#f472b6' };
+    default:
+      return { bg: 'var(--surface-raised)', color: 'var(--text-muted)', border: 'var(--surface-border)' };
+  }
 }
 
 export function PositionsPanel() {
-  const [positions, setPositions] = useState<Position[]>([]);
-  const [summary, setSummary] = useState<VirtualAccountSummary | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState('');
-  const [showClosed, setShowClosed] = useState(false);
-  const [page, setPage] = useState(1);
-  const [totalCount, setTotalCount] = useState(0);
-  const [totalPages, setTotalPages] = useState(1);
+  const [executions, setExecutions] = useState<ExecutionItem[]>([]);
+  const [execTotal, setExecTotal] = useState(0);
+  const [execPage, setExecPage] = useState(1);
+  const [execTotalPages, setExecTotalPages] = useState(1);
+  const [execLoading, setExecLoading] = useState(true);
+  const [execError, setExecError] = useState('');
+  const [filterExchange, setFilterExchange] = useState<string>('ALL');
 
-  const load = useCallback(async () => {
-    setLoading(true);
-    setError('');
+  const loadExecutions = useCallback(async () => {
+    setExecLoading(true);
+    setExecError('');
     try {
       const params = new URLSearchParams({
-        page: String(page),
-        pageSize: String(POSITIONS_PAGE_SIZE),
-        status: showClosed ? 'CLOSED' : 'ENTERED',
+        page: String(execPage),
+        environment: 'DEMO',
+        ...(filterExchange !== 'ALL' ? { exchange: filterExchange } : {}),
       });
-      const response = await fetch(`/api/positions?${params}`, { cache: 'no-store' });
-      const body = (await response.json()) as {
-        data?: {
-          positions: Position[];
-          summary: VirtualAccountSummary;
-          pagination?: { total: number; page: number; pageSize: number; totalPages: number };
-        } | Position[];
-        error?: string;
-      };
-      if (!response.ok || !body.data) throw new Error(body.error ?? 'Position records could not be loaded.');
-      if (Array.isArray(body.data)) {
-        setPositions(body.data);
-        setTotalCount(body.data.length);
-        setTotalPages(Math.max(1, Math.ceil(body.data.length / POSITIONS_PAGE_SIZE)));
-      } else {
-        setPositions(body.data.positions ?? []);
-        setSummary(body.data.summary ?? null);
-        if (body.data.pagination) {
-          setTotalCount(body.data.pagination.total);
-          setTotalPages(body.data.pagination.totalPages);
-        } else {
-          setTotalCount(body.data.positions?.length ?? 0);
-          setTotalPages(Math.max(1, Math.ceil((body.data.positions?.length ?? 0) / POSITIONS_PAGE_SIZE)));
-        }
+      const response = await fetch(`/api/trading/executions?${params}`, { cache: 'no-store' });
+      const body = (await response.json()) as ExecutionResponse;
+      if (!response.ok || !body.data) {
+        throw new Error(body.error ?? 'Exchange trade executions could not be loaded.');
       }
-    } catch (reason) {
-      setError(reason instanceof Error ? reason.message : 'Position records could not be loaded.');
+      setExecutions(body.data.items);
+      setExecTotal(body.data.total);
+      setExecTotalPages(Math.max(1, Math.ceil(body.data.total / 20)));
+    } catch (err) {
+      setExecError(err instanceof Error ? err.message : 'Execution history unavailable.');
     } finally {
-      setLoading(false);
+      setExecLoading(false);
     }
-  }, [page, showClosed]);
+  }, [execPage, filterExchange]);
 
   useEffect(() => {
-    const timer = window.setTimeout(() => void load(), 0);
-    return () => window.clearTimeout(timer);
-  }, [load]);
+    void loadExecutions();
+  }, [loadExecutions]);
 
-  const pagePositions = positions;
-  return <main className="shell">
-    <section className="hero">
-      <p className="mono">EXECUTION LEDGER · [INTERNAL PAPER SIMULATION]</p>
-      <h1>Paper Position Records</h1>
-      <p className="muted">
-        These are simulated positions tracked in your local virtual ledger with 0 capital risk. Remote signed exchange orders are tracked in the Authenticated Exchange Demo Positions panel below.
-      </p>
-    </section>
-    {summary && (
-      <section
-        className="card"
-        style={{
-          padding: '16px 20px',
-          display: 'grid',
-          gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))',
-          gap: 16,
-          background: 'var(--surface-raised)',
-          border: '1px solid var(--accent)',
-          borderRadius: 8,
-          marginBottom: 16,
-        }}
-      >
-        <div>
-          <small className="muted" style={{ display: 'block', fontSize: 11 }}>VIRTUAL PAPER EQUITY</small>
-          <strong style={{ fontSize: 18, fontFamily: 'DM Mono', color: 'var(--accent)' }}>
-            ${summary.currentVirtualEquity.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} USDT
-          </strong>
-          <small className="muted" style={{ display: 'block', fontSize: 10 }}>Base: ${summary.startingBalance.toLocaleString()} USDT Virtual Capital</small>
-        </div>
-        <div>
-          <small className="muted" style={{ display: 'block', fontSize: 11 }}>REALIZED / UNREALIZED PNL</small>
-          <strong
-            style={{
-              fontSize: 18,
-              fontFamily: 'DM Mono',
-              color: (summary.totalRealizedPnl + (summary.unrealizedPnl ?? 0)) >= 0 ? '#10b981' : '#ef4444',
-            }}
-          >
-            {summary.totalRealizedPnl >= 0 ? '+' : ''}${summary.totalRealizedPnl.toFixed(2)}
-            {' '}<span style={{ fontSize: 13, color: (summary.unrealizedPnl ?? 0) >= 0 ? '#10b981' : '#ef4444' }}>
-              ({(summary.unrealizedPnl ?? 0) >= 0 ? '+' : ''}${(summary.unrealizedPnl ?? 0).toFixed(2)} unrealized)
-            </span>
-          </strong>
-          <small className="muted" style={{ display: 'block', fontSize: 10 }}>
-            {summary.closedTradesCount} closed ({summary.winRatePercent}% win rate)
-          </small>
-        </div>
-        <div>
-          <small className="muted" style={{ display: 'block', fontSize: 11 }}>TRADING FEES (0.04% TAKER)</small>
-          <strong style={{ fontSize: 18, fontFamily: 'DM Mono', color: '#f59e0b' }}>
-            -${(summary.estimatedTradingFees ?? 0).toFixed(2)} USDT
-          </strong>
-          <small className="muted" style={{ display: 'block', fontSize: 10 }}>Simulated VIP0 fees deducted</small>
-        </div>
-        <div>
-          <small className="muted" style={{ display: 'block', fontSize: 11 }}>ACTIVE OPEN POSITIONS</small>
-          <strong style={{ fontSize: 18, fontFamily: 'DM Mono' }}>
-            {summary.openPositionsCount}
-          </strong>
-          <small className="muted" style={{ display: 'block', fontSize: 10 }}>Simulated positions</small>
-        </div>
-        <div>
-          <small className="muted" style={{ display: 'block', fontSize: 11 }}>PERSISTENCE ENGINE</small>
-          <span style={{ fontSize: 12, fontFamily: 'DM Mono', color: '#10b981', fontWeight: 600 }}>
-            ✓ POSTGRESQL PERSISTENT
-          </span>
-          <small className="muted" style={{ display: 'block', fontSize: 10 }}>public.signal_user_entries</small>
+  return (
+    <main className="shell">
+      <section className="hero">
+        <p className="mono">MULTI-EXCHANGE GATEWAY · AUTHENTICATED DEMO &amp; TESTNET</p>
+        <h1>Exchange Positions &amp; Executions</h1>
+        <p className="muted">
+          Real-time open positions and confirmed executions across authenticated exchange Demo accounts (Binance, Bybit, OKX, Bitget, Gate.io). Real-money Live Trading is strictly locked fail-closed (HTTP 403). Zero internal paper simulation.
+        </p>
+        <div className="links">
+          <Link href="/scanner" className="button">
+            ⚡ Open Market Scanner
+          </Link>
+          <Link href="/binance" className="button-secondary">
+            Exchange Connections &amp; Switches
+          </Link>
         </div>
       </section>
-    )}
-    <ExchangePositionsPanel />
-    <section className="card stack">
-      <div className="position-toolbar">
-        <div className="links" role="group" aria-label="Position record filter">
-          <button type="button" className={!showClosed ? '' : 'button-secondary'} onClick={() => { setShowClosed(false); setPage(1); }}>Open entries</button>
-          <button type="button" className={showClosed ? '' : 'button-secondary'} onClick={() => { setShowClosed(true); setPage(1); }}>Closed history</button>
+
+      {/* Primary: Live Signed Exchange Open Positions */}
+      <ExchangePositionsPanel />
+
+      {/* Secondary: Genuine Exchange Trade Execution History */}
+      <section className="card stack" style={{ marginTop: 20 }}>
+        <div className="section-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 12 }}>
+          <div>
+            <p className="mono">AUTHENTICATED EXCHANGE AUDIT LEDGER · DEMO EXECUTIONS</p>
+            <h2 style={{ margin: 0 }}>Exchange Trade Execution History</h2>
+            <p className="muted" style={{ margin: '4px 0 0', fontSize: 13 }}>
+              Every executed order is cryptographically signed and dispatched directly to remote exchange Demo / Testnet APIs.
+            </p>
+          </div>
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+            <select
+              value={filterExchange}
+              onChange={(e) => {
+                setFilterExchange(e.target.value);
+                setExecPage(1);
+              }}
+              style={{ padding: '6px 12px', fontSize: 12, borderRadius: 6, border: '1px solid var(--surface-border)', background: 'var(--surface-raised)', color: 'inherit' }}
+            >
+              <option value="ALL">All Exchanges</option>
+              <option value="BINANCE">Binance Futures Demo</option>
+              <option value="BYBIT">Bybit Demo</option>
+              <option value="OKX">OKX Demo</option>
+              <option value="BITGET">Bitget Demo</option>
+              <option value="GATE">Gate.io Testnet</option>
+            </select>
+            <button
+              type="button"
+              className="button-secondary"
+              onClick={() => void loadExecutions()}
+              disabled={execLoading}
+              style={{ fontSize: 12, padding: '6px 12px' }}
+            >
+              {execLoading ? 'Loading…' : '↻ Refresh History'}
+            </button>
+          </div>
         </div>
-        <button type="button" className="button-secondary" onClick={() => void load()} disabled={loading}>Refresh</button>
-      </div>
-      {error && <p className="error" role="alert">{error}</p>}
-      {loading && <p className="muted">Loading your recorded entries…</p>}
-      {!loading && !error && pagePositions.length === 0 && <p className="muted">{showClosed ? 'No closed user-recorded entries yet.' : 'No open user-recorded entries yet. Record an entry from signal history.'}</p>}
-      {!loading && pagePositions.length > 0 && <div className="scanner-table-wrap"><table className="scan-table position-table">
-        <thead><tr><th>Pair</th><th>Mode</th><th>Direction</th><th>Actual entry</th><th>Stop Loss</th><th>TP1 / TP2 / TP3</th><th>Exit / PnL</th><th>Recorded</th><th>Signal</th></tr></thead>
-        <tbody>{pagePositions.map((position) => <tr key={position.signal_id}>
-          <td>{position.symbol}<small>{position.timeframe}</small></td>
-          <td>{position.scanner_type === 'HIGH_RISK' ? 'High-Risk' : 'Standard'}</td>
-          <td>{position.side}</td>
-          <td>{price(position.actual_entry)}</td>
-          <td>{price(position.stop_loss)}</td>
-          <td>{price(position.take_profit_1)} / {price(position.take_profit_2)} / {price(position.take_profit_3)}</td>
-          <td>{position.actual_exit ? `${price(position.actual_exit)} · PnL ${price(position.realized_pnl)}` : 'Open record'}</td>
-          <td>{new Date(position.entered_at).toLocaleString()}</td>
-          <td><Link href={`/signals/${position.signal_id}`}>{position.signal_status.replaceAll('_', ' ')}</Link></td>
-        </tr>)}</tbody>
-      </table></div>}
-      {totalCount > 0 && (
-        <Pagination
-          page={page}
-          totalPages={totalPages}
-          totalItems={totalCount}
-          pageSize={POSITIONS_PAGE_SIZE}
-          onPageChange={setPage}
-          itemLabel="positions"
-        />
-      )}
-    </section>
-  </main>;
+
+        {execError && <p className="error" role="alert">{execError}</p>}
+        {execLoading && <p className="muted">Fetching authenticated exchange executions…</p>}
+
+        {!execLoading && !execError && executions.length === 0 && (
+          <div style={{ padding: '32px 16px', textAlign: 'center', background: 'var(--surface-subtle)', borderRadius: 8, border: '1px dashed var(--surface-border)' }}>
+            <h3 style={{ margin: '0 0 6px', fontSize: 16 }}>No Exchange Demo Executions Yet</h3>
+            <p className="muted" style={{ margin: '0 0 14px', fontSize: 13, maxWidth: 480, marginLeft: 'auto', marginRight: 'auto' }}>
+              When high-confluence setups appear on the Smart Scanner, execute Demo orders directly to your connected exchanges.
+            </p>
+            <Link href="/scanner" className="button" style={{ fontSize: 12, padding: '6px 14px' }}>
+              Launch Scanner
+            </Link>
+          </div>
+        )}
+
+        {!execLoading && executions.length > 0 && (
+          <div className="scanner-table-wrap">
+            <table className="scan-table position-table">
+              <thead>
+                <tr>
+                  <th>Exchange</th>
+                  <th>Pair</th>
+                  <th>Direction</th>
+                  <th>Fill Price</th>
+                  <th>Quantity / Notional</th>
+                  <th>Stop Loss</th>
+                  <th>Take Profit (TP1/2/3)</th>
+                  <th>Status</th>
+                  <th>Executed At</th>
+                </tr>
+              </thead>
+              <tbody>
+                {executions.map((exec) => {
+                  const badge = exchangeBadgeColor(exec.exchange);
+                  return (
+                    <tr key={exec.id}>
+                      <td>
+                        <span
+                          style={{
+                            padding: '3px 8px',
+                            borderRadius: 4,
+                            fontSize: 10,
+                            fontWeight: 700,
+                            fontFamily: 'DM Mono',
+                            background: badge.bg,
+                            color: badge.color,
+                            border: `1px solid ${badge.border}`,
+                          }}
+                        >
+                          {exec.exchange}
+                        </span>
+                      </td>
+                      <td>
+                        <strong>{exec.symbol}</strong>
+                        <small style={{ display: 'block', fontSize: 10, color: 'var(--text-muted)' }}>
+                          {exec.strategy === 'HIGH_RISK_SCALPING' ? 'Scalping' : 'Standard'} · {exec.leverage}x
+                        </small>
+                      </td>
+                      <td>
+                        <span
+                          style={{
+                            fontWeight: 700,
+                            fontSize: 12,
+                            color: exec.side === 'LONG' ? '#10b981' : '#ef4444',
+                          }}
+                        >
+                          {exec.side}
+                        </span>
+                      </td>
+                      <td>{formatPrice(exec.actual_fill_price || exec.entry_price)}</td>
+                      <td>
+                        {formatPrice(exec.quantity)}
+                        <small style={{ display: 'block', fontSize: 10, color: 'var(--text-muted)' }}>
+                          ${formatPrice(exec.notional_usdt)} USDT
+                        </small>
+                      </td>
+                      <td>{formatPrice(exec.stop_loss)}</td>
+                      <td>
+                        {formatPrice(exec.tp1_price)} / {formatPrice(exec.tp2_price)} / {formatPrice(exec.tp3_price)}
+                      </td>
+                      <td>
+                        <span
+                          style={{
+                            padding: '2px 6px',
+                            borderRadius: 4,
+                            fontSize: 10,
+                            fontWeight: 600,
+                            fontFamily: 'DM Mono',
+                            background: exec.execution_status === 'PROTECTED' ? '#f0fdf4' : exec.execution_status === 'CLOSED' ? 'var(--surface-raised)' : '#fef2f2',
+                            color: exec.execution_status === 'PROTECTED' ? '#166534' : exec.execution_status === 'CLOSED' ? 'var(--text-muted)' : '#991b1b',
+                          }}
+                        >
+                          {exec.execution_status}
+                        </span>
+                      </td>
+                      <td>
+                        <small style={{ fontSize: 11 }}>{new Date(exec.created_at).toLocaleString()}</small>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+
+        {execTotal > 0 && (
+          <Pagination
+            page={execPage}
+            totalPages={execTotalPages}
+            totalItems={execTotal}
+            pageSize={20}
+            onPageChange={setExecPage}
+            itemLabel="executions"
+          />
+        )}
+      </section>
+    </main>
+  );
 }

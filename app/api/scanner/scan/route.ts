@@ -25,7 +25,7 @@ async function checkAndAcquireScanLock(): Promise<{ acquired: boolean; lastResul
     );
     const lock = res.rows[0]?.value_json;
     const now = Date.now();
-    if (lock && lock.status === 'RUNNING' && typeof lock.lockedAt === 'number' && now - lock.lockedAt < 10_000) {
+    if (lock && lock.status === 'RUNNING' && typeof lock.lockedAt === 'number' && now - lock.lockedAt < 60_000) {
       return { acquired: false, lastResult: lock.lastResult };
     }
     await query(
@@ -88,12 +88,19 @@ export async function POST(request: NextRequest) {
   const { timeframe, strategy, limit } = parsed.data;
 
   const lockStatus = await checkAndAcquireScanLock();
-  if (!lockStatus.acquired && lockStatus.lastResult) {
+  if (!lockStatus.acquired) {
+    if (lockStatus.lastResult) {
+      return NextResponse.json({
+        ok: true,
+        deduplicated: true,
+        data: lockStatus.lastResult,
+      }, { headers: noStore });
+    }
     return NextResponse.json({
-      ok: true,
-      deduplicated: true,
-      data: lockStatus.lastResult,
-    }, { headers: noStore });
+      ok: false,
+      error: 'A scanner cycle is currently in progress. Please wait for the current batch to complete.',
+      inFlight: true,
+    }, { status: 429, headers: noStore });
   }
 
   try {

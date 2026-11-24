@@ -367,7 +367,7 @@ export function BinanceForm() {
           </h3>
           <p className="muted" style={{ maxWidth: 520, margin: 0, fontSize: 13, lineHeight: 1.5 }}>
             Live trading execution and real-money credential inputs are locked by platform safety policy. Real capital
-            is never at risk. SmartExit operates exclusively in high-fidelity Demo and Paper simulation modes.
+            is never at risk. SmartExit operates exclusively in high-fidelity authenticated exchange Demo & Testnet execution modes.
           </p>
           <button
             type="button"

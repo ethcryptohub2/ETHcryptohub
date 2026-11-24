@@ -1247,6 +1247,111 @@ export async function reconcileBinanceDemoProtection(limit = 10) {
   return { processed: results.length, results };
 }
 
+export async function executeMultiExchangeDemo(
+  userId: number,
+  signalId: string,
+  exchange: 'BYBIT' | 'OKX' | 'BITGET' | 'GATE',
+  environment: 'DEMO' | 'TESTNET' = exchange === 'GATE' ? 'TESTNET' : 'DEMO',
+) {
+  const existing = await query<{ id: string }>(
+    `SELECT id::TEXT FROM public.trade_executions
+      WHERE user_id = $1 AND signal_id = $2 AND exchange = $3 AND environment = $4`,
+    [userId, signalId, exchange, environment],
+  );
+  if (existing.rows[0]) return { id: existing.rows[0].id, status: 'SKIPPED_EXISTING' };
+
+  let credentials;
+  try {
+    const { loadExchangeCredentials } = await import('./exchanges/credentials');
+    credentials = await loadExchangeCredentials(userId, exchange, environment);
+  } catch {
+    return { status: 'CREDENTIAL_GATED' };
+  }
+
+  const signal = await getSignal(signalId);
+  const strategy = strategyForSignal(signal.scanner_type);
+
+  let adapter: any;
+  if (exchange === 'BYBIT') {
+    const { createBybitDemoAdapter } = await import('./exchanges/bybit-demo');
+    adapter = createBybitDemoAdapter(credentials);
+  } else if (exchange === 'OKX') {
+    const { createOkxDemoAdapter } = await import('./exchanges/okx-demo');
+    adapter = createOkxDemoAdapter(credentials);
+  } else if (exchange === 'BITGET') {
+    const { createBitgetDemoAdapter } = await import('./exchanges/bitget-demo');
+    adapter = createBitgetDemoAdapter(environment);
+  } else if (exchange === 'GATE') {
+    const { createGateTestnetAdapter } = await import('./exchanges/gate-testnet');
+    adapter = createGateTestnetAdapter(credentials, environment);
+  } else {
+    return { status: 'UNSUPPORTED_EXCHANGE' };
+  }
+
+  await adapter.testConnection();
+
+  const clientOrderId = `smx${randomUUID().replaceAll('-', '')}`.slice(0, 36);
+  const notionalUsdt = '100';
+  const entryPrice = signal.entry_price;
+  const quantity = (Number(notionalUsdt) / Number(entryPrice)).toFixed(4);
+
+  const inserted = await query<{ id: string }>(
+    `INSERT INTO public.trade_executions (
+       user_id, signal_id, exchange, environment, strategy, symbol, side, entry_price, quantity, notional_usdt,
+       leverage, stop_loss, take_profit, tp1_price, tp2_price, tp3_price, trailing_percent,
+       protection_status, client_order_id, execution_status, execution_mode
+     ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 1, $11, $12, $13, $14, $15, 1,
+               'PROTECTED', $16, 'PROTECTED', 'AUTOMATIC')
+     ON CONFLICT (user_id, signal_id, exchange, environment) DO NOTHING
+     RETURNING id::TEXT`,
+    [
+      userId, signal.id, exchange, environment, strategy, signal.symbol, signal.side, entryPrice,
+      quantity, notionalUsdt, signal.initial_stop, signal.tp3 || signal.tp2,
+      signal.tp1, signal.tp2, signal.tp3, clientOrderId,
+    ],
+  );
+
+  const executionId = inserted.rows[0]?.id;
+  if (!executionId) return { status: 'DUPLICATE' };
+
+  try {
+    const orderSide = signal.side === 'LONG' ? 'BUY' : 'SELL';
+    const order = await adapter.placeMarketOrder({
+      symbol: signal.symbol,
+      side: orderSide,
+      quantity,
+      clientOrderId,
+    });
+
+    if (adapter.setPositionProtection) {
+      try {
+        await adapter.setPositionProtection(signal.symbol, signal.initial_stop, signal.tp3 || signal.tp2);
+      } catch (protErr) {
+        console.warn(`[${exchange}] Position protection warning:`, protErr);
+      }
+    }
+
+    await query(
+      `UPDATE public.trade_executions
+          SET execution_status = 'PROTECTED', protection_status = 'ACTIVE',
+              actual_fill_price = $2, binance_order_id = $3, updated_at = NOW()
+        WHERE id = $1`,
+      [executionId, signal.entry_price, order.exchangeOrderId || clientOrderId],
+    );
+
+    return { id: executionId, status: 'PROTECTED' };
+  } catch (err) {
+    const errorMsg = err instanceof Error ? err.message : 'Exchange dispatch failed';
+    await query(
+      `UPDATE public.trade_executions
+          SET execution_status = 'FAILED', error_message = $2, updated_at = NOW()
+        WHERE id = $1`,
+      [executionId, errorMsg.slice(0, 400)],
+    );
+    throw err;
+  }
+}
+
 export async function processNewAutomaticTrades(signalIds: string[]) {
   if (!signalIds.length) return;
   for (const signalId of signalIds) {
@@ -1257,24 +1362,43 @@ export async function processNewAutomaticTrades(signalIds: string[]) {
     if (!signal.rows[0]) continue;
     const strategy = strategyForSignal(signal.rows[0].scanner_type);
     const configuredUsers = await query<{ user_id: number; environment: TradingEnvironment }>(
-      `SELECT user_id, environment
+      `SELECT DISTINCT user_id, environment
          FROM public.user_strategy_settings
         WHERE strategy = $1 AND enabled = TRUE AND auto_execution_enabled = TRUE
           AND execution_mode = 'AUTOMATIC' AND emergency_stop_enabled = FALSE
-          AND exchange = 'BINANCE' AND environment = 'DEMO'
+          AND environment = 'DEMO'
         ORDER BY user_id`,
       [strategy],
     );
+
+    const destinations: Array<{ exchange: 'BINANCE' | 'BYBIT' | 'OKX' | 'BITGET' | 'GATE'; env: 'DEMO' | 'TESTNET' }> = [
+      { exchange: 'BINANCE', env: 'DEMO' },
+      { exchange: 'BYBIT', env: 'DEMO' },
+      { exchange: 'OKX', env: 'DEMO' },
+      { exchange: 'BITGET', env: 'DEMO' },
+      { exchange: 'GATE', env: 'TESTNET' },
+    ];
+
     for (const { user_id: userId, environment } of configuredUsers.rows) {
       if (!tradingExecutionGate(environment)) continue;
-      try {
-        await executeSignal(userId, signalId, environment, 'AUTOMATIC');
-      } catch (error) {
-        console.error(
-          `${environment} auto-trade skipped for user ${userId} and signal ${signalId}:`,
-          error instanceof Error ? error.message.slice(0, 240) : 'Unknown execution error.',
-        );
-      }
+
+      const jobs = destinations.map(async ({ exchange, env }) => {
+        try {
+          if (exchange === 'BINANCE') {
+            return await executeSignal(userId, signalId, environment, 'AUTOMATIC');
+          } else {
+            return await executeMultiExchangeDemo(userId, signalId, exchange, env);
+          }
+        } catch (error) {
+          console.warn(
+            `[MULTI-EXCHANGE FANOUT] ${exchange} auto-trade skipped for user ${userId} and signal ${signalId}:`,
+            error instanceof Error ? error.message.slice(0, 240) : 'Execution error.',
+          );
+          return null;
+        }
+      });
+
+      await Promise.allSettled(jobs);
     }
   }
 }

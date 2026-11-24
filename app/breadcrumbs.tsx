@@ -38,7 +38,7 @@ export function Breadcrumbs() {
       items.push({ label: 'Exchange Control', href: '/admin/exchanges' });
       items.push({ label: 'Demo Testing Lab' });
     } else if (pathname === '/admin/intelligence') {
-      items.push({ label: 'Feed & Paper Readiness' });
+      items.push({ label: 'Feed & Exchange Readiness' });
     } else if (pathname === '/admin/backtesting') {
       items.push({ label: 'Backtesting' });
     } else {

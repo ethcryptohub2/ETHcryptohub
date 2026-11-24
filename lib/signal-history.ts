@@ -290,7 +290,7 @@ export async function getPaperTradingSummary(userId: number) {
     ),
   ]);
 
-  const startingBalance = 10000.0;
+  const startingBalance = 0.0;
   const standardNotionalPerPosition = 100.0;
   const takerFeeRate = 0.0004; // 0.04% standard Binance VIP0 taker fee per fill
 

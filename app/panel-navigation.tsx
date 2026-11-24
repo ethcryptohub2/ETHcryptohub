@@ -373,7 +373,7 @@ export function PanelNavigation() {
         { href: '/admin', label: 'Command Center', icon: 'overview' },
         { href: '/admin/exchanges', label: 'Exchange Control', icon: 'exchange' },
         { href: '/admin/exchanges/testing', label: 'Demo Testing Lab', icon: 'exchange' },
-        { href: '/admin/intelligence', label: 'Feed & Paper Readiness', icon: 'activity' },
+        { href: '/admin/intelligence', label: 'Feed & Exchange Readiness', icon: 'activity' },
         { href: '/admin#scanner-management', label: 'Scanner Management', icon: 'scanner' },
         { href: '/admin#admin-signal-management', label: 'Signal Management', icon: 'activity' },
         { href: '/admin#admin-news', label: 'News Management', icon: 'news' },
