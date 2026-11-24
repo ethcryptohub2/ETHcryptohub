@@ -146,6 +146,27 @@ export function PanelNavigation() {
   const notificationTrigger = useRef<HTMLButtonElement>(null);
   const menuOpen = openPanel === 'navigation';
   const unread = newsUnread + signalUnread;
+  const [envLabel] = useState<{ text: string; title: string }>(() => {
+    if (typeof window !== 'undefined') {
+      const host = window.location.hostname;
+      if (host.includes('functional-staging') || host.includes('staging') || host.includes('preview')) {
+        return {
+          text: 'Staging · Sydney',
+          title: 'Staging Preview: Sydney (ap-southeast-2) · Connected to Supabase ghecpkpaxbrvehquhzkr',
+        };
+      }
+      if (host.includes('localhost') || host.includes('127.0.0.1')) {
+        return {
+          text: 'Development · Local',
+          title: 'Local Development Environment',
+        };
+      }
+    }
+    return {
+      text: 'Production · Mumbai',
+      title: 'Production Cluster: Mumbai (bom1) · Connected to Supabase ap-south-1',
+    };
+  });
   const sidebarCollapsed = useSyncExternalStore(
     subscribeToSidebar,
     getSidebarSnapshot,
@@ -541,9 +562,9 @@ export function PanelNavigation() {
         </div>
 
         <div className="panel-topbar-actions">
-          <div className="system-status-pill" title="Production Cluster: Mumbai (bom1) · Connected to Supabase ap-south-1">
+          <div className="system-status-pill" title={envLabel.title}>
             <span className="system-status-dot is-online" />
-            <span className="system-status-text">Production · Mumbai</span>
+            <span className="system-status-text">{envLabel.text}</span>
           </div>
 
           <ThemeToggle />
