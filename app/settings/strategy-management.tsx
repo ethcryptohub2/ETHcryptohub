@@ -82,7 +82,7 @@ export function StrategyManagement() {
 
   async function save(event: FormEvent, profile: Profile) {
     event.preventDefault();
-    const current = profiles.find((item) => item.strategy === profile.strategy);
+    const current = savedProfiles.find((item) => item.strategy === profile.strategy) ?? profiles.find((item) => item.strategy === profile.strategy);
     if (!current) return;
     const enabling = current.enabled && !profile.enabled ? false : !current.enabled && profile.enabled;
     if (current.enabled && !profile.enabled &&
