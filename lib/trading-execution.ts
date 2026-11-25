@@ -1247,6 +1247,26 @@ export async function reconcileBinanceDemoProtection(limit = 10) {
   return { processed: results.length, results };
 }
 
+export async function inspectDemoProtectionStatus() {
+  const summary = await query<{
+    open_count: number;
+    protection_failures: number;
+    executed_total: number;
+  }>(
+    `SELECT
+       COUNT(*) FILTER (WHERE execution_status IN ('EXECUTING', 'ENTRY_FILLED', 'PROTECTED', 'PROTECTION_FAILED'))::int AS open_count,
+       COUNT(*) FILTER (WHERE protection_status = 'FAILED' OR execution_status = 'PROTECTION_FAILED')::int AS protection_failures,
+       COUNT(*) FILTER (WHERE execution_status IN ('EXECUTED', 'ENTRY_FILLED', 'PROTECTED', 'CLOSED'))::int AS executed_total
+     FROM public.trade_executions
+     WHERE environment = 'DEMO'`,
+  );
+  return {
+    openCount: summary.rows[0]?.open_count ?? 0,
+    protectionFailures: summary.rows[0]?.protection_failures ?? 0,
+    executedTotal: summary.rows[0]?.executed_total ?? 0,
+  };
+}
+
 export async function executeMultiExchangeDemo(
   userId: number,
   signalId: string,
@@ -1258,6 +1278,18 @@ export async function executeMultiExchangeDemo(
     return { status: 'LIVE_TRADING_DISABLED' };
   }
   await assertEmergencyStopClear(userId, gateEnv);
+
+  const { EXCHANGE_REGISTRY } = await import('./exchanges/registry');
+  const definition = EXCHANGE_REGISTRY[exchange];
+  if (!definition?.capabilities.marketOrders) {
+    return { status: 'UNSUPPORTED_ADAPTER' };
+  }
+  if (exchange === 'BYBIT') {
+    const { isBybitDemoOrderSubmissionEnabled } = await import('./exchanges/demo-order-approval');
+    if (!isBybitDemoOrderSubmissionEnabled()) {
+      return { status: 'UNSUPPORTED_ADAPTER' };
+    }
+  }
 
   const existing = await query<{ id: string }>(
     `SELECT id::TEXT FROM public.trade_executions
@@ -1279,8 +1311,14 @@ export async function executeMultiExchangeDemo(
 
   type OrderPlacingAdapter = {
     testConnection: () => Promise<unknown>;
+    getAccountBalance?: () => Promise<Array<{ asset: string; equity: string; availableBalance: string }>>;
+    getMarketInstruments?: () => Promise<Array<{ exchangeSymbol: string; quantityStep: string; minimumQuantity: string; maximumQuantity: string | null; minimumNotional: string | null }>>;
     placeMarketOrder: (params: { symbol: string; side: 'BUY' | 'SELL'; quantity: string; clientOrderId: string }) => Promise<{ exchangeOrderId?: string }>;
-    setPositionProtection?: (symbol: string, stopLoss?: string, takeProfit?: string) => Promise<unknown>;
+    setPositionProtection?: (symbol: string, stopLoss: string, takeProfit: string) => Promise<unknown>;
+    setPositionLifecycleProtection?: (
+      symbol: string,
+      protection: { stopLoss: string; takeProfit: string; trailingStop: string; activePrice: string },
+    ) => Promise<unknown>;
   };
 
   let adapter: OrderPlacingAdapter | null = null;
@@ -1324,12 +1362,41 @@ export async function executeMultiExchangeDemo(
     [userId, exchange, environment],
   );
   const setting = userSettings.rows[0];
-  const notionalUsdt = setting?.fixed_notional_usdt ? Math.min(Number(setting.fixed_notional_usdt), 500).toFixed(2) : '100';
+  const entryPriceNum = Number(signal.entry_price);
+  const stopLossNum = Number(signal.initial_stop);
+  const stopDistance = Math.abs(entryPriceNum - stopLossNum);
   const leverage = Math.min(Math.max(setting?.default_leverage ?? 1, 1), 5);
+
+  let rawQty: number;
+  let notionalUsdt: string;
+  if (setting?.order_size_mode === 'RISK_BASED' && adapter.getAccountBalance && stopDistance > 0) {
+    const balances = await adapter.getAccountBalance();
+    const usdt = balances.find((item) => item.asset === 'USDT');
+    const equity = Number(usdt?.equity ?? 0);
+    const riskPct = Math.min(Math.max(Number(setting.risk_percentage ?? '1'), 0.1), 1);
+    const riskBudget = (equity * riskPct) / 100;
+    rawQty = riskBudget > 0 ? riskBudget / stopDistance : 0;
+    notionalUsdt = (rawQty * entryPriceNum).toFixed(2);
+  } else {
+    notionalUsdt = setting?.fixed_notional_usdt ? Math.min(Number(setting.fixed_notional_usdt), 500).toFixed(2) : '100';
+    rawQty = Number(notionalUsdt) / entryPriceNum;
+  }
+
+  let quantity = rawQty.toFixed(4);
+  if (adapter.getMarketInstruments) {
+    const instruments = await adapter.getMarketInstruments();
+    const inst = instruments.find((item) => item.exchangeSymbol === signal.symbol);
+    if (inst?.quantityStep) {
+      quantity = floorToStep(rawQty, inst.quantityStep);
+      notionalUsdt = (Number(quantity) * entryPriceNum).toFixed(2);
+    }
+  }
+  if (!Number.isFinite(Number(quantity)) || Number(quantity) <= 0) {
+    return { status: 'FAILED', error: 'Calculated Demo quantity is below minimum exchange step size.' };
+  }
 
   const clientOrderId = `smx${randomUUID().replaceAll('-', '')}`.slice(0, 36);
   const entryPrice = signal.entry_price;
-  const quantity = (Number(notionalUsdt) / Number(entryPrice)).toFixed(4);
 
   const inserted = await query<{ id: string }>(
     `INSERT INTO public.trade_executions (
@@ -1389,7 +1456,10 @@ export async function executeMultiExchangeDemo(
 }
 
 export async function processNewAutomaticTrades(signalIds: string[]) {
-  let candidateSignalIds = [...signalIds];
+  if (process.env.WORKER_SAFE_MODE === 'true' || process.env.DEMO_ORDER_DISPATCH_ENABLED === 'false') {
+    return;
+  }
+  const candidateSignalIds = [...signalIds];
   try {
     const unexecuted = await query<{ id: string }>(
       `SELECT s.id::text
@@ -1420,8 +1490,8 @@ export async function processNewAutomaticTrades(signalIds: string[]) {
     );
     if (!signal.rows[0]) continue;
     const strategy = strategyForSignal(signal.rows[0].scanner_type);
-    const configuredUsers = await query<{ user_id: number; environment: TradingEnvironment }>(
-      `SELECT DISTINCT s.user_id, s.environment
+    const configuredUsers = await query<{ user_id: number; environment: TradingEnvironment; exchange: string }>(
+      `SELECT DISTINCT s.user_id, s.environment, s.exchange
          FROM public.user_strategy_settings s
          LEFT JOIN public.user_trading_settings t ON t.user_id = s.user_id
         WHERE s.strategy = $1 AND s.enabled = TRUE AND s.auto_execution_enabled = TRUE
@@ -1441,19 +1511,29 @@ export async function processNewAutomaticTrades(signalIds: string[]) {
       { exchange: 'GATE', env: 'TESTNET' },
     ];
 
-    for (const { user_id: userId, environment } of configuredUsers.rows) {
+    for (const { user_id: userId, environment, exchange: profileExchange } of configuredUsers.rows) {
       if (!tradingExecutionGate(environment)) continue;
 
       const userSettings = await query<{
         exchange: 'BINANCE' | 'BYBIT' | 'OKX' | 'BITGET' | 'GATE';
+        auto_trade_enabled: boolean;
+        execution_mode: string;
+        emergency_stop_enabled: boolean;
       }>(
-        `SELECT exchange FROM public.user_exchange_trading_settings
-          WHERE user_id = $1 AND auto_trade_enabled = TRUE AND execution_mode = 'AUTOMATIC' AND emergency_stop_enabled = FALSE`,
+        `SELECT exchange, auto_trade_enabled, execution_mode, emergency_stop_enabled
+           FROM public.user_exchange_trading_settings
+          WHERE user_id = $1`,
         [userId],
       );
-      const activeExchanges = new Set(userSettings.rows.map(r => r.exchange));
-      if (activeExchanges.size === 0) {
-        activeExchanges.add('BINANCE');
+      const activeExchanges = new Set<string>();
+      if (userSettings.rows.length === 0) {
+        activeExchanges.add(profileExchange || 'BINANCE');
+      } else {
+        for (const row of userSettings.rows) {
+          if (row.auto_trade_enabled && row.execution_mode === 'AUTOMATIC' && !row.emergency_stop_enabled) {
+            activeExchanges.add(row.exchange);
+          }
+        }
       }
 
       const activeDestinations = destinations.filter(({ exchange }) => activeExchanges.has(exchange));

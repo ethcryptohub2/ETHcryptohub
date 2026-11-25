@@ -98,7 +98,21 @@ export function StrategyManagement() {
     setMessage('');
     try {
       const token = await csrfToken();
-      const { updated_at: _, ...cleanProfile } = profile;
+      const cleanProfile = {
+        strategy: profile.strategy,
+        exchange: profile.exchange,
+        environment: profile.environment,
+        enabled: profile.enabled,
+        execution_mode: profile.execution_mode,
+        risk_percentage: profile.risk_percentage,
+        order_size_mode: profile.order_size_mode,
+        fixed_notional_usdt: profile.fixed_notional_usdt,
+        leverage: profile.leverage,
+        max_open_positions: profile.max_open_positions,
+        max_daily_loss_percent: profile.max_daily_loss_percent,
+        auto_execution_enabled: profile.auto_execution_enabled,
+        emergency_stop_enabled: profile.emergency_stop_enabled,
+      };
       const response = await fetch('/api/trading/strategies', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': token },

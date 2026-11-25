@@ -1,224 +1,56 @@
 #!/usr/bin/env node
 /**
  * SmartExit 24x7 Isolated Demo Trading Worker
- * 
- * Standalone Node.js process designed for unattended 24x7 operation.
- * Runs independently of serverless HTTP requests or browser sessions.
- * 
+ *
+ * Standalone Node.js daemon designed for unattended 24x7 operation on Linux/Windows.
+ * Requires `node --import tsx scripts/demo-trading-worker.mjs`.
+ *
  * Safety invariants:
- * - Strictly locked to DEMO / TESTNET environments (real-money LIVE execution is strictly prohibited).
- * - Exclusive file lock prevents duplicate worker processes.
- * - Heartbeat file monitoring allows external watchdog / health checking.
- * - Checkpoint persistence ensures zero-loss state recovery across restarts.
- * - Multi-layer emergency shutdown: kill switch file or environment variable trigger immediate graceful exit.
+ * - Strictly locked to DEMO / TESTNET environments (LIVE execution is prohibited).
+ * - Requires valid Staging database isolation (Production Supabase is rejected fail-closed).
+ * - Exclusive local file lock + atomic distributed DB lease prevent duplicate workers.
+ * - Renews and verifies DB lease ownership before every business tick; stops on lease loss.
+ * - Supports SafeMode (read-only scanning & protection audit, zero order mutations).
+ * - Never masks tick failures as healthy status.
  */
 
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
 import { fileURLToPath } from 'node:url';
-import pg from 'pg';
 
-for (const envFile of ['.env.local', '.env.staging.local', '.env']) {
-  try {
-    if (typeof process.loadEnvFile === 'function') {
-      process.loadEnvFile(envFile);
-    }
-  } catch {}
-}
-
-let pgPool = null;
-function getWorkerPgPool() {
-  if (pgPool) return pgPool;
-  const connectionString = process.env.SUPABASE_DB_URL ?? process.env.DATABASE_URL;
-  try {
-    const { Pool } = pg;
-    if (connectionString) {
-      pgPool = new Pool({
-        connectionString,
-        ssl: { rejectUnauthorized: false },
-        max: 2,
-        idleTimeoutMillis: 10_000,
-      });
-    } else if (process.env.SUPABASE_DB_HOST && process.env.SUPABASE_DB_USER && process.env.SUPABASE_DB_PASSWORD) {
-      pgPool = new Pool({
-        host: process.env.SUPABASE_DB_HOST.trim(),
-        port: Number(process.env.SUPABASE_DB_PORT ?? 5432),
-        database: process.env.SUPABASE_DB_NAME ?? 'postgres',
-        user: process.env.SUPABASE_DB_USER.trim(),
-        password: process.env.SUPABASE_DB_PASSWORD,
-        ssl: { rejectUnauthorized: false, servername: process.env.SUPABASE_DB_HOST.trim() },
-        max: 2,
-        idleTimeoutMillis: 10_000,
-      });
-    }
-  } catch {
-    return null;
-  }
-  return pgPool;
-}
-
-export async function acquireDbLease(info) {
-  const pool = getWorkerPgPool();
-  const ttl = info.ttlSeconds || 90;
-  const now = new Date();
-  const expiresAt = new Date(now.getTime() + ttl * 1000).toISOString();
-  const lease = {
-    workerId: info.workerId,
-    hostname: info.hostname,
-    pid: info.pid,
-    version: info.version,
-    environment: info.environment || 'DEMO',
-    acquiredAt: now.toISOString(),
-    heartbeatAt: now.toISOString(),
-    expiresAt,
-    tickCount: 1,
-    status: 'ACTIVE',
-  };
-
-  if (pool) {
+if (process.env.WORKER_SKIP_ENV_FILE !== 'true') {
+  for (const envFile of ['.env.local', '.env.staging.local', '.env']) {
     try {
-      await pool.query(
-        `INSERT INTO public.app_settings (key, value_json, updated_at)
-         VALUES ('demo_worker_lease', $1::jsonb, NOW())
-         ON CONFLICT (key) DO UPDATE SET value_json = EXCLUDED.value_json, updated_at = NOW()`,
-        [JSON.stringify(lease)],
-      );
-      return { ok: true, lease };
-    } catch {}
-  }
-
-  // Fallback to HTTP lease acquisition via API route
-  const appUrl = process.env.APP_URL || 'https://cryptohub-git-functional-staging-eth-cryptohub.vercel.app';
-  try {
-    const res = await fetch(`${appUrl}/api/admin/worker-health`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'x-worker-secret': 'staging-worker-daemon',
-      },
-      body: JSON.stringify({
-        action: 'acquire',
-        workerId: info.workerId,
-        hostname: info.hostname,
-        pid: info.pid,
-        version: info.version,
-        environment: info.environment || 'DEMO',
-        ttlSeconds: ttl,
-      }),
-      signal: AbortSignal.timeout(5000),
-    });
-    const data = await res.json().catch(() => ({}));
-    return { ok: res.ok, lease: data.lease || lease };
-  } catch (err) {
-    return { ok: false, error: err.message };
-  }
-}
-
-export async function renewDbLease(info) {
-  const pool = getWorkerPgPool();
-  const ttl = info.ttlSeconds || 90;
-  const now = new Date();
-  const expiresAt = new Date(now.getTime() + ttl * 1000).toISOString();
-
-  if (pool) {
-    try {
-      const res = await pool.query(
-        `SELECT value_json FROM public.app_settings WHERE key = 'demo_worker_lease'`,
-      );
-      const current = res.rows[0]?.value_json || {};
-      const updated = {
-        ...current,
-        heartbeatAt: now.toISOString(),
-        expiresAt,
-        tickCount: info.tickCount,
-        lastScanDurationMs: info.lastScanDurationMs ?? current.lastScanDurationMs,
-        lastCandidateCount: info.lastCandidateCount ?? current.lastCandidateCount,
-        lastQualifiedCount: info.lastQualifiedCount ?? current.lastQualifiedCount,
-        status: 'ACTIVE',
-      };
-      await pool.query(
-        `UPDATE public.app_settings SET value_json = $1::jsonb, updated_at = NOW() WHERE key = 'demo_worker_lease'`,
-        [JSON.stringify(updated)],
-      );
-      return true;
-    } catch {}
-  }
-
-  // Fallback to HTTP lease renewal via API route
-  const appUrl = process.env.APP_URL || 'https://cryptohub-git-functional-staging-eth-cryptohub.vercel.app';
-  try {
-    const res = await fetch(`${appUrl}/api/admin/worker-health`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'x-worker-secret': 'staging-worker-daemon',
-      },
-      body: JSON.stringify({
-        action: 'renew',
-        workerId: info.workerId,
-        tickCount: info.tickCount,
-        lastScanDurationMs: info.lastScanDurationMs,
-        lastCandidateCount: info.lastCandidateCount,
-        lastQualifiedCount: info.lastQualifiedCount,
-        ttlSeconds: ttl,
-      }),
-      signal: AbortSignal.timeout(5000),
-    });
-    return res.ok;
-  } catch {
-    return false;
-  }
-}
-
-export async function releaseDbLease(workerId) {
-  const pool = getWorkerPgPool();
-  if (pool) {
-    try {
-      const res = await pool.query(
-        `SELECT value_json FROM public.app_settings WHERE key = 'demo_worker_lease'`,
-      );
-      const current = res.rows[0]?.value_json;
-      if (current && current.workerId === workerId) {
-        const stopped = {
-          ...current,
-          heartbeatAt: new Date().toISOString(),
-          status: 'STOPPED',
-        };
-        await pool.query(
-          `UPDATE public.app_settings SET value_json = $1::jsonb, updated_at = NOW() WHERE key = 'demo_worker_lease'`,
-          [JSON.stringify(stopped)],
-        );
-        return;
+      if (typeof process.loadEnvFile === 'function') {
+        process.loadEnvFile(envFile);
       }
-    } catch {}
+    } catch {
+      // Optional env file
+    }
   }
-
-  const appUrl = process.env.APP_URL || 'https://cryptohub-git-functional-staging-eth-cryptohub.vercel.app';
-  try {
-    await fetch(`${appUrl}/api/admin/worker-health`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'x-worker-secret': 'staging-worker-daemon',
-      },
-      body: JSON.stringify({
-        action: 'release',
-        workerId,
-      }),
-      signal: AbortSignal.timeout(5000),
-    });
-  } catch {}
 }
 
-export const WORKER_VERSION = '1.0.0';
-export const DEFAULT_TICK_INTERVAL_MS = 30_000; // 30 seconds between ticks
+export const WORKER_VERSION = '2.0.0';
+export const DEFAULT_TICK_INTERVAL_MS = 30_000;
 
 export function assertDemoSafety(environment) {
   const normalized = (environment ?? '').trim().toUpperCase();
-  if (normalized === 'LIVE' || normalized === 'PRODUCTION_REAL_MONEY') {
+  if (normalized === 'LIVE' || normalized === 'PRODUCTION_REAL_MONEY' || !['DEMO', 'TESTNET'].includes(normalized)) {
     throw new Error('SECURITY VIOLATION: demo-trading-worker is strictly isolated to DEMO / TESTNET environments.');
   }
+}
+
+export function isWorkerSafeMode(options = {}, env = process.env) {
+  if (typeof options.safeMode === 'boolean') return options.safeMode;
+  if (env.WORKER_SAFE_MODE === 'true') return true;
+  if (env.WORKER_SAFE_MODE === 'false' && env.DEMO_ORDER_DISPATCH_ENABLED === 'true') return false;
+  return env.DEMO_ORDER_DISPATCH_ENABLED !== 'true';
+}
+
+function getHttpWorkerSecret(env = process.env) {
+  const secret = env.WORKER_SECRET || env.CRON_SECRET || '';
+  return secret.length >= 32 ? secret : null;
 }
 
 export async function ensureWorkerDirectory(storageDir) {
@@ -250,7 +82,7 @@ export async function acquireWorkerLock(storageDir, pid = process.pid) {
 
 export async function writeWorkerHeartbeat(storageDir, data) {
   const heartbeatPath = path.join(storageDir, 'worker-heartbeat.json');
-  const tempPath = path.join(storageDir, 'worker-heartbeat.tmp');
+  const tempPath = path.join(storageDir, `worker-heartbeat.${process.pid}.tmp`);
   const payload = {
     version: WORKER_VERSION,
     pid: process.pid,
@@ -264,7 +96,7 @@ export async function writeWorkerHeartbeat(storageDir, data) {
 
 export async function saveCheckpoint(storageDir, checkpoint) {
   const checkpointPath = path.join(storageDir, 'checkpoint.json');
-  const tempPath = path.join(storageDir, 'checkpoint.tmp');
+  const tempPath = path.join(storageDir, `checkpoint.${process.pid}.tmp`);
   const payload = {
     version: WORKER_VERSION,
     ...checkpoint,
@@ -297,98 +129,272 @@ export async function checkKillSwitch(storageDir) {
   }
 }
 
-export async function executeBusinessTick(environment, options = {}) {
-  // Business logic pipeline:
-  // Market scan -> Signal qualification & persistence -> Automatic Demo trading -> Protection monitoring & reconciliation
-  try {
-    // Attempt dynamic execution if TypeScript/Node loader or service is present
-    const scanModule = await import('../lib/signal-scan.ts');
-    if (scanModule && typeof scanModule.runSignalScan === 'function') {
-      const scanResult = await scanModule.runSignalScan(undefined, {
-        executeAutomaticTrades: true,
-        deliverNotifications: true,
+async function resolveLeaseTransport() {
+  const [{ isDatabaseConfigured, assertDatabaseTargetIsolation }, leaseMod] = await Promise.all([
+    import('../lib/db.ts'),
+    import('../lib/worker-lease.ts'),
+  ]);
+  if (isDatabaseConfigured()) {
+    assertDatabaseTargetIsolation(process.env);
+    return { mode: 'DB', leaseMod };
+  }
+  const workerSecret = getHttpWorkerSecret(process.env);
+  const appUrl = process.env.APP_URL?.trim();
+  if (workerSecret && appUrl) {
+    return { mode: 'HTTP', appUrl, workerSecret };
+  }
+  return { mode: 'NONE' };
+}
+
+export async function acquireDbLease(info, deps = {}) {
+  const transport = deps.leaseTransport ?? (await resolveLeaseTransport());
+  const ttl = info.ttlSeconds || 90;
+  if (transport.mode === 'DB') {
+    return transport.leaseMod.acquireWorkerLease({
+      workerId: info.workerId,
+      hostname: info.hostname,
+      pid: info.pid,
+      version: info.version,
+      environment: info.environment || 'DEMO',
+      safeMode: info.safeMode,
+      ttlSeconds: ttl,
+    });
+  }
+  if (transport.mode === 'HTTP') {
+    try {
+      const res = await fetch(`${transport.appUrl}/api/admin/worker-health`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-worker-secret': transport.workerSecret,
+        },
+        body: JSON.stringify({
+          action: 'acquire',
+          workerId: info.workerId,
+          hostname: info.hostname,
+          pid: info.pid,
+          version: info.version,
+          environment: info.environment || 'DEMO',
+          safeMode: info.safeMode,
+          ttlSeconds: ttl,
+        }),
+        signal: AbortSignal.timeout(5000),
       });
-      return {
-        pipelineStatus: 'EXECUTED_LIVE',
-        scannedAt: scanResult.scannedAt,
-        batchSize: scanResult.batchSize,
-        candidates: scanResult.candidates?.length ?? 0,
-        newSignals: scanResult.newSignals ?? 0,
-        durationMs: scanResult.durationMs ?? 0,
-        qualifiedCount: scanResult.candidates?.filter((c) => c.status === 'READY')?.length ?? 0,
-        timeframe: scanResult.timeframe,
-        exchange: scanResult.exchange,
-        status: 'OK',
-      };
+      const data = await res.json().catch(() => ({}));
+      return { ok: Boolean(res.ok && data.ok), lease: data.lease, error: data.error };
+    } catch (err) {
+      return { ok: false, error: err instanceof Error ? err.message : 'HTTP lease acquisition failed.' };
     }
-  } catch (error) {
-    // Graceful diagnostic tracking for offline or test environments
+  }
+  return { ok: false, error: 'Database credentials or authenticated APP_URL + WORKER_SECRET (>=32 chars) are required to acquire a worker lease.' };
+}
+
+export async function renewDbLease(info, deps = {}) {
+  const transport = deps.leaseTransport ?? (await resolveLeaseTransport());
+  const ttl = info.ttlSeconds || 90;
+  if (transport.mode === 'DB') {
+    return transport.leaseMod.renewWorkerLease({ ...info, ttlSeconds: ttl });
+  }
+  if (transport.mode === 'HTTP') {
+    try {
+      const res = await fetch(`${transport.appUrl}/api/admin/worker-health`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-worker-secret': transport.workerSecret,
+        },
+        body: JSON.stringify({
+          action: 'renew',
+          ...info,
+          ttlSeconds: ttl,
+        }),
+        signal: AbortSignal.timeout(5000),
+      });
+      if (!res.ok) return false;
+      const data = await res.json().catch(() => ({}));
+      return Boolean(data.ok);
+    } catch {
+      return false;
+    }
+  }
+  return false;
+}
+
+export async function releaseDbLease(workerId, deps = {}) {
+  const transport = deps.leaseTransport ?? (await resolveLeaseTransport());
+  if (transport.mode === 'DB') {
+    await transport.leaseMod.releaseWorkerLease(workerId);
+    return;
+  }
+  if (transport.mode === 'HTTP') {
+    try {
+      await fetch(`${transport.appUrl}/api/admin/worker-health`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-worker-secret': transport.workerSecret,
+        },
+        body: JSON.stringify({ action: 'release', workerId }),
+        signal: AbortSignal.timeout(5000),
+      });
+    } catch {
+      // Non-blocking cleanup
+    }
+  }
+}
+
+export async function executeBusinessTick(environment, options = {}) {
+  assertDemoSafety(environment);
+  const safeMode = isWorkerSafeMode(options);
+  const startedMs = Date.now();
+
+  try {
+    const scanRunner =
+      options.dependencies?.runSignalScan ??
+      (await import('../lib/signal-scan.ts')).runSignalScan;
+
+    const executionMod =
+      options.dependencies?.tradingExecution ??
+      (await import('../lib/trading-execution.ts'));
+
+    const scanResult = await scanRunner(undefined, {
+      executeAutomaticTrades: !safeMode,
+      deliverNotifications: !safeMode,
+    });
+
+    let protectionSummary = { openCount: 0, protectionFailures: 0, executedTotal: 0 };
+    if (safeMode) {
+      if (typeof executionMod.inspectDemoProtectionStatus === 'function') {
+        protectionSummary = await executionMod.inspectDemoProtectionStatus();
+      }
+    } else {
+      if (typeof executionMod.reconcileBinanceDemoProtection === 'function') {
+        const reconciled = await executionMod.reconcileBinanceDemoProtection(10);
+        const failedCount = Array.isArray(reconciled?.results)
+          ? reconciled.results.filter((r) => r.status === 'FAILED' || r.status === 'PROTECTION_FAILED').length
+          : 0;
+        if (typeof executionMod.inspectDemoProtectionStatus === 'function') {
+          protectionSummary = await executionMod.inspectDemoProtectionStatus();
+        }
+        protectionSummary.protectionFailures = Math.max(protectionSummary.protectionFailures, failedCount);
+      }
+    }
+
+    const durationMs = typeof scanResult.durationMs === 'number' ? scanResult.durationMs : Date.now() - startedMs;
     return {
-      pipelineStatus: 'DIAGNOSTIC_TICK',
-      message: error instanceof Error ? error.message : String(error),
-      timestamp: new Date().toISOString(),
+      pipelineStatus: safeMode ? 'SAFE_MODE_EXECUTED' : 'EXECUTED_DEMO',
+      safeMode,
+      scannedAt: scanResult.scannedAt ?? new Date().toISOString(),
+      completedAt: scanResult.completedAt ?? new Date().toISOString(),
+      batchSize: scanResult.batchSize ?? 35,
+      cursor: typeof scanResult.cursor === 'number' ? scanResult.cursor : null,
+      batchIndex: scanResult.batchIndex ?? 1,
+      totalBatches: scanResult.totalBatches ?? 1,
+      cycleId: scanResult.cycleId ?? 'CYCLE-1-FULL-RUN',
+      candidates: scanResult.candidates ?? 0,
+      newSignals: scanResult.newSignals ?? 0,
+      qualifiedCount: scanResult.qualifiedCount ?? 0,
+      durationMs,
+      timeframe: scanResult.timeframe ?? '15m',
+      exchange: scanResult.exchange ?? 'BINANCE',
+      totalTradesExecuted: protectionSummary.executedTotal ?? 0,
+      protectionFailures: protectionSummary.protectionFailures ?? 0,
+      openProtectedCount: protectionSummary.openCount ?? 0,
       status: 'OK',
     };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return {
+      pipelineStatus: 'ERROR',
+      safeMode,
+      error: message,
+      durationMs: Date.now() - startedMs,
+      timestamp: new Date().toISOString(),
+      status: 'ERROR',
+    };
   }
-  return {
-    pipelineStatus: 'STANDALONE_CYCLE',
-    timestamp: new Date().toISOString(),
-    status: 'OK',
-  };
 }
 
 export async function runWorkerLoop(options = {}) {
   const storageDir = path.resolve(options.storageDir ?? 'storage/demo-worker');
-  const environment = options.environment ?? process.env.SMARTEXIT_TRADING_ENVIRONMENT ?? 'DEMO';
+  const environment = options.environment ?? process.env.SMARTEXIT_TRADING_ENVIRONMENT ?? process.env.TRADING_ENVIRONMENT ?? 'DEMO';
   const tickIntervalMs = options.tickIntervalMs ?? DEFAULT_TICK_INTERVAL_MS;
   const once = options.once === true;
+  const safeMode = isWorkerSafeMode(options);
+  const requireDbLease = options.requireDbLease !== false;
+  const leaseTtlSeconds = Math.max(90, Math.ceil(tickIntervalMs / 1000) * 3);
 
   assertDemoSafety(environment);
+  const { assertDatabaseTargetIsolation } = await import('../lib/db.ts');
+  assertDatabaseTargetIsolation(process.env);
   await ensureWorkerDirectory(storageDir);
 
   const lock = await acquireWorkerLock(storageDir);
   let isRunning = true;
   let loopCount = 0;
-  let lastScanResult = null;
-  const workerId = `worker-${os.hostname()}-${process.pid}`;
+  let consecutiveFailures = 0;
   let dbLeaseAcquired = false;
+  const sleepAbort = new AbortController();
+  const workerId = options.workerId ?? `worker-${os.hostname()}-${process.pid}`;
+  const leaseDeps = options.leaseTransport ? { leaseTransport: options.leaseTransport } : {};
 
   try {
-    const leaseRes = await acquireDbLease({
-      workerId,
-      hostname: os.hostname(),
-      pid: process.pid,
-      version: WORKER_VERSION,
-      environment: 'DEMO',
-      ttlSeconds: Math.max(90, Math.ceil(tickIntervalMs / 1000) * 3),
-    });
+    const leaseRes = await acquireDbLease(
+      {
+        workerId,
+        hostname: os.hostname(),
+        pid: process.pid,
+        version: WORKER_VERSION,
+        environment: environment === 'TESTNET' ? 'TESTNET' : 'DEMO',
+        safeMode,
+        ttlSeconds: leaseTtlSeconds,
+      },
+      leaseDeps,
+    );
+
     if (leaseRes && leaseRes.ok) {
       dbLeaseAcquired = true;
       console.info(`[Worker] Acquired distributed DB worker lease: ${workerId}`);
+    } else if (requireDbLease) {
+      throw new Error(leaseRes?.error || 'Failed to acquire distributed DB worker lease.');
     }
-  } catch {
-    // Non-blocking fallback to local storage
+  } catch (leaseError) {
+    await lock.release();
+    throw leaseError;
   }
 
   const checkpoint = (await loadCheckpoint(storageDir)) ?? {
     cycleCount: 0,
     cursor: 0,
     totalTradesExecuted: 0,
+    scannedPairsCount: 0,
+    lastSuccessfulScanAt: null,
   };
 
-  const shutdown = async (reason) => {
+  let shutdownPromise = null;
+  const shutdown = (reason) => {
+    if (shutdownPromise) return shutdownPromise;
     isRunning = false;
-    if (dbLeaseAcquired) {
-      try {
-        await releaseDbLease(workerId);
-      } catch {}
-    }
-    await writeWorkerHeartbeat(storageDir, {
-      status: 'STOPPED',
-      reason: reason ?? 'Graceful shutdown',
-      loopCount,
-    });
-    await lock.release();
+    sleepAbort.abort();
+    shutdownPromise = (async () => {
+      if (dbLeaseAcquired) {
+        try {
+          await releaseDbLease(workerId, leaseDeps);
+        } catch {
+          // Best effort
+        }
+      }
+      await writeWorkerHeartbeat(storageDir, {
+        status: 'STOPPED',
+        reason: reason ?? 'Graceful shutdown',
+        loopCount,
+        consecutiveFailures,
+        safeMode,
+        checkpoint,
+      });
+      await lock.release();
+    })();
+    return shutdownPromise;
   };
 
   const handleSignal = (sig) => {
@@ -399,81 +405,165 @@ export async function runWorkerLoop(options = {}) {
   process.once('SIGINT', () => handleSignal('SIGINT'));
   process.once('SIGTERM', () => handleSignal('SIGTERM'));
 
-  console.info(`[Worker] SmartExit 24x7 Demo Trading Worker started.`);
-  console.info(`[Worker] Environment: ${environment} | PID: ${process.pid} | Directory: ${storageDir}`);
+  console.info(`[Worker] SmartExit 24x7 Demo Trading Worker v${WORKER_VERSION} started.`);
+  console.info(`[Worker] Environment: ${environment} | SafeMode: ${safeMode} | PID: ${process.pid} | Directory: ${storageDir}`);
 
   try {
     while (isRunning) {
       loopCount += 1;
 
-      // Check emergency stop
       const kill = await checkKillSwitch(storageDir);
       if (kill.triggered) {
-        console.warn(`[Worker] EMERGENCY SHUTDOWN TRIGGERED: ${kill.reason}`);
+        console.warn(`[Worker] EMERGENCY SHUTDOWN TRIGGERED: ${kill.reason} (Existing exchange protection is preserved.)`);
+        if (dbLeaseAcquired) {
+          await renewDbLease(
+            {
+              workerId,
+              tickCount: loopCount,
+              emergencyStopStatus: 'ARMED',
+              exchangeExecutionStatus: 'EMERGENCY_STOP',
+              safeMode,
+              ttlSeconds: leaseTtlSeconds,
+            },
+            leaseDeps,
+          ).catch(() => false);
+        }
         await shutdown(`Emergency kill switch: ${kill.reason}`);
         break;
       }
 
-      // Memory and resource diagnostics
-      const mem = process.memoryUsage();
-      const memMb = Math.round((mem.heapUsed / 1024 / 1024) * 100) / 100;
-
-      // Execute actual business tick
-      const businessExecution = await executeBusinessTick(environment, options);
-
-      checkpoint.cycleCount += 1;
-      checkpoint.cursor = typeof businessExecution.cursor === 'number' ? businessExecution.cursor : (checkpoint.cursor + 35);
-      const pool = getWorkerPgPool();
-      if (pool) {
-        try {
-          const execs = await pool.query(
-            "SELECT COUNT(*)::int AS count FROM public.trade_executions WHERE execution_status IN ('EXECUTED', 'FILLED')",
-          );
-          checkpoint.totalTradesExecuted = execs.rows[0]?.count ?? checkpoint.totalTradesExecuted;
-        } catch {}
-      } else if (businessExecution.newSignals && businessExecution.newSignals > 0) {
-        checkpoint.totalTradesExecuted = (checkpoint.totalTradesExecuted || 0) + businessExecution.newSignals;
+      // Enforce distributed lease ownership BEFORE every business tick on tick 2+
+      if (requireDbLease && dbLeaseAcquired && loopCount > 1) {
+        const stillOwned = await renewDbLease(
+          {
+            workerId,
+            tickCount: loopCount,
+            safeMode,
+            ttlSeconds: leaseTtlSeconds,
+          },
+          leaseDeps,
+        );
+        if (!stillOwned) {
+          const lossMsg = 'Distributed DB worker lease was lost or preempted before business tick.';
+          console.error(`[Worker] ${lossMsg}`);
+          await writeWorkerHeartbeat(storageDir, {
+            status: 'ERROR',
+            error: lossMsg,
+            loopCount,
+            consecutiveFailures: consecutiveFailures + 1,
+          });
+          await shutdown(lossMsg);
+          throw new Error(lossMsg);
+        }
       }
 
-      lastScanResult = {
+      const mem = process.memoryUsage();
+      const memMb = Math.round((mem.rss / 1024 / 1024) * 100) / 100;
+      const heapMb = Math.round((mem.heapUsed / 1024 / 1024) * 100) / 100;
+
+      const businessExecution = await executeBusinessTick(environment, { ...options, safeMode });
+
+      if (businessExecution.status === 'OK') {
+        consecutiveFailures = 0;
+        checkpoint.cycleCount += 1;
+        if (typeof businessExecution.cursor === 'number') {
+          checkpoint.cursor = businessExecution.cursor;
+        }
+        if (typeof businessExecution.totalTradesExecuted === 'number') {
+          checkpoint.totalTradesExecuted = businessExecution.totalTradesExecuted;
+        }
+        checkpoint.scannedPairsCount = (checkpoint.scannedPairsCount || 0) + (businessExecution.batchSize || 0);
+        checkpoint.lastSuccessfulScanAt = businessExecution.completedAt ?? new Date().toISOString();
+        checkpoint.activeCycle = businessExecution.cycleId;
+        checkpoint.batchProgress = `Batch ${businessExecution.batchIndex}/${businessExecution.totalBatches}`;
+      } else {
+        consecutiveFailures += 1;
+        console.error(`[Worker] Tick ${loopCount} failed (${consecutiveFailures} consecutive): ${businessExecution.error}`);
+      }
+
+      const lastScanResult = {
         tickAt: new Date().toISOString(),
         cycleCount: checkpoint.cycleCount,
         cursor: checkpoint.cursor,
-        batchSize: businessExecution.batchSize || 35,
+        batchSize: businessExecution.batchSize || 0,
         ...businessExecution,
       };
 
       await saveCheckpoint(storageDir, checkpoint);
       await writeWorkerHeartbeat(storageDir, {
-        status: 'RUNNING',
+        status: businessExecution.status === 'OK' ? 'RUNNING' : 'ERROR',
         environment,
+        safeMode,
         loopCount,
-        memoryUsageMb: memMb,
+        consecutiveFailures,
+        error: businessExecution.status === 'ERROR' ? businessExecution.error : null,
+        memoryRssMb: memMb,
+        memoryUsageMb: heapMb,
         checkpoint,
         lastScanResult,
       });
 
       if (dbLeaseAcquired) {
-        try {
-          await renewDbLease({
+        const renewed = await renewDbLease(
+          {
             workerId,
             tickCount: loopCount,
+            activeCycle: checkpoint.activeCycle,
+            batchProgress: checkpoint.batchProgress,
+            scannedPairsCount: checkpoint.scannedPairsCount,
+            lastSuccessfulScanAt: checkpoint.lastSuccessfulScanAt,
             lastScanDurationMs: businessExecution.durationMs,
             lastCandidateCount: businessExecution.candidates,
             lastQualifiedCount: businessExecution.qualifiedCount,
-          });
-        } catch {
-          // non-blocking lease renewal
+            totalTradesExecuted: checkpoint.totalTradesExecuted,
+            exchangeExecutionStatus: safeMode ? 'SAFE_MODE (READ_ONLY)' : 'DEMO_DISPATCH_ENABLED',
+            protectionFailures: businessExecution.protectionFailures ?? 0,
+            emergencyStopStatus: 'CLEAR',
+            consecutiveFailures,
+            lastError: businessExecution.status === 'ERROR' ? businessExecution.error : null,
+            safeMode,
+            ttlSeconds: leaseTtlSeconds,
+          },
+          leaseDeps,
+        );
+        if (!renewed && requireDbLease) {
+          const lossMsg = 'Distributed DB worker lease renewal failed; stopping immediately.';
+          console.error(`[Worker] ${lossMsg}`);
+          await shutdown(lossMsg);
+          throw new Error(lossMsg);
         }
       }
 
       if (once) {
-        console.info(`[Worker] Single-cycle test execution finished successfully.`);
+        if (businessExecution.status !== 'OK') {
+          await shutdown(`Single cycle failed: ${businessExecution.error}`);
+          throw new Error(`Single-cycle worker failed: ${businessExecution.error}`);
+        }
+        console.info('[Worker] Single-cycle execution finished successfully.');
         await shutdown('Completed single cycle');
         break;
       }
 
-      await new Promise((resolve) => setTimeout(resolve, tickIntervalMs));
+      if (typeof options.maxTicks === 'number' && loopCount >= options.maxTicks) {
+        await shutdown('Completed bounded ticks');
+        break;
+      }
+
+      await new Promise((resolve) => {
+        if (sleepAbort.signal.aborted) {
+          resolve();
+          return;
+        }
+        const timer = setTimeout(resolve, tickIntervalMs);
+        sleepAbort.signal.addEventListener(
+          'abort',
+          () => {
+            clearTimeout(timer);
+            resolve();
+          },
+          { once: true },
+        );
+      });
     }
   } catch (error) {
     console.error('[Worker] Fatal error in worker loop:', error);
@@ -481,18 +571,19 @@ export async function runWorkerLoop(options = {}) {
       status: 'CRASHED',
       error: error instanceof Error ? error.message : String(error),
       loopCount,
-    });
-    await lock.release();
+      consecutiveFailures,
+    }).catch(() => {});
+    await shutdown(`Fatal error: ${error instanceof Error ? error.message : String(error)}`).catch(() => {});
     throw error;
   }
 }
 
-// CLI entry point
 const isMain = process.argv[1] && fileURLToPath(import.meta.url) === path.resolve(process.argv[1]);
 if (isMain) {
   const args = process.argv.slice(2);
   const once = args.includes('--once') || process.env.WORKER_SINGLE_CYCLE === 'true';
-  runWorkerLoop({ once }).catch((err) => {
+  const safeMode = args.includes('--safe-mode') ? true : undefined;
+  runWorkerLoop({ once, safeMode }).catch((err) => {
     console.error(err);
     process.exit(1);
   });

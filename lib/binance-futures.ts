@@ -41,6 +41,9 @@ export function isTradingEnvironment(value: unknown): value is TradingEnvironmen
 export function tradingExecutionGate(environment: TradingEnvironment) {
   if (!isTradingEnvironment(environment)) return false;
   if (environment === 'DEMO') {
+    if (process.env.WORKER_SAFE_MODE === 'true' || process.env.DEMO_ORDER_DISPATCH_ENABLED === 'false') {
+      return false;
+    }
     return (
       (process.env.BINANCE_FUTURES_TRADING_ENABLED === 'true' &&
         process.env.BINANCE_FUTURES_DEMO_TRADING_ENABLED === 'true' &&

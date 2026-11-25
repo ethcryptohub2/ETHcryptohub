@@ -1,0 +1,41 @@
+# PREPARED FOR AWS LIGHTSAIL (ap-southeast-2, Ubuntu 24.04 LTS, 1 GB RAM / 2 vCPU)
+# Do not enable or start without separate deployment approval and Staging env secrets.
+[Unit]
+Description=SmartExit 24x7 Demo Trading Worker (Staging Sydney)
+After=network-online.target
+Wants=network-online.target
+ConditionPathExists=/etc/smartexit/worker-activation-approved
+StartLimitIntervalSec=300
+StartLimitBurst=5
+
+[Service]
+Type=simple
+User=smartexit
+Group=smartexit
+WorkingDirectory=/opt/smartexit
+EnvironmentFile=/etc/smartexit/demo-worker.env
+ExecStart=/usr/bin/node --import tsx /opt/smartexit/scripts/demo-trading-worker.mjs
+Restart=always
+RestartSec=10
+TimeoutStopSec=30
+KillSignal=SIGTERM
+UMask=0077
+
+# Resource & memory protection for 1 GB RAM Lightsail instance
+LimitNOFILE=65536
+MemoryMax=768M
+TasksMax=64
+
+# Hardening
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/smartexit/storage
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=smartexit-demo-worker
+
+[Install]
+WantedBy=multi-user.target

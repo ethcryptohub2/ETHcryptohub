@@ -2,12 +2,13 @@
 .SYNOPSIS
   Starts the SmartExit 24x7 Isolated Demo Trading Worker on Windows.
 .DESCRIPTION
-  Launches the background worker process with persistent file lock, heartbeat monitoring,
-  and checkpoint recovery. Press Ctrl+C to initiate graceful shutdown.
+  Launches the background worker process using pinned local tsx runtime (no npx download),
+  with persistent file lock, distributed DB lease, heartbeat monitoring, and checkpoint recovery.
 #>
 
 param(
   [switch]$Once,
+  [switch]$SafeMode = $true,
   [string]$Environment = "DEMO"
 )
 
@@ -22,13 +23,25 @@ if ($Environment -eq "LIVE") {
   exit 1
 }
 
-$workerArgs = @("scripts/demo-trading-worker.mjs")
+$env:TRADING_ENVIRONMENT = $Environment
+$env:SMARTEXIT_TRADING_ENVIRONMENT = $Environment
+$env:SMARTEXIT_DEPLOYMENT_ENV = "staging"
+$env:BINANCE_FUTURES_LIVE_TRADING_APPROVED = "false"
+if ($SafeMode) {
+  $env:WORKER_SAFE_MODE = "true"
+  $env:DEMO_ORDER_DISPATCH_ENABLED = "false"
+} else {
+  $env:WORKER_SAFE_MODE = "false"
+  $env:DEMO_ORDER_DISPATCH_ENABLED = "true"
+}
+
+$workerArgs = @("--import", "tsx", "scripts/demo-trading-worker.mjs")
 if ($Once) {
   $workerArgs += "--once"
 }
 
 try {
-  & node $workerArgs
+  & node @workerArgs
 } finally {
   Write-Host "[Launcher] Worker process exited." -ForegroundColor Cyan
 }

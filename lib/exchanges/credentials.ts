@@ -108,7 +108,7 @@ export async function loadExchangeCredentials(
 ): Promise<ExchangeCredentials> {
   await assertExchangeFoundationReady();
   if (!isExchangeEnvironment(exchange, environment)) throw new Error(`${exchange} does not support ${environment}.`);
-  let result = await query<CredentialRow>(
+  const result = await query<CredentialRow>(
     `SELECT api_key_ciphertext, api_secret_ciphertext, passphrase_ciphertext, environment_confirmed
        FROM public.exchange_api_credentials
       WHERE user_id = $1 AND exchange = $2 AND environment = $3`,
@@ -150,7 +150,7 @@ export async function getExchangeCredentialStatus(
 ) {
   await assertExchangeFoundationReady();
   if (!isExchangeEnvironment(exchange, environment)) throw new Error(`${exchange} does not support ${environment}.`);
-  let result = await query<{
+  const result = await query<{
     api_key_suffix: string | null;
     last_verified_at: string | null;
     updated_at: string;

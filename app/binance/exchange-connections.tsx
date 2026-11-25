@@ -346,22 +346,21 @@ export function ExchangeConnections() {
   const [selected, setSelected] = useState('BINANCE');
   const [error, setError] = useState('');
   const [activeMode, setActiveMode] = useState<'demo' | 'live'>('demo');
-  const [exchangeSwitches, setExchangeSwitches] = useState<Record<string, boolean>>({
-    BINANCE: true,
-    BYBIT: true,
-    OKX: false,
-    BITGET: false,
-    GATE: true,
-  });
-
-  useEffect(() => {
+  const [exchangeSwitches, setExchangeSwitches] = useState<Record<string, boolean>>(() => {
+    const defaults: Record<string, boolean> = {
+      BINANCE: true,
+      BYBIT: true,
+      OKX: false,
+      BITGET: false,
+      GATE: true,
+    };
+    if (typeof window === 'undefined') return defaults;
     try {
       const stored = window.localStorage.getItem('smartexit_exchange_switches');
-      if (stored) {
-        setExchangeSwitches(JSON.parse(stored));
-      }
+      if (stored) return { ...defaults, ...(JSON.parse(stored) as Record<string, boolean>) };
     } catch {}
-  }, []);
+    return defaults;
+  });
 
   const toggleExchangeSwitch = (exchangeId: string) => {
     setExchangeSwitches((prev) => {

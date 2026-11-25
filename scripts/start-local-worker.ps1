@@ -3,22 +3,22 @@
     SmartExit Secure Local Windows 24/7 Demo Trading Worker Launcher.
 
 .DESCRIPTION
-    Runs the isolated autonomous SmartExit background daemon on the owner's Windows PC.
+    Runs the isolated autonomous SmartExit background daemon on Windows.
     Strictly locked to DEMO mode and verified Staging Supabase configuration.
     Real-money Live Trading is strictly prohibited and fails closed.
 
 .PARAMETER SafeMode
-    When enabled (default), order dispatch is simulated/disabled, running scanning and protection supervision only.
+    When enabled (default), order dispatch and mutating reconciliation are disabled (read-only scan & audit only).
 
 .PARAMETER SingleCycle
-    Executes a single test cycle (15 batches, 522 symbols) and exits with report.
+    Executes a single test cycle and exits cleanly.
 
 .PARAMETER Continuous
     Runs the 24x7 autonomous continuous daemon loop until stopped with Ctrl+C.
 
 .EXAMPLE
     .\scripts\start-local-worker.ps1 -SafeMode -SingleCycle
-    .\scripts\start-local-worker.ps1 -Continuous
+    .\scripts\start-local-worker.ps1 -SafeMode -Continuous
 #>
 
 [CmdletBinding()]
@@ -34,62 +34,66 @@ Write-Host "=================================================================" -
 Write-Host " SMARTEXIT 24x7 AUTONOMOUS DEMO TRADING WORKER (LOCAL WINDOWS)" -ForegroundColor Cyan
 Write-Host "=================================================================" -ForegroundColor Cyan
 
-# 1. Environment Safety Verification
-$targetEnv = "DEMO"
 $stagingProjectRef = "ghecpkpaxbrvehquhzkr"
 $productionProjectRef = "kafsdnzzjawikoavkhvm"
 
 Write-Host "[1/5] Verifying environment safety invariants..." -ForegroundColor Yellow
-if ($env:TRADING_ENVIRONMENT -eq "LIVE") {
+if ($env:TRADING_ENVIRONMENT -eq "LIVE" -or $env:SMARTEXIT_TRADING_ENVIRONMENT -eq "LIVE") {
     Write-Error "CRITICAL SAFETY VIOLATION: LIVE trading is prohibited on this worker! Fails closed."
     exit 1
 }
 
 $env:TRADING_ENVIRONMENT = "DEMO"
+$env:SMARTEXIT_TRADING_ENVIRONMENT = "DEMO"
 $env:NODE_ENV = "production"
+$env:SMARTEXIT_DEPLOYMENT_ENV = "staging"
 $env:SMARTEXIT_STAGING_SUPABASE_PROJECT_REF = $stagingProjectRef
 $env:SMARTEXIT_PRODUCTION_SUPABASE_PROJECT_REF = $productionProjectRef
+$env:BINANCE_FUTURES_LIVE_TRADING_APPROVED = "false"
 
 Write-Host "  -> Trading Environment: DEMO (Virtual Sandbox Only)" -ForegroundColor Green
 Write-Host "  -> Target Database Ref: $stagingProjectRef (Staging Sydney)" -ForegroundColor Green
 Write-Host "  -> Production Protection: ACTIVE (Production database ref strictly blocked)" -ForegroundColor Green
 
-# 2. Check Node.js
-Write-Host "[2/5] Checking Node.js runtime..." -ForegroundColor Yellow
+Write-Host "[2/5] Checking Node.js and pinned tsx runtime..." -ForegroundColor Yellow
 try {
     $nodeVersion = node -v
     Write-Host "  -> Node.js Version: $nodeVersion" -ForegroundColor Green
 } catch {
-    Write-Error "Node.js runtime not found on PATH. Please install Node.js."
+    Write-Error "Node.js runtime not found on PATH. Please install Node.js 22 LTS."
     exit 1
 }
 
-# 3. Mode Configuration
+$repoRoot = (Get-Item $PSScriptRoot).Parent.FullName
+$tsxPkg = Join-Path $repoRoot "node_modules\tsx"
+if (-not (Test-Path $tsxPkg)) {
+    Write-Error "Pinned dependency 'tsx' not found in node_modules. Run 'npm ci' first."
+    exit 1
+}
+
 Write-Host "[3/5] Configuring operational parameters..." -ForegroundColor Yellow
-if ($SingleCycle) {
-    $env:WORKER_SINGLE_CYCLE = "true"
-    Write-Host "  -> Execution Mode: Single Full Scan Cycle" -ForegroundColor Cyan
-} elseif ($Continuous) {
+if ($Continuous) {
     $env:WORKER_SINGLE_CYCLE = "false"
     Write-Host "  -> Execution Mode: Continuous 24x7 Unattended Loop" -ForegroundColor Cyan
 } else {
     $env:WORKER_SINGLE_CYCLE = "true"
-    Write-Host "  -> Execution Mode: Supervised Single Cycle (default)" -ForegroundColor Cyan
+    Write-Host "  -> Execution Mode: Supervised Single Cycle" -ForegroundColor Cyan
 }
 
-if ($SafeMode) {
+if ($SafeMode -or (-not $PSBoundParameters.ContainsKey('SafeMode'))) {
+    $env:WORKER_SAFE_MODE = "true"
     $env:DEMO_ORDER_DISPATCH_ENABLED = "false"
-    Write-Host "  -> Order Dispatch: DISABLED (Safe Supervision & Scanner Mode)" -ForegroundColor Green
+    Write-Host "  -> Order Dispatch: DISABLED (SafeMode Read-Only Scan & Protection Audit)" -ForegroundColor Green
 } else {
+    $env:WORKER_SAFE_MODE = "false"
     $env:DEMO_ORDER_DISPATCH_ENABLED = "true"
     Write-Host "  -> Order Dispatch: ENABLED (Authorized Demo Accounts Only)" -ForegroundColor Yellow
 }
 
-# 4. Starting Worker Process
-Write-Host "[4/5] Launching worker daemon: scripts/demo-trading-worker.mjs..." -ForegroundColor Yellow
+Write-Host "[4/5] Launching worker daemon: node --import tsx scripts/demo-trading-worker.mjs..." -ForegroundColor Yellow
 Write-Host "-----------------------------------------------------------------" -ForegroundColor Gray
 
-$storageDir = Join-Path (Get-Item $PSScriptRoot).Parent.FullName "storage\demo-worker"
+$storageDir = Join-Path $repoRoot "storage\demo-worker"
 $lockPath = Join-Path $storageDir "worker.lock"
 if (Test-Path $lockPath) {
     try {
@@ -102,16 +106,14 @@ if (Test-Path $lockPath) {
 }
 
 $scriptPath = Join-Path $PSScriptRoot "demo-trading-worker.mjs"
-
-$nodeArgs = if ($Continuous) { @() } else { @("--once") }
-
-try {
-    npx tsx $scriptPath $nodeArgs
-} catch {
-    Write-Host "`nWorker process stopped." -ForegroundColor Yellow
+$nodeArgs = @("--import", "tsx", $scriptPath)
+if (-not $Continuous) {
+    $nodeArgs += "--once"
 }
 
-# 5. Exit Verification
+& node @nodeArgs
+$exitCode = $LASTEXITCODE
+
 Write-Host "-----------------------------------------------------------------" -ForegroundColor Gray
-Write-Host "[5/5] Worker session terminated cleanly. Exclusive lock released." -ForegroundColor Green
-Write-Host "=================================================================" -ForegroundColor Cyan
+Write-Host "[5/5] Worker session exited with code $exitCode." -ForegroundColor Cyan
+exit $exitCode

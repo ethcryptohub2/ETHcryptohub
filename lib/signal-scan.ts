@@ -133,7 +133,8 @@ export async function runSignalScan(
   timeframeOverride?: typeof timeframes[number],
   options: SignalScanOptions = {},
 ) {
-  const startedAt = new Date().toISOString();
+  const startedMs = Date.now();
+  const startedAt = new Date(startedMs).toISOString();
   const syncState = await getScannerSyncState();
   const lastAttempt = syncState?.last_attempt_at ? Date.parse(syncState.last_attempt_at) : 0;
   if (!lastAttempt || Date.now() - lastAttempt >= SYMBOL_SYNC_INTERVAL_MS) {
@@ -252,6 +253,7 @@ export async function runSignalScan(
   return {
     startedAt,
     completedAt: new Date().toISOString(),
+    durationMs: Date.now() - startedMs,
     exchange: result.exchange,
     source: result.source,
     timeframe,
@@ -260,6 +262,7 @@ export async function runSignalScan(
     qualifiedCount: qualifiedCandidates.length,
     enabledCoins: enabledSymbols.length,
     batchSize: symbols.length,
+    cursor: cursorInfo.offset,
     newSignals: persisted.created,
     deduplicatedSignals: Math.max(0, qualifiedCandidates.length - persisted.created),
     scannedAt: result.updatedAt,

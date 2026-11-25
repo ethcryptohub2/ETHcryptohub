@@ -80,43 +80,6 @@ export function AdminWorkerDashboard() {
     }
   };
 
-  const activateWorker = async () => {
-    setLoading(true);
-    setError('');
-    try {
-      const csrfRes = await fetch('/api/csrf', { cache: 'no-store' });
-      const csrfBody = (await csrfRes.json()) as { data?: { csrfToken: string } };
-      const csrf = csrfBody.data?.csrfToken;
-
-      const res = await fetch('/api/admin/worker-health', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          ...(csrf ? { 'X-CSRF-Token': csrf } : {}),
-        },
-        body: JSON.stringify({
-          action: 'acquire',
-          workerId: 'worker-autonomous-daemon-18992',
-          hostname: 'staging-worker',
-          pid: 18992,
-          version: '1.0.0',
-          environment: 'DEMO',
-          ttlSeconds: 86400,
-        }),
-      });
-
-      if (!res.ok) {
-        const body = (await res.json().catch(() => ({}))) as { error?: string };
-        throw new Error(body.error || 'Failed to activate worker lease.');
-      }
-      await fetchHealth();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Worker activation failed.');
-    } finally {
-      setLoading(false);
-    }
-  };
-
   useEffect(() => {
     let active = true;
     const load = async () => {
@@ -149,7 +112,11 @@ export function AdminWorkerDashboard() {
 
   const isOnline = health?.status === 'ONLINE';
   const isDegraded = health?.status === 'DEGRADED';
+  const isDormant = health?.status === 'DORMANT';
   const lease = health?.lease;
+  const consecutiveFailures = Number(lease?.consecutiveFailures ?? 0);
+  const protectionFailures = Number(lease?.protectionFailures ?? 0);
+  const hasActiveTelemetry = isOnline || isDegraded;
 
   return (
     <section className="card stack" id="admin-worker-dashboard" style={{ border: '1px solid var(--accent)' }}>
@@ -162,23 +129,6 @@ export function AdminWorkerDashboard() {
           </p>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-          <button
-            type="button"
-            className="button"
-            onClick={() => void activateWorker()}
-            disabled={loading}
-            style={{
-              fontSize: 12,
-              padding: '6px 14px',
-              background: '#10b981',
-              color: '#ffffff',
-              border: 'none',
-              fontWeight: 600,
-              cursor: 'pointer',
-            }}
-          >
-            {loading ? 'Activating…' : '⚡ Activate 24×7 Worker Daemon'}
-          </button>
           <button
             type="button"
             className="button-secondary"
@@ -211,40 +161,48 @@ export function AdminWorkerDashboard() {
             style={{
               fontSize: 16,
               fontFamily: 'DM Mono',
-              color: isOnline ? '#10b981' : isDegraded ? '#f59e0b' : '#6b7280',
+              color: isOnline ? '#10b981' : isDegraded ? '#f59e0b' : isDormant ? '#ef4444' : '#6b7280',
             }}
           >
-            {isOnline ? '● ACTIVE DAEMON ONLINE' : isDegraded ? '● DEGRADED' : '○ OFFLINE / HOSTING-GATED'}
+            {isOnline
+              ? '● ACTIVE DAEMON ONLINE'
+              : isDegraded
+                ? '● DEGRADED / ERRORS'
+                : isDormant
+                  ? '○ LEASE EXPIRED / DORMANT'
+                  : '○ OFFLINE / NO ACTIVE LEASE'}
           </strong>
           <small className="muted" style={{ display: 'block', fontSize: 10 }}>
-            {isOnline ? `Verified within TTL (${lease?.hostname})` : 'Awaiting background daemon process'}
+            {hasActiveTelemetry
+              ? `Lease verified (${lease?.hostname}${lease?.safeMode ? ' · SafeMode' : ''})`
+              : 'Awaiting running background daemon process'}
           </small>
         </div>
 
         <div>
           <small className="muted" style={{ display: 'block', fontSize: 11 }}>WORKER PID / HOST</small>
           <strong style={{ fontSize: 15, fontFamily: 'DM Mono', color: 'var(--text)' }}>
-            {isOnline && lease?.pid ? `PID ${lease.pid} (${lease.hostname})` : 'Standalone Process'}
+            {hasActiveTelemetry && lease?.pid ? `PID ${lease.pid} (${lease.hostname})` : 'Not running'}
           </strong>
           <small className="muted" style={{ display: 'block', fontSize: 10 }}>
-            {isOnline && lease?.workerId ? lease.workerId : 'scripts/demo-trading-worker.mjs'}
+            {lease?.workerId ?? 'scripts/demo-trading-worker.mjs'}
           </small>
         </div>
 
         <div>
           <small className="muted" style={{ display: 'block', fontSize: 11 }}>HEARTBEAT &amp; TICKS</small>
-          <strong style={{ fontSize: 15, fontFamily: 'DM Mono', color: isOnline ? '#10b981' : 'var(--text-muted)' }}>
-            {isOnline && lease?.tickCount ? `${lease.tickCount} cycles recorded` : 'Ready on start'}
+          <strong style={{ fontSize: 15, fontFamily: 'DM Mono', color: isOnline ? '#10b981' : isDegraded ? '#f59e0b' : 'var(--text-muted)' }}>
+            {lease?.tickCount ? `${lease.tickCount} ticks recorded` : '0 ticks recorded'}
           </strong>
           <small className="muted" style={{ display: 'block', fontSize: 10 }}>
-            {isOnline && lease?.heartbeatAt ? `Last: ${new Date(lease.heartbeatAt).toLocaleTimeString()}` : 'Daemon Interval: 30s'}
+            {lease?.heartbeatAt ? `Last HB: ${new Date(lease.heartbeatAt).toLocaleString()}` : 'No heartbeat recorded'}
           </small>
         </div>
 
         <div>
           <small className="muted" style={{ display: 'block', fontSize: 11 }}>TRADING ENVIRONMENT</small>
           <strong style={{ fontSize: 15, fontFamily: 'DM Mono', color: 'var(--accent)' }}>
-            DEMO / TESTNET ONLY
+            {lease?.safeMode ? 'DEMO (SAFE MODE)' : 'DEMO / TESTNET ONLY'}
           </strong>
           <small className="muted" style={{ display: 'block', fontSize: 10 }}>Real-money LIVE locked (HTTP 403)</small>
         </div>
@@ -258,55 +216,55 @@ export function AdminWorkerDashboard() {
         </div>
 
         <div>
-          <small className="muted" style={{ display: 'block', fontSize: 11 }}>FAIL-SAFE RECOVERY</small>
-          <span style={{ fontSize: 13, fontFamily: 'DM Mono', color: '#10b981', fontWeight: 600 }}>
-            ✓ AUTO-RECONCILE
-          </span>
-          <small className="muted" style={{ display: 'block', fontSize: 10 }}>10-step full position protection</small>
-        </div>
-
-        <div>
           <small className="muted" style={{ display: 'block', fontSize: 11 }}>ACTIVE SCANNER CYCLE</small>
           <strong style={{ fontSize: 14, fontFamily: 'DM Mono', color: 'var(--text)' }}>
-            {(lease?.activeCycle as string) || 'Dynamic 522-Universe'}
+            {lease?.activeCycle ?? 'No scan cycle recorded'}
           </strong>
           <small className="muted" style={{ display: 'block', fontSize: 10 }}>
-            Batch: {(lease?.batchProgress as string) || 'Batch 1-15 Rotation'}
+            {lease?.batchProgress ?? 'Awaiting first batch'} · Scanned pairs: {lease?.scannedPairsCount ?? 0}
           </small>
         </div>
 
         <div>
           <small className="muted" style={{ display: 'block', fontSize: 11 }}>LAST SUCCESSFUL SCAN</small>
-          <strong style={{ fontSize: 14, fontFamily: 'DM Mono', color: '#10b981' }}>
-            {lease?.lastScanDurationMs ? `${lease.lastScanDurationMs}ms latency` : 'Continuous Feed'}
+          <strong style={{ fontSize: 14, fontFamily: 'DM Mono', color: lease?.lastSuccessfulScanAt ? '#10b981' : 'var(--text-muted)' }}>
+            {lease?.lastScanDurationMs !== undefined
+              ? `${lease.lastScanDurationMs}ms latency`
+              : 'No successful scan yet'}
           </strong>
           <small className="muted" style={{ display: 'block', fontSize: 10 }}>
-            Candidates: {lease?.lastCandidateCount ?? 522} · Qualified: {lease?.lastQualifiedCount ?? 26}
+            {lease?.lastSuccessfulScanAt
+              ? `${new Date(lease.lastSuccessfulScanAt).toLocaleTimeString()} · Pairs: ${lease.lastCandidateCount ?? 0} · Qualified: ${lease.lastQualifiedCount ?? 0}`
+              : 'Candidates: 0 · Qualified: 0'}
           </small>
         </div>
 
         <div>
-          <small className="muted" style={{ display: 'block', fontSize: 11 }}>EXCHANGE EXECUTION</small>
+          <small className="muted" style={{ display: 'block', fontSize: 11 }}>DEMO TRADES &amp; EXECUTION</small>
           <strong style={{ fontSize: 14, fontFamily: 'DM Mono', color: 'var(--accent)' }}>
-            {(lease?.exchangeExecutionStatus as string) || 'Authorized Demo Only'}
+            {lease?.totalTradesExecuted ?? 0} executed
           </strong>
-          <small className="muted" style={{ display: 'block', fontSize: 10 }}>Parallel dispatch across enabled</small>
+          <small className="muted" style={{ display: 'block', fontSize: 10 }}>
+            Mode: {lease?.exchangeExecutionStatus ?? 'OFFLINE'}
+          </small>
         </div>
 
         <div>
-          <small className="muted" style={{ display: 'block', fontSize: 11 }}>PROTECTION FAILURES</small>
-          <strong style={{ fontSize: 14, fontFamily: 'DM Mono', color: (lease?.protectionFailures as number) ? '#ef4444' : '#10b981' }}>
-            {(lease?.protectionFailures as string) || '0 Failures'}
+          <small className="muted" style={{ display: 'block', fontSize: 11 }}>SCAN &amp; PROTECTION FAILURES</small>
+          <strong style={{ fontSize: 14, fontFamily: 'DM Mono', color: (protectionFailures > 0 || consecutiveFailures > 0) ? '#ef4444' : '#10b981' }}>
+            {protectionFailures} protection · {consecutiveFailures} tick errors
           </strong>
-          <small className="muted" style={{ display: 'block', fontSize: 10 }}>SL verified exchange-side</small>
+          <small className="muted" style={{ display: 'block', fontSize: 10 }}>
+            {lease?.lastError ? lease.lastError.slice(0, 72) : 'No active execution errors'}
+          </small>
         </div>
 
         <div>
           <small className="muted" style={{ display: 'block', fontSize: 11 }}>EMERGENCY STOP STATUS</small>
-          <strong style={{ fontSize: 14, fontFamily: 'DM Mono', color: '#10b981' }}>
-            {(lease?.emergencyStopStatus as string) || 'CLEAR / ARMED'}
+          <strong style={{ fontSize: 14, fontFamily: 'DM Mono', color: lease?.emergencyStopStatus === 'ARMED' ? '#ef4444' : '#10b981' }}>
+            {lease?.emergencyStopStatus ?? 'CLEAR'}
           </strong>
-          <small className="muted" style={{ display: 'block', fontSize: 10 }}>Global kill switch monitored</small>
+          <small className="muted" style={{ display: 'block', fontSize: 10 }}>Blocks new entries; preserves open protection</small>
         </div>
       </div>
 
@@ -416,10 +374,13 @@ export function AdminWorkerDashboard() {
           To run continuous 24×7 scanning and automated trade dispatch independently of browser sessions:
         </p>
         <code className="mono" style={{ display: 'block', padding: 8, background: 'var(--background)', borderRadius: 4, marginBottom: 6 }}>
-          Local / VM Process: powershell -ExecutionPolicy Bypass -File .\scripts\start-demo-worker.ps1
+          Windows SafeMode: powershell -ExecutionPolicy RemoteSigned -File .\scripts\start-local-worker.ps1 -SafeMode -Continuous
+        </code>
+        <code className="mono" style={{ display: 'block', padding: 8, background: 'var(--background)', borderRadius: 4, marginBottom: 6 }}>
+          Linux / VM Daemon: node --import tsx scripts/demo-trading-worker.mjs
         </code>
         <code className="mono" style={{ display: 'block', padding: 8, background: 'var(--background)', borderRadius: 4 }}>
-          Docker Daemon: docker build -f Dockerfile.worker -t smartexit-worker . &amp;&amp; docker run -d --name smartexit-worker smartexit-worker
+          Docker Daemon: docker build -f Dockerfile.worker -t smartexit-worker . &amp;&amp; docker run -d --name smartexit-worker --env-file worker.env smartexit-worker
         </code>
       </div>
     </section>

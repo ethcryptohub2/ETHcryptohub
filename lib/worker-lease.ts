@@ -13,10 +13,21 @@ export interface WorkerLeaseInfo {
   heartbeatAt: string;
   expiresAt: string;
   tickCount: number;
+  activeCycle?: string;
+  batchProgress?: string;
+  scannedPairsCount?: number;
+  lastSuccessfulScanAt?: string | null;
   lastScanDurationMs?: number;
   lastCandidateCount?: number;
   lastQualifiedCount?: number;
-  status: 'ACTIVE' | 'DEGRADED' | 'DORMANT' | 'STOPPED';
+  totalTradesExecuted?: number;
+  exchangeExecutionStatus?: string;
+  protectionFailures?: number;
+  emergencyStopStatus?: string;
+  consecutiveFailures?: number;
+  lastError?: string | null;
+  safeMode?: boolean;
+  status: 'ACTIVE' | 'DEGRADED' | 'DORMANT' | 'STOPPED' | 'ERROR';
 }
 
 export interface WorkerHealthResult {
@@ -31,12 +42,12 @@ export interface WorkerHealthResult {
 const SETTING_KEY = 'demo_worker_lease';
 const DEFAULT_TTL_SECONDS = 90;
 
-async function safeDbQuery<T extends QueryResultRow = QueryResultRow>(sql: string, params: unknown[] = []): Promise<{ rows: T[] }> {
+async function safeDbQuery<T extends QueryResultRow = QueryResultRow>(sql: string, params: unknown[] = []): Promise<{ rows: T[]; rowCount?: number | null }> {
   try {
     const { query } = await import('./db');
     return await query<T>(sql, params);
   } catch {
-    return { rows: [] };
+    return { rows: [], rowCount: 0 };
   }
 }
 
@@ -71,6 +82,20 @@ export async function getWorkerHealthStatus(): Promise<WorkerHealthResult> {
 
       const secondsSinceHeartbeat = Number.isFinite(heartbeatAtMs) ? Math.floor((now - heartbeatAtMs) / 1000) : 999;
       const isLeaseUnexpired = Number.isFinite(expiresAtMs) && now <= expiresAtMs;
+
+      // Never report a failing worker as ONLINE/healthy.
+      if (lease.status === 'ERROR' || (typeof lease.consecutiveFailures === 'number' && lease.consecutiveFailures > 0)) {
+        return {
+          status: isLeaseUnexpired && secondsSinceHeartbeat <= 180 ? 'DEGRADED' : 'DORMANT',
+          lease: { ...lease, status: isLeaseUnexpired && secondsSinceHeartbeat <= 180 ? 'DEGRADED' : 'DORMANT' },
+          source: 'DATABASE',
+          checkedAt,
+          uptimeSeconds,
+          message: lease.lastError
+            ? `Worker reported execution error (${lease.consecutiveFailures ?? 1} consecutive failures): ${lease.lastError}`
+            : `Worker is degraded (${lease.consecutiveFailures ?? 1} consecutive failures).`,
+        };
+      }
 
       // Online: genuine running worker with fresh heartbeat within 90s and unexpired lease
       if (isLeaseUnexpired && secondsSinceHeartbeat <= 90) {
@@ -113,31 +138,56 @@ export async function getWorkerHealthStatus(): Promise<WorkerHealthResult> {
   try {
     const localHeartbeatPath = path.join(process.cwd(), 'storage', 'demo-worker', 'worker-heartbeat.json');
     const content = await fs.readFile(localHeartbeatPath, 'utf8');
-    const data = JSON.parse(content);
+    const data = JSON.parse(content) as Record<string, unknown>;
     const now = Date.now();
-    const ageSeconds = Math.floor((now - (data.timestamp || now)) / 1000);
+    const ageSeconds = Math.floor((now - (Number(data.timestamp) || now)) / 1000);
+    const localStatus = String(data.status ?? 'STOPPED');
+    const failures = Number(data.consecutiveFailures ?? 0);
 
     const localLease: WorkerLeaseInfo = {
-      workerId: `local-${data.pid || 'pid'}`,
+      workerId: `local-${String(data.pid || 'pid')}`,
       hostname: 'localhost',
-      pid: data.pid || 0,
-      version: data.version || '1.0.0',
+      pid: Number(data.pid) || 0,
+      version: String(data.version || '1.0.0'),
       environment: 'DEMO',
-      acquiredAt: data.updatedAt || checkedAt,
-      heartbeatAt: data.updatedAt || checkedAt,
+      acquiredAt: String(data.updatedAt || checkedAt),
+      heartbeatAt: String(data.updatedAt || checkedAt),
       expiresAt: new Date(now + 60_000).toISOString(),
-      tickCount: data.tickCount || 0,
-      status: ageSeconds < 120 ? 'ACTIVE' : 'DORMANT',
+      tickCount: Number(data.loopCount || data.tickCount || 0),
+      consecutiveFailures: failures,
+      lastError: typeof data.error === 'string' ? data.error : null,
+      status:
+        localStatus === 'STOPPED'
+          ? 'STOPPED'
+          : localStatus === 'CRASHED' || localStatus === 'ERROR' || failures > 0
+            ? 'DEGRADED'
+            : ageSeconds < 120
+              ? 'ACTIVE'
+              : 'DORMANT',
     };
 
+    const healthStatus: WorkerHealthResult['status'] =
+      localStatus === 'STOPPED'
+        ? 'OFFLINE'
+        : localStatus === 'CRASHED' || localStatus === 'ERROR' || failures > 0
+          ? 'DEGRADED'
+          : ageSeconds < 120
+            ? 'ONLINE'
+            : 'DORMANT';
+
     return {
-      status: ageSeconds < 120 ? 'ONLINE' : 'DORMANT',
+      status: healthStatus,
       lease: localLease,
       source: 'LOCAL_STORAGE',
       checkedAt,
-      message: ageSeconds < 120
-        ? `Local daemon active (PID ${data.pid}, heartbeat ${ageSeconds}s ago).`
-        : `Local daemon heartbeat stale (${ageSeconds}s ago).`,
+      message:
+        healthStatus === 'ONLINE'
+          ? `Local daemon active (PID ${localLease.pid}, heartbeat ${ageSeconds}s ago).`
+          : healthStatus === 'OFFLINE'
+            ? `Local daemon stopped at ${localLease.heartbeatAt}.`
+            : healthStatus === 'DEGRADED'
+              ? `Local daemon reported error: ${localLease.lastError ?? localStatus}`
+              : `Local daemon heartbeat stale (${ageSeconds}s ago).`,
     };
   } catch {
     // Local storage not found
@@ -159,6 +209,7 @@ export async function acquireWorkerLease(info: {
   version: string;
   environment?: 'DEMO' | 'TESTNET';
   ttlSeconds?: number;
+  safeMode?: boolean;
 }): Promise<{ ok: boolean; lease?: WorkerLeaseInfo; error?: string }> {
   const ttl = info.ttlSeconds || DEFAULT_TTL_SECONDS;
   const now = new Date();
@@ -174,41 +225,41 @@ export async function acquireWorkerLease(info: {
     heartbeatAt: now.toISOString(),
     expiresAt,
     tickCount: 1,
+    safeMode: info.safeMode,
     status: 'ACTIVE',
   };
 
   try {
-    // Check if existing lease is still valid and owned by another worker
-    const existing = await safeDbQuery<{ value_json: WorkerLeaseInfo }>(
+    const { query } = await import('./db');
+    const claimed = await query<{ value_json: WorkerLeaseInfo }>(
+      `INSERT INTO public.app_settings (key, value_json, updated_at)
+       VALUES ($1, $2::jsonb, NOW())
+       ON CONFLICT (key) DO UPDATE
+         SET value_json = EXCLUDED.value_json, updated_at = NOW()
+       WHERE public.app_settings.value_json->>'workerId' = $3
+          OR public.app_settings.value_json->>'status' IN ('STOPPED', 'ERROR')
+          OR (public.app_settings.value_json->>'expiresAt') IS NULL
+          OR (public.app_settings.value_json->>'expiresAt')::timestamptz <= NOW()
+       RETURNING value_json`,
+      [SETTING_KEY, JSON.stringify(lease), info.workerId],
+    );
+
+    if (claimed.rows[0]?.value_json) {
+      return { ok: true, lease: claimed.rows[0].value_json };
+    }
+
+    const existing = await query<{ value_json: WorkerLeaseInfo }>(
       `SELECT value_json FROM public.app_settings WHERE key = $1`,
       [SETTING_KEY],
     );
-
-    if (existing.rows[0]?.value_json) {
-      const current = existing.rows[0].value_json;
-      const currentExpiresAtMs = Date.parse(current.expiresAt);
-      if (
-        current.workerId !== info.workerId &&
-        current.status === 'ACTIVE' &&
-        Number.isFinite(currentExpiresAtMs) &&
-        Date.now() < currentExpiresAtMs
-      ) {
-        return {
-          ok: false,
-          lease: current,
-          error: `Another active worker (${current.workerId} on ${current.hostname}, PID ${current.pid}) holds the lease until ${current.expiresAt}.`,
-        };
-      }
-    }
-
-    await safeDbQuery(
-      `INSERT INTO public.app_settings (key, value_json, updated_at)
-       VALUES ($1, $2::jsonb, NOW())
-       ON CONFLICT (key) DO UPDATE SET value_json = EXCLUDED.value_json, updated_at = NOW()`,
-      [SETTING_KEY, JSON.stringify(lease)],
-    );
-
-    return { ok: true, lease };
+    const current = existing.rows[0]?.value_json;
+    return {
+      ok: false,
+      lease: current,
+      error: current
+        ? `Another active worker (${current.workerId} on ${current.hostname}, PID ${current.pid}) holds the lease until ${current.expiresAt}.`
+        : 'Lease is currently held by another worker.',
+    };
   } catch (err) {
     return { ok: false, error: err instanceof Error ? err.message : 'Database lease acquisition failed.' };
   }
@@ -217,9 +268,20 @@ export async function acquireWorkerLease(info: {
 export async function renewWorkerLease(info: {
   workerId: string;
   tickCount: number;
+  activeCycle?: string;
+  batchProgress?: string;
+  scannedPairsCount?: number;
+  lastSuccessfulScanAt?: string | null;
   lastScanDurationMs?: number;
   lastCandidateCount?: number;
   lastQualifiedCount?: number;
+  totalTradesExecuted?: number;
+  exchangeExecutionStatus?: string;
+  protectionFailures?: number;
+  emergencyStopStatus?: string;
+  consecutiveFailures?: number;
+  lastError?: string | null;
+  safeMode?: boolean;
   ttlSeconds?: number;
 }): Promise<boolean> {
   const ttl = info.ttlSeconds || DEFAULT_TTL_SECONDS;
@@ -227,7 +289,8 @@ export async function renewWorkerLease(info: {
   const expiresAt = new Date(now.getTime() + ttl * 1000).toISOString();
 
   try {
-    const existing = await safeDbQuery<{ value_json: WorkerLeaseInfo }>(
+    const { query } = await import('./db');
+    const existing = await query<{ value_json: WorkerLeaseInfo }>(
       `SELECT value_json FROM public.app_settings WHERE key = $1`,
       [SETTING_KEY],
     );
@@ -237,7 +300,11 @@ export async function renewWorkerLease(info: {
     }
 
     const current = existing.rows[0].value_json;
-    if (current.workerId !== info.workerId) {
+    if (current.workerId !== info.workerId || current.status === 'STOPPED') {
+      return false;
+    }
+    const existingExpiryMs = Date.parse(current.expiresAt);
+    if (Number.isFinite(existingExpiryMs) && Date.now() > existingExpiryMs) {
       return false;
     }
 
@@ -246,18 +313,35 @@ export async function renewWorkerLease(info: {
       heartbeatAt: now.toISOString(),
       expiresAt,
       tickCount: info.tickCount,
+      activeCycle: info.activeCycle ?? current.activeCycle,
+      batchProgress: info.batchProgress ?? current.batchProgress,
+      scannedPairsCount: info.scannedPairsCount ?? current.scannedPairsCount,
+      lastSuccessfulScanAt: info.lastSuccessfulScanAt !== undefined ? info.lastSuccessfulScanAt : current.lastSuccessfulScanAt,
       lastScanDurationMs: info.lastScanDurationMs ?? current.lastScanDurationMs,
       lastCandidateCount: info.lastCandidateCount ?? current.lastCandidateCount,
       lastQualifiedCount: info.lastQualifiedCount ?? current.lastQualifiedCount,
-      status: 'ACTIVE',
+      totalTradesExecuted: info.totalTradesExecuted ?? current.totalTradesExecuted,
+      exchangeExecutionStatus: info.exchangeExecutionStatus ?? current.exchangeExecutionStatus,
+      protectionFailures: info.protectionFailures ?? current.protectionFailures,
+      emergencyStopStatus: info.emergencyStopStatus ?? current.emergencyStopStatus,
+      consecutiveFailures: info.consecutiveFailures ?? 0,
+      lastError: info.lastError !== undefined ? info.lastError : null,
+      safeMode: info.safeMode ?? current.safeMode,
+      status: (info.consecutiveFailures ?? 0) > 0 ? 'DEGRADED' : 'ACTIVE',
     };
 
-    await safeDbQuery(
-      `UPDATE public.app_settings SET value_json = $1::jsonb, updated_at = NOW() WHERE key = $2`,
-      [JSON.stringify(updated), SETTING_KEY],
+    const res = await query<{ value_json: WorkerLeaseInfo }>(
+      `UPDATE public.app_settings
+          SET value_json = $1::jsonb, updated_at = NOW()
+        WHERE key = $2
+          AND value_json->>'workerId' = $3
+          AND value_json->>'status' <> 'STOPPED'
+          AND (value_json->>'expiresAt')::timestamptz > NOW()
+        RETURNING value_json`,
+      [JSON.stringify(updated), SETTING_KEY, info.workerId],
     );
 
-    return true;
+    return Boolean(res.rows[0]);
   } catch {
     return false;
   }
@@ -265,7 +349,8 @@ export async function renewWorkerLease(info: {
 
 export async function releaseWorkerLease(workerId: string): Promise<void> {
   try {
-    const existing = await safeDbQuery<{ value_json: WorkerLeaseInfo }>(
+    const { query } = await import('./db');
+    const existing = await query<{ value_json: WorkerLeaseInfo }>(
       `SELECT value_json FROM public.app_settings WHERE key = $1`,
       [SETTING_KEY],
     );
@@ -276,11 +361,12 @@ export async function releaseWorkerLease(workerId: string): Promise<void> {
         const stopped: WorkerLeaseInfo = {
           ...current,
           heartbeatAt: new Date().toISOString(),
+          expiresAt: new Date().toISOString(),
           status: 'STOPPED',
         };
-        await safeDbQuery(
-          `UPDATE public.app_settings SET value_json = $1::jsonb, updated_at = NOW() WHERE key = $2`,
-          [JSON.stringify(stopped), SETTING_KEY],
+        await query(
+          `UPDATE public.app_settings SET value_json = $1::jsonb, updated_at = NOW() WHERE key = $2 AND value_json->>'workerId' = $3`,
+          [JSON.stringify(stopped), SETTING_KEY, workerId],
         );
       }
     }
