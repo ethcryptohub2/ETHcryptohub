@@ -1566,3 +1566,280 @@ html[data-theme='dark'] .scanner-radar-svg {
   color: var(--text-secondary);
 }
 
+
+/* ==========================================================================
+   Compact Scanner Professional Trading Table & Diagnostic Drawer
+   ========================================================================== */
+
+.compact-summary-ribbon {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(110px, 1fr));
+  gap: 10px;
+  padding: 12px 16px;
+  background: var(--surface-raised);
+  border: 1px solid var(--surface-border);
+  border-radius: 10px;
+  margin-bottom: 14px;
+}
+
+.ribbon-item {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.ribbon-label {
+  font: 600 10px 'DM Mono', monospace;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  letter-spacing: 0.05em;
+}
+
+.ribbon-value {
+  font: 700 16px 'DM Mono', monospace;
+  color: var(--text-primary);
+}
+
+.ribbon-value.is-accent {
+  color: #10b981;
+}
+
+.ribbon-value.is-warning {
+  color: #f59e0b;
+}
+
+.scanner-filter-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
+}
+
+.scanner-filter-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+}
+
+.filter-tab-btn {
+  padding: 6px 12px;
+  border-radius: 6px;
+  border: 1px solid var(--surface-border);
+  background: var(--surface);
+  color: var(--text-secondary);
+  font: 600 12px inherit;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  transition: all 0.15s ease;
+}
+
+.filter-tab-btn:hover {
+  background: var(--surface-raised);
+  color: var(--text-primary);
+}
+
+.filter-tab-btn.is-active {
+  background: var(--accent-light, rgba(16, 185, 129, 0.12));
+  border-color: #10b981;
+  color: #10b981;
+  font-weight: 700;
+}
+
+.filter-tab-count {
+  display: inline-block;
+  padding: 1px 6px;
+  border-radius: 99px;
+  font-size: 10px;
+  background: var(--surface-border);
+  color: var(--text-primary);
+}
+
+.filter-tab-btn.is-active .filter-tab-count {
+  background: #10b981;
+  color: #ffffff;
+}
+
+.scanner-table-wrap {
+  width: 100%;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  border: 1px solid var(--surface-border);
+  border-radius: 10px;
+  background: var(--surface);
+  box-shadow: var(--card-shadow);
+}
+
+.compact-scanner-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+  text-align: left;
+}
+
+.compact-scanner-table th {
+  padding: 10px 14px;
+  font: 600 11px 'DM Mono', monospace;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  background: var(--surface-raised);
+  border-bottom: 1px solid var(--surface-border);
+  white-space: nowrap;
+}
+
+.compact-scanner-table td {
+  padding: 11px 14px;
+  border-bottom: 1px solid var(--surface-border);
+  vertical-align: middle;
+}
+
+.compact-scanner-table tbody tr {
+  transition: background 0.12s ease;
+}
+
+.compact-scanner-table tbody tr:hover {
+  background: var(--surface-raised);
+}
+
+.compact-scanner-table tbody tr.is-ready-row {
+  border-left: 3px solid #10b981;
+}
+
+.compact-scanner-table tbody tr.is-short-row {
+  border-left: 3px solid #ef4444;
+}
+
+.compact-scanner-table tbody tr.is-wait-row {
+  border-left: 3px solid #6b7280;
+}
+
+.compact-scanner-table tbody tr.is-expanded-row {
+  background: var(--surface-raised);
+}
+
+.table-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 8px;
+  border-radius: 4px;
+  font: 700 11px 'DM Mono', monospace;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+}
+
+.table-badge-long {
+  background: rgba(16, 185, 129, 0.12);
+  border: 1px solid rgba(16, 185, 129, 0.35);
+  color: #10b981;
+}
+
+.table-badge-short {
+  background: rgba(239, 68, 68, 0.12);
+  border: 1px solid rgba(239, 68, 68, 0.35);
+  color: #ef4444;
+}
+
+.table-badge-wait {
+  background: rgba(245, 158, 11, 0.12);
+  border: 1px solid rgba(245, 158, 11, 0.35);
+  color: #f59e0b;
+}
+
+.table-badge-ready {
+  background: #10b981;
+  color: #ffffff;
+  font-weight: 700;
+  box-shadow: 0 0 8px rgba(16, 185, 129, 0.4);
+}
+
+.table-badge-diag-armed {
+  background: rgba(16, 185, 129, 0.15);
+  border: 1px solid #10b981;
+  color: #10b981;
+}
+
+.table-badge-diag-warning {
+  background: rgba(245, 158, 11, 0.12);
+  border: 1px solid rgba(245, 158, 11, 0.4);
+  color: #f59e0b;
+}
+
+.table-badge-diag-error {
+  background: rgba(239, 68, 68, 0.12);
+  border: 1px solid rgba(239, 68, 68, 0.4);
+  color: #ef4444;
+}
+
+.table-badge-diag-muted {
+  background: var(--surface-subtle);
+  border: 1px solid var(--surface-border);
+  color: var(--text-muted);
+}
+
+.scanner-expanded-drawer {
+  padding: 16px;
+  background: var(--surface-raised);
+  border-top: 1px dashed var(--surface-border);
+  border-bottom: 2px solid var(--surface-border);
+}
+
+.drawer-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 14px;
+}
+
+.drawer-card {
+  padding: 14px;
+  background: var(--surface);
+  border: 1px solid var(--surface-border);
+  border-radius: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.drawer-card-title {
+  font: 700 12px 'DM Mono', monospace;
+  text-transform: uppercase;
+  color: var(--text-primary);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border-bottom: 1px solid var(--surface-border);
+  padding-bottom: 6px;
+  margin: 0;
+}
+
+.drawer-metric-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 12px;
+  padding: 3px 0;
+}
+
+.drawer-metric-row span:first-child {
+  color: var(--text-muted);
+}
+
+.drawer-metric-row strong {
+  font-family: 'DM Mono', monospace;
+  color: var(--text-primary);
+}
+
+.exchange-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 7px;
+  border-radius: 4px;
+  font: 600 10px 'DM Mono', monospace;
+  background: var(--surface-subtle);
+  border: 1px solid var(--surface-border);
+}

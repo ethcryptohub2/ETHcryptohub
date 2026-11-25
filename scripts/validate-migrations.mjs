@@ -4,7 +4,19 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 export const EXPECTED_MIGRATIONS = [
+  '202611050001_initial_schema.sql',
+  '202611050002_smartexit.sql',
+  '202611050003_nextjs_auth.sql',
+  '202611060001_market_research.sql',
+  '202611060002_signal_notifications.sql',
+  '202611060003_scanner_coin_management.sql',
+  '202611060004_subscriptions.sql',
+  '202611070001_high_risk_scalping.sql',
+  '202611070002_signal_history_performance.sql',
   '202611070003_news_platform.sql',
+  '202611070004_seed_news_sources.sql',
+  '202611090001_enable_trusted_news_autopublishing.sql',
+  '202611090002_news_article_images.sql',
   '202611100001_live_futures_trading.sql',
   '202611100002_binance_demo_environments.sql',
   '202611100003_multi_exchange_foundation.sql',
