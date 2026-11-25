@@ -60,7 +60,6 @@ function getWorkerPgPool() {
 
 export async function acquireDbLease(info) {
   const pool = getWorkerPgPool();
-  if (!pool) return { ok: false };
   const ttl = info.ttlSeconds || 90;
   const now = new Date();
   const expiresAt = new Date(now.getTime() + ttl * 1000).toISOString();
@@ -76,14 +75,41 @@ export async function acquireDbLease(info) {
     tickCount: 1,
     status: 'ACTIVE',
   };
+
+  if (pool) {
+    try {
+      await pool.query(
+        `INSERT INTO public.app_settings (key, value_json, updated_at)
+         VALUES ('demo_worker_lease', $1::jsonb, NOW())
+         ON CONFLICT (key) DO UPDATE SET value_json = EXCLUDED.value_json, updated_at = NOW()`,
+        [JSON.stringify(lease)],
+      );
+      return { ok: true, lease };
+    } catch {}
+  }
+
+  // Fallback to HTTP lease acquisition via API route
+  const appUrl = process.env.APP_URL || 'https://cryptohub-git-functional-staging-eth-cryptohub.vercel.app';
   try {
-    await pool.query(
-      `INSERT INTO public.app_settings (key, value_json, updated_at)
-       VALUES ('demo_worker_lease', $1::jsonb, NOW())
-       ON CONFLICT (key) DO UPDATE SET value_json = EXCLUDED.value_json, updated_at = NOW()`,
-      [JSON.stringify(lease)],
-    );
-    return { ok: true, lease };
+    const res = await fetch(`${appUrl}/api/admin/worker-health`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-worker-secret': 'staging-worker-daemon',
+      },
+      body: JSON.stringify({
+        action: 'acquire',
+        workerId: info.workerId,
+        hostname: info.hostname,
+        pid: info.pid,
+        version: info.version,
+        environment: info.environment || 'DEMO',
+        ttlSeconds: ttl,
+      }),
+      signal: AbortSignal.timeout(5000),
+    });
+    const data = await res.json().catch(() => ({}));
+    return { ok: res.ok, lease: data.lease || lease };
   } catch (err) {
     return { ok: false, error: err.message };
   }
@@ -91,30 +117,55 @@ export async function acquireDbLease(info) {
 
 export async function renewDbLease(info) {
   const pool = getWorkerPgPool();
-  if (!pool) return false;
   const ttl = info.ttlSeconds || 90;
   const now = new Date();
   const expiresAt = new Date(now.getTime() + ttl * 1000).toISOString();
+
+  if (pool) {
+    try {
+      const res = await pool.query(
+        `SELECT value_json FROM public.app_settings WHERE key = 'demo_worker_lease'`,
+      );
+      const current = res.rows[0]?.value_json || {};
+      const updated = {
+        ...current,
+        heartbeatAt: now.toISOString(),
+        expiresAt,
+        tickCount: info.tickCount,
+        lastScanDurationMs: info.lastScanDurationMs ?? current.lastScanDurationMs,
+        lastCandidateCount: info.lastCandidateCount ?? current.lastCandidateCount,
+        lastQualifiedCount: info.lastQualifiedCount ?? current.lastQualifiedCount,
+        status: 'ACTIVE',
+      };
+      await pool.query(
+        `UPDATE public.app_settings SET value_json = $1::jsonb, updated_at = NOW() WHERE key = 'demo_worker_lease'`,
+        [JSON.stringify(updated)],
+      );
+      return true;
+    } catch {}
+  }
+
+  // Fallback to HTTP lease renewal via API route
+  const appUrl = process.env.APP_URL || 'https://cryptohub-git-functional-staging-eth-cryptohub.vercel.app';
   try {
-    const res = await pool.query(
-      `SELECT value_json FROM public.app_settings WHERE key = 'demo_worker_lease'`,
-    );
-    const current = res.rows[0]?.value_json || {};
-    const updated = {
-      ...current,
-      heartbeatAt: now.toISOString(),
-      expiresAt,
-      tickCount: info.tickCount,
-      lastScanDurationMs: info.lastScanDurationMs ?? current.lastScanDurationMs,
-      lastCandidateCount: info.lastCandidateCount ?? current.lastCandidateCount,
-      lastQualifiedCount: info.lastQualifiedCount ?? current.lastQualifiedCount,
-      status: 'ACTIVE',
-    };
-    await pool.query(
-      `UPDATE public.app_settings SET value_json = $1::jsonb, updated_at = NOW() WHERE key = 'demo_worker_lease'`,
-      [JSON.stringify(updated)],
-    );
-    return true;
+    const res = await fetch(`${appUrl}/api/admin/worker-health`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-worker-secret': 'staging-worker-daemon',
+      },
+      body: JSON.stringify({
+        action: 'renew',
+        workerId: info.workerId,
+        tickCount: info.tickCount,
+        lastScanDurationMs: info.lastScanDurationMs,
+        lastCandidateCount: info.lastCandidateCount,
+        lastQualifiedCount: info.lastQualifiedCount,
+        ttlSeconds: ttl,
+      }),
+      signal: AbortSignal.timeout(5000),
+    });
+    return res.ok;
   } catch {
     return false;
   }
@@ -122,26 +173,42 @@ export async function renewDbLease(info) {
 
 export async function releaseDbLease(workerId) {
   const pool = getWorkerPgPool();
-  if (!pool) return;
-  try {
-    const res = await pool.query(
-      `SELECT value_json FROM public.app_settings WHERE key = 'demo_worker_lease'`,
-    );
-    const current = res.rows[0]?.value_json;
-    if (current && current.workerId === workerId) {
-      const stopped = {
-        ...current,
-        heartbeatAt: new Date().toISOString(),
-        status: 'STOPPED',
-      };
-      await pool.query(
-        `UPDATE public.app_settings SET value_json = $1::jsonb, updated_at = NOW() WHERE key = 'demo_worker_lease'`,
-        [JSON.stringify(stopped)],
+  if (pool) {
+    try {
+      const res = await pool.query(
+        `SELECT value_json FROM public.app_settings WHERE key = 'demo_worker_lease'`,
       );
-    }
-  } catch {
-    // Non-blocking cleanup
+      const current = res.rows[0]?.value_json;
+      if (current && current.workerId === workerId) {
+        const stopped = {
+          ...current,
+          heartbeatAt: new Date().toISOString(),
+          status: 'STOPPED',
+        };
+        await pool.query(
+          `UPDATE public.app_settings SET value_json = $1::jsonb, updated_at = NOW() WHERE key = 'demo_worker_lease'`,
+          [JSON.stringify(stopped)],
+        );
+        return;
+      }
+    } catch {}
   }
+
+  const appUrl = process.env.APP_URL || 'https://cryptohub-git-functional-staging-eth-cryptohub.vercel.app';
+  try {
+    await fetch(`${appUrl}/api/admin/worker-health`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-worker-secret': 'staging-worker-daemon',
+      },
+      body: JSON.stringify({
+        action: 'release',
+        workerId,
+      }),
+      signal: AbortSignal.timeout(5000),
+    });
+  } catch {}
 }
 
 export const WORKER_VERSION = '1.0.0';
@@ -200,8 +267,8 @@ export async function saveCheckpoint(storageDir, checkpoint) {
   const tempPath = path.join(storageDir, 'checkpoint.tmp');
   const payload = {
     version: WORKER_VERSION,
-    savedAt: new Date().toISOString(),
     ...checkpoint,
+    savedAt: new Date().toISOString(),
   };
   await fs.writeFile(tempPath, JSON.stringify(payload, null, 2), 'utf8');
   await fs.rename(tempPath, checkpointPath);
@@ -235,7 +302,7 @@ export async function executeBusinessTick(environment, options = {}) {
   // Market scan -> Signal qualification & persistence -> Automatic Demo trading -> Protection monitoring & reconciliation
   try {
     // Attempt dynamic execution if TypeScript/Node loader or service is present
-    const scanModule = await import('../lib/signal-scan.ts').catch(() => null);
+    const scanModule = await import('../lib/signal-scan.ts');
     if (scanModule && typeof scanModule.runSignalScan === 'function') {
       const scanResult = await scanModule.runSignalScan(undefined, {
         executeAutomaticTrades: true,
@@ -245,8 +312,10 @@ export async function executeBusinessTick(environment, options = {}) {
         pipelineStatus: 'EXECUTED_LIVE',
         scannedAt: scanResult.scannedAt,
         batchSize: scanResult.batchSize,
-        candidates: scanResult.candidates,
-        newSignals: scanResult.newSignals,
+        candidates: scanResult.candidates?.length ?? 0,
+        newSignals: scanResult.newSignals ?? 0,
+        durationMs: scanResult.durationMs ?? 0,
+        qualifiedCount: scanResult.candidates?.filter((c) => c.status === 'READY')?.length ?? 0,
         timeframe: scanResult.timeframe,
         exchange: scanResult.exchange,
         status: 'OK',
@@ -353,16 +422,24 @@ export async function runWorkerLoop(options = {}) {
       const businessExecution = await executeBusinessTick(environment, options);
 
       checkpoint.cycleCount += 1;
-      checkpoint.cursor = (checkpoint.cursor + 35) % 140;
-      if (businessExecution.newSignals && businessExecution.newSignals > 0) {
-        checkpoint.totalTradesExecuted += businessExecution.newSignals;
+      checkpoint.cursor = typeof businessExecution.cursor === 'number' ? businessExecution.cursor : (checkpoint.cursor + 35);
+      const pool = getWorkerPgPool();
+      if (pool) {
+        try {
+          const execs = await pool.query(
+            "SELECT COUNT(*)::int AS count FROM public.trade_executions WHERE execution_status IN ('EXECUTED', 'FILLED')",
+          );
+          checkpoint.totalTradesExecuted = execs.rows[0]?.count ?? checkpoint.totalTradesExecuted;
+        } catch {}
+      } else if (businessExecution.newSignals && businessExecution.newSignals > 0) {
+        checkpoint.totalTradesExecuted = (checkpoint.totalTradesExecuted || 0) + businessExecution.newSignals;
       }
 
       lastScanResult = {
         tickAt: new Date().toISOString(),
         cycleCount: checkpoint.cycleCount,
         cursor: checkpoint.cursor,
-        batchSize: 35,
+        batchSize: businessExecution.batchSize || 35,
         ...businessExecution,
       };
 

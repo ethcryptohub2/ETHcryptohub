@@ -12,7 +12,7 @@ type DemoBalance = {
   lastUpdatedAt: string | null;
 };
 
-export function BinanceForm() {
+export function BinanceForm({ onCredentialChange }: { onCredentialChange?: () => void } = {}) {
   const [environment, setEnvironment] = useState<Environment>('DEMO');
   const [configured, setConfigured] = useState(false);
   const [environmentConfirmationRequired, setEnvironmentConfirmationRequired] = useState(false);
@@ -175,6 +175,10 @@ export function BinanceForm() {
         setMessage(`${label} credentials removed.`);
       } else {
         setMessage(`${label} credentials encrypted and saved with AES-256-GCM.`);
+      }
+      onCredentialChange?.();
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new Event('smartexit-exchange-credential-synced'));
       }
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : 'Binance request failed.');

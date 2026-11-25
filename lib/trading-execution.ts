@@ -1389,8 +1389,31 @@ export async function executeMultiExchangeDemo(
 }
 
 export async function processNewAutomaticTrades(signalIds: string[]) {
-  if (!signalIds.length) return;
-  for (const signalId of signalIds) {
+  let candidateSignalIds = [...signalIds];
+  try {
+    const unexecuted = await query<{ id: string }>(
+      `SELECT s.id::text
+         FROM public.market_signals s
+        WHERE s.status = 'ACTIVE'
+          AND (s.entry_status = 'OPEN' OR s.entry_status IS NULL)
+          AND s.entry_expires_at > statement_timestamp()
+          AND s.expires_at > statement_timestamp()
+          AND NOT EXISTS (
+            SELECT 1 FROM public.trade_executions e
+             WHERE e.signal_id = s.id AND e.environment = 'DEMO'
+          )
+        ORDER BY s.id DESC
+        LIMIT 10`,
+    );
+    for (const row of unexecuted.rows) {
+      if (!candidateSignalIds.includes(row.id)) {
+        candidateSignalIds.push(row.id);
+      }
+    }
+  } catch {}
+
+  if (!candidateSignalIds.length) return;
+  for (const signalId of candidateSignalIds) {
     const signal = await query<{ scanner_type: Signal['scanner_type'] }>(
       'SELECT scanner_type FROM public.market_signals WHERE id = $1',
       [signalId],
@@ -1398,12 +1421,15 @@ export async function processNewAutomaticTrades(signalIds: string[]) {
     if (!signal.rows[0]) continue;
     const strategy = strategyForSignal(signal.rows[0].scanner_type);
     const configuredUsers = await query<{ user_id: number; environment: TradingEnvironment }>(
-      `SELECT DISTINCT user_id, environment
-         FROM public.user_strategy_settings
-        WHERE strategy = $1 AND enabled = TRUE AND auto_execution_enabled = TRUE
-          AND execution_mode = 'AUTOMATIC' AND emergency_stop_enabled = FALSE
-          AND environment = 'DEMO'
-        ORDER BY user_id`,
+      `SELECT DISTINCT s.user_id, s.environment
+         FROM public.user_strategy_settings s
+         LEFT JOIN public.user_trading_settings t ON t.user_id = s.user_id
+        WHERE s.strategy = $1 AND s.enabled = TRUE AND s.auto_execution_enabled = TRUE
+          AND s.execution_mode = 'AUTOMATIC' AND s.emergency_stop_enabled = FALSE
+          AND s.environment = 'DEMO'
+          AND (t.demo_auto_trade_enabled IS NULL OR t.demo_auto_trade_enabled = TRUE)
+          AND (t.demo_kill_switch_enabled IS NULL OR t.demo_kill_switch_enabled = FALSE)
+        ORDER BY s.user_id`,
       [strategy],
     );
 

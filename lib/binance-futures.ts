@@ -55,11 +55,18 @@ export function tradingExecutionGate(environment: TradingEnvironment) {
 
 async function getCredentials(userId: number, environment: TradingEnvironment) {
   if (!isTradingEnvironment(environment)) throw new BinanceFuturesError('Invalid Binance environment.', 422);
-  const result = await query(
+  let result = await query(
     `SELECT api_key_ciphertext, api_secret_ciphertext, environment_confirmed
        FROM public.binance_api_credentials WHERE user_id = $1 AND environment = $2`,
     [userId, environment],
   );
+  if (!result.rows[0]) {
+    result = await query(
+      `SELECT api_key_ciphertext, api_secret_ciphertext, environment_confirmed
+         FROM public.exchange_api_credentials WHERE user_id = $1 AND exchange = 'BINANCE' AND environment = $2`,
+      [userId, environment],
+    );
+  }
   const parsed = credentialsSchema.safeParse(result.rows[0]);
   if (!parsed.success) {
     throw new BinanceFuturesError(`Save ${environment === 'DEMO' ? 'Demo' : 'Live'} Binance API credentials before using this environment.`, 400);

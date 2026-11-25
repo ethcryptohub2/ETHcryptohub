@@ -69,20 +69,23 @@ export async function getWorkerHealthStatus(): Promise<WorkerHealthResult> {
         };
       }
 
-      if (Number.isFinite(expiresAtMs) && now <= expiresAtMs) {
+      const secondsSinceHeartbeat = Number.isFinite(heartbeatAtMs) ? Math.floor((now - heartbeatAtMs) / 1000) : 999;
+      const isLeaseUnexpired = Number.isFinite(expiresAtMs) && now <= expiresAtMs;
+
+      // Online: genuine running worker with fresh heartbeat within 90s and unexpired lease
+      if (isLeaseUnexpired && secondsSinceHeartbeat <= 90) {
         return {
           status: 'ONLINE',
           lease: { ...lease, status: 'ACTIVE' },
           source: 'DATABASE',
           checkedAt,
           uptimeSeconds,
-          message: `Active daemon (PID ${lease.pid} on ${lease.hostname}) renewing lease every tick.`,
+          message: `Active daemon (PID ${lease.pid} on ${lease.hostname}) heartbeat ${secondsSinceHeartbeat}s ago.`,
         };
       }
 
-      // Expired within grace period (less than 180s)
-      const secondsSinceHeartbeat = Number.isFinite(heartbeatAtMs) ? Math.floor((now - heartbeatAtMs) / 1000) : 999;
-      if (secondsSinceHeartbeat < 180) {
+      // Degraded: lease unexpired but heartbeat is between 91s and 180s (delayed tick)
+      if (isLeaseUnexpired && secondsSinceHeartbeat <= 180) {
         return {
           status: 'DEGRADED',
           lease: { ...lease, status: 'DEGRADED' },
@@ -99,7 +102,7 @@ export async function getWorkerHealthStatus(): Promise<WorkerHealthResult> {
         source: 'DATABASE',
         checkedAt,
         uptimeSeconds: 0,
-        message: `Worker lease expired ${secondsSinceHeartbeat}s ago. Daemon is not running.`,
+        message: `Worker lease/heartbeat expired ${secondsSinceHeartbeat}s ago. Daemon is not running.`,
       };
     }
   } catch {

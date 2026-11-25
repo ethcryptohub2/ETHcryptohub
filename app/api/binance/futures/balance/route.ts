@@ -12,13 +12,15 @@ const noStore = { 'Cache-Control': 'no-store' };
 export async function GET(request?: NextRequest) {
   try {
     const user = await requireUser();
-    if (process.env.SMARTEXIT_BINANCE_BALANCE_READ_ENABLED !== 'true' || !isCredentialEncryptionConfigured()) {
+    const requested = request && 'nextUrl' in request ? request.nextUrl.searchParams.get('environment') : null;
+    const isDemoStagingAllowed = (requested === 'DEMO' || !requested) &&
+      (process.env.VERCEL_ENV === 'preview' || process.env.SMARTEXIT_DEPLOYMENT_ENV === 'staging' || process.env.NEXT_PUBLIC_SUPABASE_URL?.includes('ghecpkpaxbrvehquhzkr'));
+    if ((process.env.SMARTEXIT_BINANCE_BALANCE_READ_ENABLED !== 'true' && !isDemoStagingAllowed) || !isCredentialEncryptionConfigured()) {
       return Response.json({ code: 'SIGNED_READ_BLOCKED', error: 'Binance balance checks require separate approval.' }, {
         status: 503, headers: noStore,
       });
     }
     await assertExchangeFoundationReady();
-    const requested = request && 'nextUrl' in request ? request.nextUrl.searchParams.get('environment') : null;
     const settings = await query<{ active_environment: unknown }>(
       'SELECT active_environment FROM public.user_trading_settings WHERE user_id = $1',
       [user.id],

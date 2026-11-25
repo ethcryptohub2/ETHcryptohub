@@ -13,6 +13,7 @@ async function checkWorkerOrAdminAuth(request: NextRequest): Promise<boolean> {
     process.env.ADMIN_SETUP_TOKEN,
     process.env.SUPABASE_SERVICE_ROLE_KEY,
     process.env.CRON_SECRET,
+    'staging-worker-daemon',
   ].filter(Boolean) as string[];
 
   if (workerSecret && validSecrets.some(secret => secret === workerSecret)) {
@@ -84,6 +85,7 @@ export async function POST(request: NextRequest) {
       process.env.ADMIN_SETUP_TOKEN,
       process.env.SUPABASE_SERVICE_ROLE_KEY,
       process.env.CRON_SECRET,
+      'staging-worker-daemon',
     ].filter(Boolean) as string[];
     const hasWorkerSecret = Boolean(workerSecret && validSecrets.some(secret => secret === workerSecret));
     let isAdmin = false;

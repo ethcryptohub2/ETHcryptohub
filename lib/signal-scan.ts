@@ -17,7 +17,7 @@ import {
 } from './scanner-coins';
 
 const timeframes = ['5m', '15m', '1h', '4h'] as const;
-const DEFAULT_SYMBOL_BATCH_SIZE = 50;
+const DEFAULT_SYMBOL_BATCH_SIZE = 35;
 const DEFAULT_MINIMUM_VOLUME = 5_000_000;
 const SYMBOL_SYNC_INTERVAL_MS = 15 * 60_000;
 const markets = new BinanceFuturesMarketsService();

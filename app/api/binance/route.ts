@@ -128,6 +128,9 @@ export async function POST(request: NextRequest) {
 
     if (action === 'remove') {
       await query('DELETE FROM public.binance_api_credentials WHERE user_id = $1 AND environment = $2', [user.id, environment]);
+      try {
+        await query('DELETE FROM public.exchange_api_credentials WHERE user_id = $1 AND exchange = \'BINANCE\' AND environment = $2', [user.id, environment]);
+      } catch {}
       return NextResponse.json({ data: { environment, configured: false } }, { headers: { 'Cache-Control': 'no-store' } });
     }
 
@@ -135,6 +138,22 @@ export async function POST(request: NextRequest) {
       const { apiKey, apiSecret } = parsed.data;
       const apiKeyCiphertext = encryptCredential(apiKey);
       const apiSecretCiphertext = encryptCredential(apiSecret);
+      try {
+        await query(
+          `INSERT INTO public.exchange_api_credentials (
+             user_id, exchange, environment, api_key_ciphertext, api_secret_ciphertext,
+             api_key_suffix, environment_confirmed, last_verified_at, updated_at
+           ) VALUES ($1, 'BINANCE', $2, $3, $4, $5, TRUE, NULL, NOW())
+           ON CONFLICT (user_id, exchange, environment) DO UPDATE SET
+             api_key_ciphertext = EXCLUDED.api_key_ciphertext,
+             api_secret_ciphertext = EXCLUDED.api_secret_ciphertext,
+             api_key_suffix = EXCLUDED.api_key_suffix,
+             environment_confirmed = TRUE,
+             last_verified_at = NULL,
+             updated_at = NOW()`,
+          [user.id, environment, apiKeyCiphertext, apiSecretCiphertext, apiKey.slice(-4)],
+        );
+      } catch {}
       await query(
         `INSERT INTO public.binance_api_credentials (
            user_id, environment, api_key_ciphertext, api_secret_ciphertext,

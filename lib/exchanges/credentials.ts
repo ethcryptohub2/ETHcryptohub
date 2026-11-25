@@ -41,6 +41,8 @@ export async function saveExchangeCredentials(
   if (!isExchangeEnvironment(exchange, environment)) throw new Error(`${exchange} does not support ${environment}.`);
   assertCredentialFields(exchange, credentials);
   const apiKey = credentials.apiKey.trim();
+  const encryptedKey = encryptCredential(apiKey);
+  const encryptedSecret = encryptCredential(credentials.apiSecret.trim());
   await query(
     `INSERT INTO public.exchange_api_credentials (
        user_id, exchange, environment, api_key_ciphertext, api_secret_ciphertext,
@@ -58,12 +60,27 @@ export async function saveExchangeCredentials(
       userId,
       exchange,
       environment,
-      encryptCredential(apiKey),
-      encryptCredential(credentials.apiSecret.trim()),
+      encryptedKey,
+      encryptedSecret,
       credentials.passphrase === undefined ? null : encryptCredential(credentials.passphrase),
       apiKey.slice(-4),
     ],
   );
+  if (exchange === 'BINANCE') {
+    try {
+      await query(
+        `INSERT INTO public.binance_api_credentials (
+           user_id, environment, api_key_ciphertext, api_secret_ciphertext, environment_confirmed, updated_at
+         ) VALUES ($1, $2, $3, $4, TRUE, NOW())
+         ON CONFLICT (user_id, environment) DO UPDATE SET
+           api_key_ciphertext = EXCLUDED.api_key_ciphertext,
+           api_secret_ciphertext = EXCLUDED.api_secret_ciphertext,
+           environment_confirmed = TRUE,
+           updated_at = NOW()`,
+        [userId, environment, encryptedKey, encryptedSecret],
+      );
+    } catch {}
+  }
 }
 
 export async function removeExchangeCredentials(
@@ -77,6 +94,11 @@ export async function removeExchangeCredentials(
     'DELETE FROM public.exchange_api_credentials WHERE user_id = $1 AND exchange = $2 AND environment = $3',
     [userId, exchange, environment],
   );
+  if (exchange === 'BINANCE') {
+    try {
+      await query('DELETE FROM public.binance_api_credentials WHERE user_id = $1 AND environment = $2', [userId, environment]);
+    } catch {}
+  }
 }
 
 export async function loadExchangeCredentials(
@@ -86,13 +108,24 @@ export async function loadExchangeCredentials(
 ): Promise<ExchangeCredentials> {
   await assertExchangeFoundationReady();
   if (!isExchangeEnvironment(exchange, environment)) throw new Error(`${exchange} does not support ${environment}.`);
-  const result = await query<CredentialRow>(
+  let result = await query<CredentialRow>(
     `SELECT api_key_ciphertext, api_secret_ciphertext, passphrase_ciphertext, environment_confirmed
        FROM public.exchange_api_credentials
       WHERE user_id = $1 AND exchange = $2 AND environment = $3`,
     [userId, exchange, environment],
   );
-  const stored = result.rows[0];
+  let stored = result.rows[0];
+  if (!stored && exchange === 'BINANCE') {
+    const legacy = await query<{ api_key_ciphertext: string; api_secret_ciphertext: string; environment_confirmed: boolean }>(
+      `SELECT api_key_ciphertext, api_secret_ciphertext, environment_confirmed
+         FROM public.binance_api_credentials
+        WHERE user_id = $1 AND environment = $2`,
+      [userId, environment],
+    );
+    if (legacy.rows[0]) {
+      stored = { ...legacy.rows[0], passphrase_ciphertext: null };
+    }
+  }
   if (!stored) throw new Error(`Save ${exchange} ${environment} API credentials before connecting.`);
   if (!stored.environment_confirmed) {
     throw new Error(`Re-enter the ${exchange} ${environment} credentials to confirm their environment before connecting.`);
@@ -117,7 +150,7 @@ export async function getExchangeCredentialStatus(
 ) {
   await assertExchangeFoundationReady();
   if (!isExchangeEnvironment(exchange, environment)) throw new Error(`${exchange} does not support ${environment}.`);
-  const result = await query<{
+  let result = await query<{
     api_key_suffix: string | null;
     last_verified_at: string | null;
     updated_at: string;
@@ -128,7 +161,23 @@ export async function getExchangeCredentialStatus(
       WHERE user_id = $1 AND exchange = $2 AND environment = $3`,
     [userId, exchange, environment],
   );
-  const row = result.rows[0];
+  let row = result.rows[0];
+  if (!row && exchange === 'BINANCE') {
+    const legacy = await query<{ environment_confirmed: boolean; updated_at: string }>(
+      `SELECT environment_confirmed, updated_at
+         FROM public.binance_api_credentials
+        WHERE user_id = $1 AND environment = $2`,
+      [userId, environment],
+    );
+    if (legacy.rows[0]) {
+      row = {
+        api_key_suffix: null,
+        last_verified_at: null,
+        updated_at: legacy.rows[0].updated_at,
+        environment_confirmed: legacy.rows[0].environment_confirmed,
+      };
+    }
+  }
   return {
     exchange,
     environment,

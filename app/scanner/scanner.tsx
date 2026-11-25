@@ -927,13 +927,23 @@ function StandardSignals({
 
                         {/* 10. Trade Action */}
                         <td>
-                          <Link
-                            href="/binance#exchange-credentials"
-                            className="button"
-                            style={{ fontSize: 11, padding: '3px 7px', borderRadius: 4, whiteSpace: 'nowrap' }}
-                          >
-                            ⚡ Trade Demo
-                          </Link>
+                          {signal?.id ? (
+                            <Link
+                              href={`/signals/${signal.id}`}
+                              className="button"
+                              style={{ fontSize: 11, padding: '3px 7px', borderRadius: 4, whiteSpace: 'nowrap' }}
+                            >
+                              ⚡ Trade Demo
+                            </Link>
+                          ) : (
+                            <Link
+                              href="/binance#exchange-credentials"
+                              className="button"
+                              style={{ fontSize: 11, padding: '3px 7px', borderRadius: 4, whiteSpace: 'nowrap' }}
+                            >
+                              ⚡ Trade Demo
+                            </Link>
+                          )}
                         </td>
                       </tr>
 

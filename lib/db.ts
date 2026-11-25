@@ -18,7 +18,7 @@ function validateSslMode(mode: string | undefined) {
 function certificateAuthority(certificate: string | undefined) {
   if (!certificate) return undefined;
   let value = certificate.trim();
-  if (!value) return undefined;
+  if (!value || value === '[SENSITIVE]') return undefined;
 
   if (value.includes('\\n')) {
     value = value.replace(/\\n/g, '\n');

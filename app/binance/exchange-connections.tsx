@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState, type FormEvent } from 'react';
+import { useCallback, useEffect, useState, type FormEvent } from 'react';
 import { BinanceForm } from './binance-form';
 
 type EnvironmentOption = {
@@ -105,12 +105,14 @@ function GenericExchangeCredentials({
   environment,
   requiresPassphrase = false,
   switchEnabled = true,
+  onCredentialChange,
 }: {
   exchange: string;
   name: string;
   environment: 'DEMO' | 'TESTNET';
   requiresPassphrase?: boolean;
   switchEnabled?: boolean;
+  onCredentialChange?: () => void;
 }) {
   const [status, setStatus] = useState<CredentialStatus | null>(null);
   const [apiKey, setApiKey] = useState('');
@@ -188,6 +190,10 @@ function GenericExchangeCredentials({
             ? `${name} ${environment} credentials removed.`
             : `${name} ${environment} credentials encrypted and saved with AES-256-GCM.`,
       );
+      onCredentialChange?.();
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new Event('smartexit-exchange-credential-synced'));
+      }
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : `${name} ${environment} request failed.`);
     } finally {
@@ -379,9 +385,32 @@ export function ExchangeConnections() {
       .catch((reason: unknown) => {
         if (active) setError(reason instanceof Error ? reason.message : 'Exchange list unavailable.');
       });
+    const handleCredentialSync = () => {
+      void fetch('/api/exchanges', { cache: 'no-store' })
+        .then(async (response) => {
+          const body = (await response.json()) as { data?: ExchangeOption[] };
+          if (body.data) setExchanges(body.data);
+        })
+        .catch(() => {});
+    };
+    if (typeof window !== 'undefined') {
+      window.addEventListener('smartexit-exchange-credential-synced', handleCredentialSync);
+    }
     return () => {
       active = false;
+      if (typeof window !== 'undefined') {
+        window.removeEventListener('smartexit-exchange-credential-synced', handleCredentialSync);
+      }
     };
+  }, []);
+
+  const refreshExchanges = useCallback(() => {
+    void fetch('/api/exchanges', { cache: 'no-store' })
+      .then(async (response) => {
+        const body = (await response.json()) as { data?: ExchangeOption[] };
+        if (body.data) setExchanges(body.data);
+      })
+      .catch(() => {});
   }, []);
 
   const chosen = exchanges.find((exchange) => exchange.exchange === selected);
@@ -599,8 +628,9 @@ export function ExchangeConnections() {
                 (e) => e.environment === (exchange.exchange === 'GATE' ? 'TESTNET' : 'DEMO'),
               );
               const isConfigured = Boolean(
-                (envOption as { configuredAccounts?: number })?.configuredAccounts &&
-                (envOption as { configuredAccounts?: number }).configuredAccounts! > 0,
+                (envOption as { configured?: boolean })?.configured ||
+                ((envOption as { configuredAccounts?: number })?.configuredAccounts &&
+                (envOption as { configuredAccounts?: number }).configuredAccounts! > 0),
               );
               const cardBadge = getExchangeBadge({
                 exchange: exchange.exchange,
@@ -657,7 +687,7 @@ export function ExchangeConnections() {
 
           {/* Selected Exchange Form */}
           {selected === 'BINANCE' ? (
-            <BinanceForm />
+            <BinanceForm onCredentialChange={refreshExchanges} />
           ) : (
             <GenericExchangeCredentials
               exchange={selected}
@@ -665,6 +695,7 @@ export function ExchangeConnections() {
               environment={(demo?.environment as 'DEMO' | 'TESTNET') ?? (selected === 'GATE' ? 'TESTNET' : 'DEMO')}
               requiresPassphrase={selected === 'OKX' || selected === 'BITGET'}
               switchEnabled={Boolean(exchangeSwitches[selected])}
+              onCredentialChange={refreshExchanges}
             />
           )}
         </>

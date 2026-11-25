@@ -169,7 +169,7 @@ export async function requireExecutableStrategy(
   if (profile.max_open_positions === null || profile.max_daily_loss_percent === null) {
     throw new StrategySettingsError(`${strategy} requires configured position and daily-loss limits.`, 409);
   }
-  if (mode !== profile.execution_mode) {
+  if (mode === 'AUTOMATIC' && profile.execution_mode !== 'AUTOMATIC') {
     throw new StrategySettingsError(`Execution mode does not match the ${strategy} profile.`, 409);
   }
   if (mode === 'AUTOMATIC' && !profile.auto_execution_enabled) {
