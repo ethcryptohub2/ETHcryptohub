@@ -98,11 +98,12 @@ export function StrategyManagement() {
     setMessage('');
     try {
       const token = await csrfToken();
+      const { updated_at: _, ...cleanProfile } = profile;
       const response = await fetch('/api/trading/strategies', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': token },
         body: JSON.stringify({
-          ...profile,
+          ...cleanProfile,
           confirmEnable: enabling,
           confirmAutomatic: enablingAuto,
           confirmEmergencyStopReset: current.emergency_stop_enabled && !profile.emergency_stop_enabled,

@@ -86,21 +86,23 @@ export async function updateTradingSettings(
   if (activeSettings.active_environment !== environment) {
     throw new Error('The active environment changed. Reload trading settings and retry.');
   }
+  const demoExecMode = settings.execution_mode === 'AUTOMATIC' ? 'AUTOMATIC' : 'CONFIRM';
+  const liveUpdateCol = environment === 'LIVE' ? 'EXCLUDED.execution_mode' : 'user_trading_settings.live_execution_mode';
+  const demoUpdateCol = environment === 'DEMO' ? 'EXCLUDED.demo_execution_mode' : 'user_trading_settings.demo_execution_mode';
+
   await query(
     `INSERT INTO public.user_trading_settings (
        user_id, order_size_mode, fixed_notional_usdt, risk_percentage,
        default_leverage, execution_mode, demo_execution_mode, live_execution_mode, updated_at
-     ) VALUES ($1, $2, $3, $4, $5, $6,
-               CASE WHEN $6 = 'AUTOMATIC' THEN 'AUTOMATIC' ELSE 'CONFIRM' END,
-               'CONFIRM', NOW())
+     ) VALUES ($1, $2, $3, $4, $5, $6, $7, 'CONFIRM', NOW())
      ON CONFLICT (user_id) DO UPDATE SET
        order_size_mode = EXCLUDED.order_size_mode,
        fixed_notional_usdt = EXCLUDED.fixed_notional_usdt,
        risk_percentage = EXCLUDED.risk_percentage,
        default_leverage = EXCLUDED.default_leverage,
        execution_mode = EXCLUDED.execution_mode,
-       live_execution_mode = CASE WHEN user_trading_settings.active_environment = $7 AND $7 = 'LIVE' THEN EXCLUDED.execution_mode ELSE user_trading_settings.live_execution_mode END,
-       demo_execution_mode = CASE WHEN user_trading_settings.active_environment = $7 AND $7 = 'DEMO' THEN EXCLUDED.demo_execution_mode ELSE user_trading_settings.demo_execution_mode END,
+       live_execution_mode = ${liveUpdateCol},
+       demo_execution_mode = ${demoUpdateCol},
        updated_at = NOW()`,
     [
       userId,
@@ -109,7 +111,7 @@ export async function updateTradingSettings(
       settings.risk_percentage,
       settings.default_leverage,
       settings.execution_mode,
-      environment,
+      demoExecMode,
     ],
   );
   return getTradingSettings(userId);

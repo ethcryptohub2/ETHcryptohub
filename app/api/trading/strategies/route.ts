@@ -25,7 +25,8 @@ const profileSchema = z.object({
   confirmEnable: z.boolean().default(false),
   confirmAutomatic: z.boolean().default(false),
   confirmEmergencyStopReset: z.boolean().default(false),
-}).strict();
+  updated_at: z.string().optional(),
+}).strip();
 
 export async function GET() {
   try {
