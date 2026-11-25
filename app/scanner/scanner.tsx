@@ -854,16 +854,16 @@ function StandardSignals({
                         {/* 5. Entry Price */}
                         <td>
                           {entryZone ? (
-                            <div className="mono" style={{ color: '#10b981', fontWeight: 600, fontSize: 11, lineHeight: 1.25 }}>
+                            <div className="mono" style={{ color: '#10b981', fontWeight: 600, fontSize: 11, lineHeight: 1.2, whiteSpace: 'nowrap' }}>
                               <div>${formatPrice(entryZone.low)}</div>
-                              <div style={{ color: 'var(--text-muted)', fontSize: 10, fontWeight: 500 }}>to ${formatPrice(entryZone.high)}</div>
+                              <div style={{ color: 'var(--text-muted)', fontSize: 10, fontWeight: 500, whiteSpace: 'nowrap' }}>– ${formatPrice(entryZone.high)}</div>
                             </div>
                           ) : item.setup ? (
-                            <span className="mono" style={{ fontWeight: 600, fontSize: 11 }}>
+                            <span className="mono" style={{ fontWeight: 600, fontSize: 11, whiteSpace: 'nowrap' }}>
                               ${formatPrice(item.setup.entryPrice)}
                             </span>
                           ) : (
-                            <span className="muted" style={{ fontSize: 11 }}>Awaiting entry</span>
+                            <span className="muted" style={{ fontSize: 11, whiteSpace: 'nowrap' }}>Awaiting entry</span>
                           )}
                         </td>
 
@@ -1004,7 +1004,7 @@ function StandardSignals({
                                       <strong>Multi-Timeframe Confirmation:</strong> 15m trigger confirmed with 1h/4h macro trend bias.
                                     </div>
                                     <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-                                      <span className="exchange-pill" style={{ color: '#10b981' }}>● Binance USDⓈ-M</span>
+                                      <span className="exchange-pill" style={{ color: '#10b981' }}>● Binance USD-M</span>
                                       <span className="exchange-pill" style={{ color: '#10b981' }}>● Bybit Demo</span>
                                       <span className="exchange-pill" style={{ color: '#10b981' }}>● OKX Demo</span>
                                       <span className="exchange-pill" style={{ color: '#10b981' }}>● Bitget Demo</span>
@@ -1017,7 +1017,7 @@ function StandardSignals({
                                 <div className="drawer-card">
                                   <h4 className="drawer-card-title">
                                     <span>⚡ Auto-Execution Telemetry</span>
-                                    <span className={`table-badge ${diagBadgeClass}`}>{autoDiag.code}</span>
+                                    <span className={`table-badge ${diagBadgeClass}`} style={{ fontSize: 9.5, maxWidth: '100%', overflow: 'hidden', textOverflow: 'ellipsis' }}>{autoDiag.code}</span>
                                   </h4>
                                   <div style={{ display: 'flex', flexDirection: 'column', gap: 8, fontSize: 12 }}>
                                     <div>

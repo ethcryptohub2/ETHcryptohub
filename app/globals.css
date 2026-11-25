@@ -1839,6 +1839,8 @@ html[data-theme='dark'] .scanner-radar-svg {
   border-bottom: 1px solid var(--surface-border);
   padding-bottom: 6px;
   margin: 0;
+  gap: 6px;
+  flex-wrap: wrap;
 }
 
 .drawer-metric-row {

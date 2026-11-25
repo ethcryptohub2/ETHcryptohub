@@ -40,6 +40,20 @@ function membershipLabel(subscription: Subscription) {
   };
 }
 
+function defaultEnvironmentLabel(): { text: string; title: string; isError?: boolean } {
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || '';
+  if (supabaseUrl.includes('kafsdnzzjawikoavkhvm')) {
+    return {
+      text: 'Production · Mumbai',
+      title: 'Production Cluster: Mumbai (bom1) · Connected to Supabase ap-south-1',
+    };
+  }
+  return {
+    text: 'Staging · Sydney',
+    title: 'Staging Preview: Sydney (ap-southeast-2) · Connected to Supabase ghecpkpaxbrvehquhzkr',
+  };
+}
+
 export type NavigationItem = { href: string; label: string; icon: string; badge?: number | string };
 export type NavigationSection = {
   id: string;
@@ -146,27 +160,7 @@ export function PanelNavigation() {
   const notificationTrigger = useRef<HTMLButtonElement>(null);
   const menuOpen = openPanel === 'navigation';
   const unread = newsUnread + signalUnread;
-  const [envLabel, setEnvLabel] = useState<{ text: string; title: string; isError?: boolean }>(() => {
-    if (typeof window !== 'undefined') {
-      const host = window.location.hostname;
-      if (host.includes('functional-staging') || host.includes('staging') || host.includes('preview')) {
-        return {
-          text: 'Staging · Sydney',
-          title: 'Staging Preview: Sydney (ap-southeast-2) · Connected to Supabase ghecpkpaxbrvehquhzkr',
-        };
-      }
-      if (host.includes('localhost') || host.includes('127.0.0.1')) {
-        return {
-          text: 'Development · Local',
-          title: 'Local Development Environment',
-        };
-      }
-    }
-    return {
-      text: 'Production · Mumbai',
-      title: 'Production Cluster: Mumbai (bom1) · Connected to Supabase ap-south-1',
-    };
-  });
+  const [envLabel, setEnvLabel] = useState<{ text: string; title: string; isError?: boolean }>(defaultEnvironmentLabel);
 
   useEffect(() => {
     let active = true;
@@ -600,9 +594,9 @@ export function PanelNavigation() {
         </div>
 
         <div className="panel-topbar-actions">
-          <div className={`system-status-pill ${envLabel.isError ? 'is-error' : ''}`} title={envLabel.title}>
+          <div className={`system-status-pill ${envLabel.isError ? 'is-error' : ''}`} title={envLabel.title} suppressHydrationWarning>
             <span className={`system-status-dot ${envLabel.isError ? 'is-offline' : 'is-online'}`} />
-            <span className="system-status-text">{envLabel.text}</span>
+            <span className="system-status-text" suppressHydrationWarning>{envLabel.text}</span>
           </div>
 
           <ThemeToggle />
