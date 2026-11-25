@@ -28,7 +28,7 @@ type SignalMetadata = {
 type SignalClock = { serverNow: string; receivedAt: number };
 
 function formatPrice(value: number): string {
-  return value.toLocaleString(undefined, { maximumSignificantDigits: 8 });
+  return value.toLocaleString('en-US', { maximumSignificantDigits: 8 });
 }
 
 export function Scanner({ isAdmin, initialTab, alphaSnapshot }: { isAdmin: boolean; initialTab: ScannerTab; alphaSnapshot: AlphaSnapshot }) {
@@ -154,14 +154,26 @@ function StandardSignals({
       });
       if (rank) params.set('rank', rank);
       const response = await fetch(`/api/scanner?${params}`, { credentials: 'same-origin', cache: 'no-store', signal: controller.signal });
-      const body = await response.json() as {
+      const rawText = await response.text();
+      let body: {
         data?: SavedScannerResponse;
         error?: string;
         signalMetadata?: SignalMetadata;
         notificationWarning?: string;
-      };
+      } | null = null;
+      try {
+        body = JSON.parse(rawText);
+      } catch {
+        throw new Error(
+          response.status === 504
+            ? 'Scanner request timed out on the server (HTTP 504).'
+            : response.status === 429
+              ? 'Scanner rate limit reached. Please wait a moment.'
+              : `Scanner request failed (${response.status}): ${rawText.slice(0, 100)}`
+        );
+      }
       if (controller.signal.aborted) throw controller.signal.reason;
-      if (!response.ok || !body.data) throw new Error(body.error ?? `Scanner request failed (${response.status}).`);
+      if (!response.ok || !body?.data) throw new Error(body?.error ?? `Scanner request failed (${response.status}).`);
       const receivedAt = performance.now();
       const serverNow = new Date(
         body.signalMetadata ? Date.parse(body.signalMetadata.serverNow) + receivedAt - requestedAt : Date.now(),
@@ -193,7 +205,9 @@ function StandardSignals({
     setScanNotice('Executing live on-demand algorithmic market scan across Binance USDⓈ-M perpetual contracts…');
     try {
       const csrfResponse = await fetch('/api/csrf', { cache: 'no-store' });
-      const csrfBody = await csrfResponse.json() as { data?: { csrfToken: string } };
+      const csrfRaw = await csrfResponse.text();
+      let csrfBody: { data?: { csrfToken: string } } = {};
+      try { csrfBody = JSON.parse(csrfRaw); } catch { /* proceed */ }
       const csrf = csrfBody.data?.csrfToken;
       const response = await fetch('/api/scanner/scan', {
         method: 'POST',
@@ -203,7 +217,8 @@ function StandardSignals({
         },
         body: JSON.stringify({ timeframe, strategy: 'STANDARD' }),
       });
-      const body = await response.json() as {
+      const rawText = await response.text();
+      let body: {
         ok?: boolean;
         error?: string;
         data?: {
@@ -218,9 +233,20 @@ function StandardSignals({
           durationMs: number;
           scannedAt: string;
         };
-      };
-      if (!response.ok || !body.ok || !body.data) {
-        throw new Error(body.error ?? `Scan failed (${response.status})`);
+      } | null = null;
+      try {
+        body = JSON.parse(rawText);
+      } catch {
+        throw new Error(
+          response.status === 504
+            ? 'Scan request timed out on the gateway (HTTP 504). A scan cycle may still be running in the background.'
+            : response.status === 429
+              ? 'A scanner cycle is already in progress. Please wait for the current batch to complete.'
+              : `Scan request failed (HTTP ${response.status}): ${rawText.slice(0, 100)}`
+        );
+      }
+      if (!response.ok || !body?.ok || !body?.data) {
+        throw new Error(body?.error ?? `Scan failed (${response.status})`);
       }
       setScanResult(body.data);
       const dedupSuffix = (body.data.deduplicatedSignals ?? 0) > 0
@@ -279,6 +305,18 @@ function StandardSignals({
   const [filterTab, setFilterTab] = useState<'ready' | 'awaiting' | 'entry_awaiting' | 'all' | 'rejected'>('ready');
   const [expandedSymbol, setExpandedSymbol] = useState<string | null>(null);
   const [tableSearch, setTableSearch] = useState<string>('');
+
+  // Synchronize table search with universal 522-coin backend query
+  useEffect(() => {
+    const normalized = tableSearch.trim().toUpperCase().replace(/[^A-Z0-9]/g, '');
+    const timer = window.setTimeout(() => {
+      setSelection((prev) => {
+        if (prev.symbol === normalized) return prev;
+        return { ...prev, symbol: normalized, page: 1 };
+      });
+    }, 300);
+    return () => window.clearTimeout(timer);
+  }, [tableSearch]);
 
   const signalNow = signalClock
     ? Date.parse(signalClock.serverNow) + Math.max(0, freshnessNow - signalClock.receivedAt)
@@ -560,12 +598,13 @@ function StandardSignals({
           <form
             onSubmit={(e) => {
               e.preventDefault();
-              const normalized = symbolInput.trim().toUpperCase();
+              const normalized = symbolInput.trim().toUpperCase().replace(/[^A-Z0-9]/g, '');
               if (normalized && !scannerSymbolPrefix.test(normalized)) {
                 setFilterError('Invalid symbol prefix.');
                 return;
               }
               setFilterError('');
+              setTableSearch(normalized);
               setSelection({ ...selection, symbol: normalized, page: 1 });
             }}
             style={{ display: 'flex', alignItems: 'flex-end', gap: 8 }}
@@ -576,16 +615,20 @@ function StandardSignals({
                 value={symbolInput}
                 maxLength={30}
                 placeholder="e.g. BTC, ETH, SOL"
-                onChange={(e) => setSymbolInput(e.target.value)}
+                onChange={(e) => {
+                  setSymbolInput(e.target.value);
+                  setTableSearch(e.target.value);
+                }}
               />
             </label>
             <button type="submit" className="button-secondary">Apply</button>
-            {symbol && (
+            {(symbol || tableSearch || symbolInput) && (
               <button
                 type="button"
                 className="button-secondary"
                 onClick={() => {
                   setSymbolInput('');
+                  setTableSearch('');
                   setFilterError('');
                   setSelection({ ...selection, symbol: '', page: 1 });
                 }}
@@ -648,9 +691,19 @@ function StandardSignals({
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, flex: '1 1 240px', maxWidth: 360 }}>
             <input
               type="search"
-              placeholder="🔍 Search all pairs (e.g. BTC, ETH, SOL)..."
+              placeholder="🔍 Search all 522 pairs (e.g. BTC, ETH, SOL)..."
               value={tableSearch}
-              onChange={(e) => setTableSearch(e.target.value)}
+              onChange={(e) => {
+                setTableSearch(e.target.value);
+                setSymbolInput(e.target.value);
+              }}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  e.preventDefault();
+                  const normalized = tableSearch.trim().toUpperCase().replace(/[^A-Z0-9]/g, '');
+                  setSelection((prev) => ({ ...prev, symbol: normalized, page: 1 }));
+                }
+              }}
               style={{
                 width: '100%',
                 padding: '6px 12px',
@@ -666,7 +719,12 @@ function StandardSignals({
                 type="button"
                 className="button-secondary"
                 style={{ padding: '6px 10px', fontSize: 11 }}
-                onClick={() => setTableSearch('')}
+                onClick={() => {
+                  setTableSearch('');
+                  setSymbolInput('');
+                  setFilterError('');
+                  setSelection((prev) => ({ ...prev, symbol: '', page: 1 }));
+                }}
               >
                 Clear
               </button>
@@ -743,14 +801,14 @@ function StandardSignals({
                       <tr className={`${rowClass} ${isExpanded ? 'is-expanded-row' : ''}`}>
                         {/* 1. Coin / Symbol */}
                         <td>
-                          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                            <span className="scanner-coin-mark" style={{ width: 30, height: 30, fontSize: 11, borderRadius: 6 }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                            <span className="scanner-coin-mark" style={{ width: 24, height: 24, fontSize: 10, borderRadius: 5 }}>
                               {item.symbol.replace(/USDT$/, '').slice(0, 3)}
                             </span>
                             <div>
                               <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-                                <strong style={{ fontSize: 13 }}>{item.symbol.replace(/USDT$/, '')}</strong>
-                                <span className="muted" style={{ fontSize: 11 }}>/USDT</span>
+                                <strong style={{ fontSize: 12 }}>{item.symbol.replace(/USDT$/, '')}</strong>
+                                <span className="muted" style={{ fontSize: 10 }}>/USDT</span>
                               </div>
                               <div style={{ fontSize: 11, color: priceColor, marginTop: 1 }}>
                                 {currentPrice ? `$${formatPrice(currentPrice)}` : '—'}
@@ -839,8 +897,9 @@ function StandardSignals({
                             onClick={() => setExpandedSymbol(isExpanded ? null : item.symbol)}
                             style={{
                               fontSize: 11,
-                              padding: '4px 8px',
+                              padding: '3px 7px',
                               borderRadius: 4,
+                              whiteSpace: 'nowrap',
                               background: isExpanded ? 'var(--surface-border)' : undefined,
                             }}
                           >
@@ -853,7 +912,7 @@ function StandardSignals({
                           <Link
                             href="/binance#exchange-credentials"
                             className="button"
-                            style={{ fontSize: 11, padding: '5px 10px', borderRadius: 4, whiteSpace: 'nowrap' }}
+                            style={{ fontSize: 11, padding: '3px 7px', borderRadius: 4, whiteSpace: 'nowrap' }}
                           >
                             ⚡ Trade Demo
                           </Link>
