@@ -650,23 +650,14 @@ export function ExchangeConnections() {
           {/* Selected Exchange Form */}
           {selected === 'BINANCE' ? (
             <BinanceForm />
-          ) : demo?.available ? (
+          ) : (
             <GenericExchangeCredentials
               exchange={selected}
               name={chosen?.name ?? selected}
-              environment={(demo.environment as 'DEMO' | 'TESTNET') ?? 'DEMO'}
+              environment={(demo?.environment as 'DEMO' | 'TESTNET') ?? (selected === 'GATE' ? 'TESTNET' : 'DEMO')}
               requiresPassphrase={selected === 'OKX' || selected === 'BITGET'}
               switchEnabled={Boolean(exchangeSwitches[selected])}
             />
-          ) : (
-            <div className="card" style={{ padding: '24px', textAlign: 'center' }}>
-              <h3 style={{ margin: '0 0 8px' }}>{chosen?.name} Configuration</h3>
-              <p className="muted" style={{ margin: 0 }}>
-                {demo?.supported
-                  ? 'This exchange adapter is available. Configure Demo or Testnet keys to begin authenticated exchange execution.'
-                  : 'Adapter implementation is ready. The administrator manages tenant activation.'}
-              </p>
-            </div>
           )}
         </>
       )}

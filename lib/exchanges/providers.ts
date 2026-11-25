@@ -97,6 +97,10 @@ export async function assertExchangeEnabledForCustomer(
   if (operation === 'trade' && !definition.customerTradingReady) {
     throw new Error(`${definition.name} trading is disabled until its Demo/Testnet integration and protection lifecycle are verified.`);
   }
+  if (operation === 'connect' && environment !== 'LIVE') {
+    // Demo and Testnet credential setup is allowed for all registered exchanges
+    return;
+  }
   const result = await query<ProviderRow>(
     `SELECT exchange, customer_enabled, demo_enabled, testnet_enabled, live_enabled,
             adapter_version, demo_verified_at, testnet_verified_at, live_approved_at,

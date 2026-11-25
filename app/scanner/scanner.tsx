@@ -124,6 +124,23 @@ function StandardSignals({
   const [scanNotice, setScanNotice] = useState<string | null>(null);
   const [autoScanEnabled, setAutoScanEnabled] = useState(true);
   const [autoScanCountdown, setAutoScanCountdown] = useState(15);
+  const [hasDemoCredentials, setHasDemoCredentials] = useState(false);
+
+  useEffect(() => {
+    let active = true;
+    fetch('/api/binance?environment=DEMO', { cache: 'no-store' })
+      .then(async (res) => {
+        if (!res.ok) return;
+        const json = (await res.json().catch(() => null)) as { data?: { configured?: boolean } };
+        if (active && json?.data?.configured !== undefined) {
+          setHasDemoCredentials(Boolean(json.data.configured));
+        }
+      })
+      .catch(() => {});
+    return () => {
+      active = false;
+    };
+  }, []);
   const candidateSymbols = useMemo(() => (savedData?.candidates ?? []).map((c) => c.symbol), [savedData]);
   const liveMarket = useLiveMarketFeed(candidateSymbols.length > 0 ? candidateSymbols : ['BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'BNBUSDT']);
   const { coverage, symbol, rank, page } = selection;
@@ -254,7 +271,7 @@ function StandardSignals({
       const dedupSuffix = (body.data.deduplicatedSignals ?? 0) > 0
         ? ` (${body.data.newSignals} new + ${body.data.deduplicatedSignals} deduplicated)`
         : ` (${body.data.newSignals} new signals)`;
-      setScanNotice(`Scan completed: ${body.data.scannedCount} pairs analyzed in ${body.data.durationMs}ms. ${body.data.qualifiedCount} qualified setups${dedupSuffix}. Batch ${body.data.batchIndex}/${body.data.totalBatches} (${body.data.cycleId}).`);
+      setScanNotice(`Scan completed: ${body.data.scannedCount} pairs analyzed in ${body.data.durationMs}ms. ${body.data.qualifiedCount} qualified setups${dedupSuffix}. Batch ${body.data.batchIndex}/${body.data.totalBatches} (${body.data.cycleId}) · Complete 522-coin universe rotates continuously.`);
       await load();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Scan request failed.');
@@ -778,7 +795,7 @@ function StandardSignals({
                     workerActive: true,
                     autoTradingEnabled: true,
                     exchangeEnabled: true,
-                    hasCredentials: false,
+                    hasCredentials: hasDemoCredentials,
                     emergencyStop: false,
                   });
 

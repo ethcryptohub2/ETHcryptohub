@@ -116,7 +116,7 @@ export function BinanceForm() {
 
   async function submit(event: FormEvent, action: 'save' | 'test' | 'remove') {
     event.preventDefault();
-    if (!storageReady || busy || (action === 'save' && !confirmed) || (action === 'test' && !signedReadEnabled)) return;
+    if (busy || (action === 'save' && !confirmed)) return;
     setBusy(true);
     setMessage('');
     setError('');
@@ -385,16 +385,12 @@ export function BinanceForm() {
             className={environmentConfirmationRequired ? 'scanner-warning' : 'muted'}
             role={environmentConfirmationRequired ? 'status' : undefined}
           >
-            {!storageReady
-              ? error
-                ? 'Credential entry is blocked.'
-                : 'Checking whether credential storage is available…'
-              : environmentConfirmationRequired
+            {environmentConfirmationRequired
               ? 'A legacy credential exists for Demo, but its original environment cannot be verified. Re-enter the matching Demo credential before using it.'
               : configured
               ? 'Demo credentials are encrypted and stored; secret values cannot be viewed.'
-              : 'No Demo credentials are saved yet.'}
-            {storageReady && ' Keep withdrawals disabled on the exchange API key.'}
+              : 'Enter your Binance Futures Demo API key and secret below. Virtual funds only.'}
+            {' Keep withdrawals disabled on the exchange API key.'}
           </p>
 
           {message && <p className="success" role="status">{message}</p>}
@@ -405,7 +401,7 @@ export function BinanceForm() {
             <input
               type="password"
               autoComplete="off"
-              disabled={busy || !storageReady}
+              disabled={busy}
               value={apiKey}
               onChange={(e) => setApiKey(e.target.value)}
               minLength={20}
@@ -419,7 +415,7 @@ export function BinanceForm() {
             <input
               autoComplete="new-password"
               type="password"
-              disabled={busy || !storageReady}
+              disabled={busy}
               value={apiSecret}
               onChange={(e) => setApiSecret(e.target.value)}
               minLength={20}
@@ -432,17 +428,17 @@ export function BinanceForm() {
             <input
               type="checkbox"
               checked={confirmed}
-              disabled={busy || !storageReady}
+              disabled={busy}
               onChange={(event) => setConfirmed(event.target.checked)}
             />{' '}
             I confirm these keys were issued for Binance Demo / Virtual Funds.
           </label>
           <div className="links">
-            <button disabled={busy || !storageReady || !confirmed}>Save Encrypted Keys</button>
+            <button disabled={busy || !confirmed || !apiKey || !apiSecret}>Save Encrypted Keys</button>
             <button
               type="button"
               className="button-secondary"
-              disabled={busy || !storageReady || !configured || !signedReadEnabled}
+              disabled={busy || !configured}
               onClick={(event) => void submit(event, 'test')}
             >
               Test Demo Account Access
