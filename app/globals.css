@@ -1693,8 +1693,8 @@ html[data-theme='dark'] .scanner-radar-svg {
 }
 
 .compact-scanner-table th {
-  padding: 8px 10px;
-  font: 600 10.5px 'DM Mono', monospace;
+  padding: 8px 8px;
+  font: 600 10px 'DM Mono', monospace;
   text-transform: uppercase;
   color: var(--text-muted);
   background: var(--surface-raised);
@@ -1703,7 +1703,7 @@ html[data-theme='dark'] .scanner-radar-svg {
 }
 
 .compact-scanner-table td {
-  padding: 8px 10px;
+  padding: 8px 8px;
   border-bottom: 1px solid var(--surface-border);
   vertical-align: middle;
 }
@@ -1802,7 +1802,7 @@ html[data-theme='dark'] .scanner-radar-svg {
 .drawer-grid {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 10px;
+  gap: 8px;
 }
 
 @media (max-width: 1100px) {

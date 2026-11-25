@@ -28,7 +28,9 @@ type SignalMetadata = {
 type SignalClock = { serverNow: string; receivedAt: number };
 
 function formatPrice(value: number): string {
-  return value.toLocaleString('en-US', { maximumSignificantDigits: 8 });
+  if (value >= 1000) return value.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  if (value >= 1) return value.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 4 });
+  return value.toLocaleString('en-US', { minimumFractionDigits: 4, maximumFractionDigits: 6 });
 }
 
 export function Scanner({ isAdmin, initialTab, alphaSnapshot }: { isAdmin: boolean; initialTab: ScannerTab; alphaSnapshot: AlphaSnapshot }) {
@@ -425,7 +427,7 @@ function StandardSignals({
         </div>
         <div className="ribbon-item">
           <span className="ribbon-label">Scan Latency</span>
-          <span className="ribbon-value" style={{ fontSize: 13 }} title={lastCheckedAt ? `Checked ${new Date(lastCheckedAt).toLocaleTimeString()}` : 'Connecting to feed…'}>
+          <span className="ribbon-value" style={{ fontSize: 13 }} title={lastCheckedAt ? `Checked ${new Date(lastCheckedAt).toLocaleTimeString('en-US')}` : 'Connecting to feed…'} suppressHydrationWarning>
             {latencyDisplay}
           </span>
         </div>
@@ -851,19 +853,18 @@ function StandardSignals({
 
                         {/* 5. Entry Price */}
                         <td>
-                          <div style={{ fontSize: 12 }}>
-                            {entryZone ? (
-                              <span className="mono" style={{ color: '#10b981', fontWeight: 600 }}>
-                                ${formatPrice(entryZone.low)} – ${formatPrice(entryZone.high)}
-                              </span>
-                            ) : item.setup ? (
-                              <span className="mono" style={{ fontWeight: 600 }}>
-                                ${formatPrice(item.setup.entryPrice)}
-                              </span>
-                            ) : (
-                              <span className="muted" style={{ fontSize: 11 }}>Awaiting entry</span>
-                            )}
-                          </div>
+                          {entryZone ? (
+                            <div className="mono" style={{ color: '#10b981', fontWeight: 600, fontSize: 11, lineHeight: 1.25 }}>
+                              <div>${formatPrice(entryZone.low)}</div>
+                              <div style={{ color: 'var(--text-muted)', fontSize: 10, fontWeight: 500 }}>to ${formatPrice(entryZone.high)}</div>
+                            </div>
+                          ) : item.setup ? (
+                            <span className="mono" style={{ fontWeight: 600, fontSize: 11 }}>
+                              ${formatPrice(item.setup.entryPrice)}
+                            </span>
+                          ) : (
+                            <span className="muted" style={{ fontSize: 11 }}>Awaiting entry</span>
+                          )}
                         </td>
 
                         {/* 6. Signal Status */}

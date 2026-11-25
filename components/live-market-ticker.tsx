@@ -6,9 +6,9 @@ import { useLiveMarketFeed } from '../lib/live-market-feed';
 const CORE_SYMBOLS = ['BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'BNBUSDT', 'DOGEUSDT', 'XRPUSDT'];
 
 function formatPrice(val: number): string {
-  if (val >= 1000) return val.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-  if (val >= 1) return val.toLocaleString(undefined, { minimumFractionDigits: 4, maximumFractionDigits: 4 });
-  return val.toLocaleString(undefined, { minimumFractionDigits: 6, maximumFractionDigits: 8 });
+  if (val >= 1000) return val.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  if (val >= 1) return val.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 4 });
+  return val.toLocaleString('en-US', { minimumFractionDigits: 4, maximumFractionDigits: 6 });
 }
 
 export function LiveMarketTickerBar({ className = '' }: { className?: string }) {
@@ -61,8 +61,8 @@ export function LiveMarketTickerBar({ className = '' }: { className?: string }) 
           {isConnected ? 'LIVE FEED: BINANCE USDⓈ-M WS' : isPolling ? 'LIVE FEED: REST POLLING' : 'FEED: CONNECTING…'}
         </span>
         {lastPingTime && (
-          <span className="muted mono" style={{ fontSize: 10 }}>
-            {new Date(lastPingTime).toLocaleTimeString()}
+          <span className="muted mono" style={{ fontSize: 10 }} suppressHydrationWarning>
+            {new Date(lastPingTime).toLocaleTimeString('en-US')}
           </span>
         )}
       </div>
