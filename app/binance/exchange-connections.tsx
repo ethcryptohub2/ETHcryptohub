@@ -252,6 +252,7 @@ function GenericExchangeCredentials({
       <label>
         {name} {environment} API Key
         <input
+          type="password"
           autoComplete="off"
           value={apiKey}
           minLength={8}
@@ -594,10 +595,17 @@ export function ExchangeConnections() {
             {exchanges.map((exchange) => {
               const isSelected = exchange.exchange === selected;
               const isEnabled = Boolean(exchangeSwitches[exchange.exchange]);
+              const envOption = exchange.environments.find(
+                (e) => e.environment === (exchange.exchange === 'GATE' ? 'TESTNET' : 'DEMO'),
+              );
+              const isConfigured = Boolean(
+                (envOption as { configuredAccounts?: number })?.configuredAccounts &&
+                (envOption as { configuredAccounts?: number }).configuredAccounts! > 0,
+              );
               const cardBadge = getExchangeBadge({
                 exchange: exchange.exchange,
                 environment: exchange.exchange === 'GATE' ? 'TESTNET' : 'DEMO',
-                configured: true,
+                configured: isConfigured,
                 switchEnabled: isEnabled,
                 adapterComplete: exchange.exchange === 'BINANCE' || exchange.exchange === 'BYBIT',
               });
