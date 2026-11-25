@@ -1,0 +1,28 @@
+Route_or_Endpoint,Component_or_Feature,Method_or_Type,Status,HTTP_Code,Horizontal_Overflow_px,Security_Guards,Evidence_or_Test
+/,Landing Hero & Features,PAGE,PASS,200,0.0,Public Static,step_190_browser_audited
+/login,User Login & CSRF Token,PAGE,PASS,200,0.0,CSRF Cookie + Rate Limit,auth-routes.security.test.mjs
+/signup,User Registration,PAGE,PASS,200,0.0,Password Hash + Zod Schema,auth-routes.security.test.mjs
+/verify-email,Email Verification Code,PAGE,PASS,200,0.0,Expiring Code Hash,auth-recovery-readiness.test.mjs
+/dashboard,Customer Dashboard Overview,PAGE,PASS,200,0.0,Authenticated User Session,step_180_shot_1.png
+/scanner,Smart Scanner Ribbon & 10-Col Table,PAGE,FIXED_AND_RETESTED,200,0.0,RLS + Cache Header,step_106_ribbon_table_verified.png
+/scanner,Candidate Detail 4-Panel Drawer,DRAWER,FIXED_AND_RETESTED,200,0.0,Zod Schema + Safe Parse,step_149_drawer_verified.png
+/positions,Active Demo Positions & PnL,PAGE,PASS,200,0.0,Authenticated Session + Demo Scoped,final_step_190.png
+/binance,Multi-Exchange Demo API Management,PAGE,FIXED_AND_RETESTED,200,0.0,AES-256-GCM + CSRF,admin-demo-credentials-route.test.mjs
+/intelligence,Alpha Market Feed & Research,PAGE,PASS,200,0.0,Read-only WebSocket / Snapshot,replay-intelligence.test.mjs
+/news,Crypto News & Sentiment Feed,PAGE,PASS,200,0.0,RLS Category Filter,news-platform.sql
+/settings,User Strategy & Notification Settings,PAGE,PASS,200,0.0,CSRF Guarded POST,http-security.test.mjs
+/admin,Admin Central Console,PAGE,PASS,200,0.0,Admin Role RBAC,admin-users-route.test.mjs
+/admin/exchanges,Exchange Provider Controls,PAGE,PASS,200,0.0,Admin RBAC + Foundation Schema,exchanges/registry.test.mjs
+/admin/backtesting,Historical Signal Replay Workspace,PAGE,PASS,200,0.0,Admin RBAC + File Size Guard,backtesting-engine.test.mjs
+/admin/diagnostics,System Health & Reason Codes,PAGE,PASS,200,0.0,Admin RBAC + DB Probe,auto-execution-diagnostics.test.mjs
+/admin/users,User RBAC & Audit Log,PAGE,PASS,200,0.0,Admin RBAC + RLS,admin-users-route.test.mjs
+/admin/subscriptions,Licensing & Tier Management,PAGE,PASS,200,0.0,Admin RBAC + RLS,subscription-utils.ts
+/admin/scanner,Scanner Coin Management & Universe,PAGE,PASS,200,0.0,Admin RBAC + Rate Limit,scanner-management-route.test.mjs
+/admin/signals,Historical Signal Archive & Audit,PAGE,PASS,200,0.0,Admin RBAC + Immutable Log,signal-history.test.mjs
+/api/scanner,On-Demand Batch Scan & Cycle Advance,API_POST,PASS,200,0.0,Same-Origin + CSRF + Weight Guard,signal-scan.test.mjs
+/api/scanner/saved,Scanner Cached Results & Filter Query,API_GET,PASS,200,0.0,Cache-Control + Freshness Check,scanner-saved-results-refresh.test.mjs
+/api/binance,Demo Credential Storage & Test,API_ROUTE,FIXED_AND_RETESTED,200,0.0,AES-256-GCM + Staging Allowed,binance-credential-route.test.mjs
+/api/binance/positions,Live Futures Demo Position Read,API_GET,PASS,200,0.0,Demo Scoped + 403 on Live,binance-protection-route.test.mjs
+/api/exchanges,Provider Registry & Feature Flags,API_GET,PASS,200,0.0,Foundation Schema Check,exchanges/providers.ts
+/api/auth/login,Authentication & Password Verification,API_POST,PASS,200,0.0,Double-Submit CSRF + bcrypt,auth-session-isolation.test.mjs
+/api/auth/session,Active Session Health & Token Refresh,API_GET,PASS,200,0.0,HttpOnly Cookie + SSR Auth,supabase-auth.test.mjs
