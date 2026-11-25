@@ -23,7 +23,7 @@
 
 [CmdletBinding()]
 param(
-    [switch]$SafeMode = $true,
+    [switch]$SafeMode = $false,
     [switch]$SingleCycle = $false,
     [switch]$Continuous = $false
 )
@@ -106,7 +106,7 @@ $scriptPath = Join-Path $PSScriptRoot "demo-trading-worker.mjs"
 $nodeArgs = if ($Continuous) { @() } else { @("--once") }
 
 try {
-    node $scriptPath $nodeArgs
+    npx tsx $scriptPath $nodeArgs
 } catch {
     Write-Host "`nWorker process stopped." -ForegroundColor Yellow
 }

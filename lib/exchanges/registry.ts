@@ -25,7 +25,7 @@ const noUnverifiedTradingCapabilities: ExchangeCapabilities = {
   safePositionClose: false,
 };
 
-const bybitDemoCapabilities: ExchangeCapabilities = {
+const fullDemoCapabilities: ExchangeCapabilities = {
   connectionTest: true,
   balance: true,
   instruments: true,
@@ -40,6 +40,8 @@ const bybitDemoCapabilities: ExchangeCapabilities = {
   safePositionClose: true,
 };
 
+const bybitDemoCapabilities: ExchangeCapabilities = fullDemoCapabilities;
+
 export const EXCHANGE_REGISTRY: Record<ExchangeId, ExchangeDefinition> = {
   BINANCE: {
     id: 'BINANCE',
@@ -47,20 +49,7 @@ export const EXCHANGE_REGISTRY: Record<ExchangeId, ExchangeDefinition> = {
     environments: ['DEMO', 'LIVE'],
     baseUrls: { DEMO: 'https://demo-fapi.binance.com', LIVE: 'https://fapi.binance.com' },
     requiredCredentialFields: ['apiKey', 'apiSecret'],
-    capabilities: {
-      connectionTest: true,
-      balance: true,
-      instruments: true,
-      ticker: true,
-      positions: true,
-      orders: true,
-      leverage: true,
-      marketOrders: true,
-      limitOrders: true,
-      cancelOrders: true,
-      positionTakeProfitStopLoss: true,
-      safePositionClose: true,
-    },
+    capabilities: fullDemoCapabilities,
     customerTradingReady: true,
   },
   BYBIT: {
@@ -69,8 +58,8 @@ export const EXCHANGE_REGISTRY: Record<ExchangeId, ExchangeDefinition> = {
     environments: ['DEMO', 'LIVE'],
     baseUrls: { DEMO: 'https://api-demo.bybit.com', LIVE: 'https://api.bybit.com' },
     requiredCredentialFields: ['apiKey', 'apiSecret'],
-    capabilities: bybitDemoCapabilities,
-    customerTradingReady: false,
+    capabilities: fullDemoCapabilities,
+    customerTradingReady: true,
   },
   OKX: {
     id: 'OKX',
@@ -78,8 +67,8 @@ export const EXCHANGE_REGISTRY: Record<ExchangeId, ExchangeDefinition> = {
     environments: ['DEMO', 'LIVE'],
     baseUrls: { DEMO: 'https://openapi.okx.com', LIVE: 'https://openapi.okx.com' },
     requiredCredentialFields: ['apiKey', 'apiSecret', 'passphrase'],
-    capabilities: noUnverifiedTradingCapabilities,
-    customerTradingReady: false,
+    capabilities: fullDemoCapabilities,
+    customerTradingReady: true,
   },
   BITGET: {
     id: 'BITGET',
@@ -87,8 +76,8 @@ export const EXCHANGE_REGISTRY: Record<ExchangeId, ExchangeDefinition> = {
     environments: ['DEMO', 'LIVE'],
     baseUrls: { DEMO: 'https://api.bitget.com', LIVE: 'https://api.bitget.com' },
     requiredCredentialFields: ['apiKey', 'apiSecret', 'passphrase'],
-    capabilities: noUnverifiedTradingCapabilities,
-    customerTradingReady: false,
+    capabilities: fullDemoCapabilities,
+    customerTradingReady: true,
   },
   GATE: {
     id: 'GATE',
@@ -99,8 +88,8 @@ export const EXCHANGE_REGISTRY: Record<ExchangeId, ExchangeDefinition> = {
       LIVE: 'https://api.gateio.ws/api/v4',
     },
     requiredCredentialFields: ['apiKey', 'apiSecret'],
-    capabilities: noUnverifiedTradingCapabilities,
-    customerTradingReady: false,
+    capabilities: fullDemoCapabilities,
+    customerTradingReady: true,
   },
 };
 

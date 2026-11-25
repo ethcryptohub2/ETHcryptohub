@@ -86,9 +86,14 @@ export async function POST(request: NextRequest) {
       process.env.CRON_SECRET,
     ].filter(Boolean) as string[];
     const hasWorkerSecret = Boolean(workerSecret && validSecrets.some(secret => secret === workerSecret));
-    if (!hasWorkerSecret) {
+    let isAdmin = false;
+    try {
+      await requireAdmin();
+      isAdmin = true;
+    } catch {}
+    if (!hasWorkerSecret && !isAdmin) {
       return NextResponse.json(
-        { error: 'Valid worker secret header required to acquire lease.' },
+        { error: 'Valid worker secret header or administrator access required to acquire lease.' },
         { status: 403, headers: noStore },
       );
     }

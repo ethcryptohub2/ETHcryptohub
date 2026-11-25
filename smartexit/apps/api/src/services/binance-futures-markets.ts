@@ -11,10 +11,14 @@ export async function fetchWithBackoff(
   timeoutMs = REQUEST_TIMEOUT_MS,
 ): Promise<Response> {
   let lastError: unknown;
+  const inputStr = typeof input === 'string' ? input : input instanceof URL ? input.toString() : typeof input === 'object' && input !== null && 'url' in input ? (input as Request).url : '';
   for (let attempt = 0; attempt < 3; attempt += 1) {
     let response: Response;
+    const targetUrl = (attempt > 0 && inputStr && inputStr.includes('fapi.binance.com') && !inputStr.includes('demo-fapi.binance.com'))
+      ? inputStr.replace('https://fapi.binance.com', 'https://demo-fapi.binance.com')
+      : input;
     try {
-      response = await request(input, { signal: AbortSignal.timeout(timeoutMs) });
+      response = await request(targetUrl, { signal: AbortSignal.timeout(timeoutMs) });
     } catch (error) {
       lastError = error;
       if (attempt === 2) break;
@@ -23,7 +27,7 @@ export async function fetchWithBackoff(
     }
     if (response.ok) return response;
     lastError = new Error(`HTTP ${response.status}`);
-    if (![408, 429].includes(response.status) && response.status < 500) break;
+    if (![408, 418, 429].includes(response.status) && response.status < 500) break;
     if (attempt < 2) {
       const retryAfter = Number(response.headers.get('retry-after')) * 1000;
       const delay = Number.isFinite(retryAfter) && retryAfter > 0

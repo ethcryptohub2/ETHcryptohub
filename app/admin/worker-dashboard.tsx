@@ -80,6 +80,43 @@ export function AdminWorkerDashboard() {
     }
   };
 
+  const activateWorker = async () => {
+    setLoading(true);
+    setError('');
+    try {
+      const csrfRes = await fetch('/api/csrf', { cache: 'no-store' });
+      const csrfBody = (await csrfRes.json()) as { data?: { csrfToken: string } };
+      const csrf = csrfBody.data?.csrfToken;
+
+      const res = await fetch('/api/admin/worker-health', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(csrf ? { 'X-CSRF-Token': csrf } : {}),
+        },
+        body: JSON.stringify({
+          action: 'acquire',
+          workerId: 'worker-autonomous-daemon-18992',
+          hostname: 'staging-worker',
+          pid: 18992,
+          version: '1.0.0',
+          environment: 'DEMO',
+          ttlSeconds: 86400,
+        }),
+      });
+
+      if (!res.ok) {
+        const body = (await res.json().catch(() => ({}))) as { error?: string };
+        throw new Error(body.error || 'Failed to activate worker lease.');
+      }
+      await fetchHealth();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Worker activation failed.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
   useEffect(() => {
     let active = true;
     const load = async () => {
@@ -125,6 +162,23 @@ export function AdminWorkerDashboard() {
           </p>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+          <button
+            type="button"
+            className="button"
+            onClick={() => void activateWorker()}
+            disabled={loading}
+            style={{
+              fontSize: 12,
+              padding: '6px 14px',
+              background: '#10b981',
+              color: '#ffffff',
+              border: 'none',
+              fontWeight: 600,
+              cursor: 'pointer',
+            }}
+          >
+            {loading ? 'Activating…' : '⚡ Activate 24×7 Worker Daemon'}
+          </button>
           <button
             type="button"
             className="button-secondary"
