@@ -482,18 +482,26 @@ export async function saveScannerCandidates(candidates: MarketScannerCandidate[]
 }
 
 export async function upsertScannerCandidates(client: PoolClient, candidates: MarketScannerCandidate[]) {
+  if (candidates.length === 0) return;
+  const symbols: string[] = [];
+  const timeframes: string[] = [];
+  const payloads: string[] = [];
   for (const candidate of candidates) {
-    await client.query(
-      `INSERT INTO public.scanner_candidate_snapshots
-        (symbol, timeframe, exchange, candidate_json, scanned_at)
-       VALUES ($1, $2, 'BINANCE', $3::jsonb, NOW())
-       ON CONFLICT (symbol, timeframe) DO UPDATE SET
-         exchange = EXCLUDED.exchange,
-         candidate_json = EXCLUDED.candidate_json,
-         scanned_at = EXCLUDED.scanned_at`,
-      [candidate.symbol, candidate.timeframe, JSON.stringify(candidate)],
-    );
+    symbols.push(candidate.symbol);
+    timeframes.push(candidate.timeframe);
+    payloads.push(JSON.stringify(candidate));
   }
+  await client.query(
+    `INSERT INTO public.scanner_candidate_snapshots
+      (symbol, timeframe, exchange, candidate_json, scanned_at)
+     SELECT u.symbol, u.timeframe, 'BINANCE', u.candidate_json, NOW()
+     FROM unnest($1::text[], $2::text[], $3::jsonb[]) AS u(symbol, timeframe, candidate_json)
+     ON CONFLICT (symbol, timeframe) DO UPDATE SET
+       exchange = EXCLUDED.exchange,
+       candidate_json = EXCLUDED.candidate_json,
+       scanned_at = EXCLUDED.scanned_at`,
+    [symbols, timeframes, payloads],
+  );
 }
 
 type ScannerUniverseInput = {

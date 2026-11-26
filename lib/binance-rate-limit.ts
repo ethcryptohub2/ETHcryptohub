@@ -278,7 +278,11 @@ class BinanceRateLimitCoordinator {
   }
 }
 
-export const binanceRateLimiter = new BinanceRateLimitCoordinator();
+const globalForRateLimiter = globalThis as typeof globalThis & {
+  __smartexitBinanceRateLimiter?: BinanceRateLimitCoordinator;
+};
+export const binanceRateLimiter =
+  globalForRateLimiter.__smartexitBinanceRateLimiter ??= new BinanceRateLimitCoordinator();
 
 /**
  * Wrapper around fetch for Binance Futures REST APIs with:

@@ -895,15 +895,6 @@ export class BinanceMarketScannerService implements MarketScannerProvider {
       ];
       return candidate;
     }
-    const research = this.research
-      ? await this.research.getResearch({
-          symbol: market.symbol,
-          baseAsset: market.baseAsset,
-          exchange,
-          timeframe: config.timeframe,
-          price: market.lastPrice!,
-        })
-      : emptyResearch();
     const emaDirection =
       lastCandle.close > ema9 && ema9 > ema20 && ema20 > ema50 && ema50 > ema100 && ema100 > ema200
         ? 'BULLISH'
@@ -917,6 +908,17 @@ export class BinanceMarketScannerService implements MarketScannerProvider {
       !Number.isFinite(tickerAge) ||
       tickerAge > config.maxAgeSeconds * 1000 ||
       candleAge > config.maxAgeSeconds * 1000;
+    // Skip external research HTTP calls for stale, illiquid, or unstacked pairs to preserve Binance API weight & scan speed
+    const research =
+      this.research && !stale && market.quoteVolume24h >= config.minimumVolume && emaDirection !== 'MIXED'
+        ? await this.research.getResearch({
+            symbol: market.symbol,
+            baseAsset: market.baseAsset,
+            exchange,
+            timeframe: config.timeframe,
+            price: market.lastPrice!,
+          })
+        : emptyResearch();
     const priorVolumes = closedCandles.slice(-21, -1).map((candle) => candle.volume);
     const averagePriorVolume = priorVolumes.reduce((sum, volume) => sum + volume, 0) / priorVolumes.length;
     const relativeVolume = averagePriorVolume > 0 ? lastCandle.volume / averagePriorVolume : null;

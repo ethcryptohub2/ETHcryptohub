@@ -241,4 +241,8 @@ export class BinanceWsKlineEngine {
   }
 }
 
-export const binanceWsKlineEngine = new BinanceWsKlineEngine();
+const globalForWsEngine = globalThis as typeof globalThis & {
+  __smartexitBinanceWsKlineEngine?: BinanceWsKlineEngine;
+};
+export const binanceWsKlineEngine =
+  globalForWsEngine.__smartexitBinanceWsKlineEngine ??= new BinanceWsKlineEngine();

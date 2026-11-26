@@ -39,8 +39,13 @@ const SCANNER_V2_STATE_KEY = 'scanner_v2_state';
 const SCANNER_V2_LOCK_KEY = 'scanner_v2_lock';
 const COINAPI_QUOTA_KEY = 'coinapi_daily_quota';
 const CANDLE_CACHE_SNAPSHOT_KEY = 'scanner_candle_cache_snapshot';
-const LOCK_TTL_MS = 270_000; // 4.5m lease
-const INSTANCE_OWNER_ID = randomUUID();
+const LOCK_TTL_MS = 480_000; // 8m lease for full cold-start warmups
+const globalForScheduler = globalThis as typeof globalThis & {
+  __smartexitInstanceOwnerId?: string;
+  __smartexitActiveCyclePromise?: Promise<ScannerV2PersistedState> | null;
+  __smartexitSchedulerTimer?: ReturnType<typeof setInterval> | null;
+};
+const INSTANCE_OWNER_ID = globalForScheduler.__smartexitInstanceOwnerId ??= randomUUID();
 
 async function hydrateCoinApiQuotaFromDb(): Promise<void> {
   const res = await safeDbQuery<{ value_json: { dailyUsed?: number; dailyWindowStart?: number } }>(
@@ -159,8 +164,6 @@ export interface ScannerV2PersistedState {
 }
 
 const markets = new BinanceFuturesMarketsService();
-let activeCyclePromise: Promise<ScannerV2PersistedState> | null = null;
-let schedulerTimer: ReturnType<typeof setInterval> | null = null;
 
 async function safeDbQuery<T extends QueryResultRow = QueryResultRow>(
   sql: string,
@@ -285,19 +288,19 @@ export async function triggerCoordinatedV2Scan(options: {
   signal?: AbortSignal;
 } = {}): Promise<{ state: ScannerV2PersistedState; deduplicated: boolean }> {
   // Single-flight: if a V2 cycle is already running in this instance, join it
-  if (activeCyclePromise) {
-    const state = await activeCyclePromise;
+  if (globalForScheduler.__smartexitActiveCyclePromise) {
+    const state = await globalForScheduler.__smartexitActiveCyclePromise;
     return { state, deduplicated: true };
   }
 
   const runPromise = executeCoordinatedV2Cycle(options);
-  activeCyclePromise = runPromise;
+  globalForScheduler.__smartexitActiveCyclePromise = runPromise;
   try {
     const state = await runPromise;
     return { state, deduplicated: false };
   } finally {
-    if (activeCyclePromise === runPromise) {
-      activeCyclePromise = null;
+    if (globalForScheduler.__smartexitActiveCyclePromise === runPromise) {
+      globalForScheduler.__smartexitActiveCyclePromise = null;
     }
   }
 }
@@ -612,6 +615,7 @@ async function executeCoordinatedV2Cycle(options: {
         };
       },
       onProgress: async (progress) => {
+        await acquireGlobalV2Lock().catch(() => false);
         await saveScannerV2State({
           ...runningState,
           completedBatches: progress.completedBatches,
@@ -709,17 +713,17 @@ async function executeCoordinatedV2Cycle(options: {
 }
 
 export function startFiveMinuteScheduler(): void {
-  if (schedulerTimer) return;
-  schedulerTimer = setInterval(() => {
-    if (activeCyclePromise) return; // Never overlap cycles
+  if (globalForScheduler.__smartexitSchedulerTimer) return;
+  globalForScheduler.__smartexitSchedulerTimer = setInterval(() => {
+    if (globalForScheduler.__smartexitActiveCyclePromise) return; // Never overlap cycles
     if (binanceRateLimiter.getStatus().state === 'OPEN') return;
     void triggerCoordinatedV2Scan({ timeframe: '15m', deliverNotifications: true });
   }, FULL_SCAN_INTERVAL_MS);
 }
 
 export function stopFiveMinuteScheduler(): void {
-  if (schedulerTimer) {
-    clearInterval(schedulerTimer);
-    schedulerTimer = null;
+  if (globalForScheduler.__smartexitSchedulerTimer) {
+    clearInterval(globalForScheduler.__smartexitSchedulerTimer);
+    globalForScheduler.__smartexitSchedulerTimer = null;
   }
 }

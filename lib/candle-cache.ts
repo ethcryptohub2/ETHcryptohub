@@ -268,4 +268,8 @@ export class RollingCandleCache {
   }
 }
 
-export const sharedCandleCache = new RollingCandleCache();
+const globalForCandleCache = globalThis as typeof globalThis & {
+  __smartexitSharedCandleCache?: RollingCandleCache;
+};
+export const sharedCandleCache =
+  globalForCandleCache.__smartexitSharedCandleCache ??= new RollingCandleCache();
