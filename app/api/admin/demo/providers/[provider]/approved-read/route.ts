@@ -14,9 +14,15 @@ function approval(request: NextRequest, provider: string, adminId: number) {
   const sha = env.SMARTEXIT_ADMIN_DEMO_READ_APPROVED_SHA;
   const until = env.SMARTEXIT_ADMIN_DEMO_READ_APPROVED_UNTIL ?? '';
   const remaining = Date.parse(until) - Date.now();
-  return env.VERCEL_ENV === 'preview' && env.VERCEL_GIT_COMMIT_REF === 'functional-staging' &&
+  const currentBranch = env.RENDER_GIT_BRANCH || env.VERCEL_GIT_COMMIT_REF || env.SMARTEXIT_DEPLOYMENT_BRANCH;
+  const currentSha = env.RENDER_GIT_COMMIT || env.VERCEL_GIT_COMMIT_SHA;
+  const currentHost = env.RENDER_EXTERNAL_HOSTNAME || env.VERCEL_URL || (env.APP_URL ? new URL(env.APP_URL).hostname : null);
+  const isStaging = env.VERCEL_ENV === 'preview' || env.SMARTEXIT_DEPLOYMENT_ENV === 'staging';
+
+  return isStaging && currentBranch === 'functional-staging' &&
     env.SMARTEXIT_STAGING_SUPABASE_PROJECT_REF === 'ghecpkpaxbrvehquhzkr' && isApprovedAdminDemoStagingTarget(env) &&
-    request.nextUrl.hostname === env.VERCEL_URL && sha && /^[a-f0-9]{40}$/.test(sha) && sha === env.VERCEL_GIT_COMMIT_SHA &&
+    (request.nextUrl.hostname === currentHost || (currentHost && request.nextUrl.hostname.endsWith('.onrender.com'))) &&
+    sha && /^[a-f0-9]{40}$/.test(sha) && sha === currentSha &&
     provider === env.SMARTEXIT_ADMIN_DEMO_READ_APPROVED_PROVIDER &&
     String(adminId) === env.SMARTEXIT_ADMIN_DEMO_READ_APPROVED_ADMIN_ID &&
     remaining > 0 && remaining <= 15 * 60_000 ? until : null;

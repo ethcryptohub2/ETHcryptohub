@@ -12,7 +12,8 @@ const json = (body: object, status = 200) => Response.json(body, {
 });
 
 function isStagingPilot() {
-  return process.env.VERCEL_ENV === 'preview' &&
+  const isStaging = process.env.VERCEL_ENV === 'preview' || process.env.SMARTEXIT_DEPLOYMENT_ENV === 'staging';
+  return isStaging &&
     process.env.SMARTEXIT_STAGING_SUPABASE_PROJECT_REF === 'ghecpkpaxbrvehquhzkr' &&
     isApprovedAdminDemoStagingTarget(process.env);
 }
@@ -21,9 +22,10 @@ function windowConfigured() {
   const started = Date.parse(process.env.SMARTEXIT_SCANNER_PILOT_START_UTC ?? '');
   const stopped = Date.parse(process.env.SMARTEXIT_SCANNER_PILOT_STOP_UTC ?? '');
   const now = Date.now();
+  const currentSha = process.env.RENDER_GIT_COMMIT || process.env.VERCEL_GIT_COMMIT_SHA;
   return process.env.SMARTEXIT_SCANNER_PILOT_ENABLED === 'true' &&
-    Boolean(process.env.VERCEL_GIT_COMMIT_SHA) &&
-    process.env.SMARTEXIT_SCANNER_PILOT_APPROVED_SHA === process.env.VERCEL_GIT_COMMIT_SHA &&
+    Boolean(currentSha) &&
+    process.env.SMARTEXIT_SCANNER_PILOT_APPROVED_SHA === currentSha &&
     started <= now && now < stopped && stopped - started <= 60 * 60_000;
 }
 
@@ -63,7 +65,9 @@ export async function POST(request: NextRequest) {
   try {
     await requireAdmin();
     if (request.body !== null || request.nextUrl.search) return json({ error: 'INVALID_PILOT_STOP' }, 422);
-    if (!isStagingPilot() || !windowConfigured() || request.nextUrl.hostname !== process.env.VERCEL_URL) {
+    const currentHost = process.env.RENDER_EXTERNAL_HOSTNAME || process.env.VERCEL_URL || (process.env.APP_URL ? new URL(process.env.APP_URL).hostname : null);
+    const hostMatches = request.nextUrl.hostname === currentHost || (currentHost && request.nextUrl.hostname.endsWith('.onrender.com'));
+    if (!isStagingPilot() || !windowConfigured() || !hostMatches) {
       return json({ error: 'PILOT_STOP_UNAVAILABLE' }, 503);
     }
     const result = await query(

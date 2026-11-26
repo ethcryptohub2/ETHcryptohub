@@ -20,18 +20,25 @@ const credential = z.object({
 }).strict();
 
 function staging(request: NextRequest) {
-  return process.env.VERCEL_ENV === 'preview' && process.env.VERCEL_GIT_COMMIT_REF === 'functional-staging' &&
-    request.nextUrl.hostname === process.env.VERCEL_URL &&
-    process.env.SMARTEXIT_STAGING_SUPABASE_PROJECT_REF === 'ghecpkpaxbrvehquhzkr' &&
-    isApprovedAdminDemoStagingTarget(process.env);
+  const env = process.env;
+  const currentBranch = env.RENDER_GIT_BRANCH || env.VERCEL_GIT_COMMIT_REF || env.SMARTEXIT_DEPLOYMENT_BRANCH;
+  const currentHost = env.RENDER_EXTERNAL_HOSTNAME || env.VERCEL_URL || (env.APP_URL ? new URL(env.APP_URL).hostname : null);
+  const isStaging = env.VERCEL_ENV === 'preview' || env.SMARTEXIT_DEPLOYMENT_ENV === 'staging';
+
+  return isStaging && currentBranch === 'functional-staging' &&
+    (request.nextUrl.hostname === currentHost || (currentHost && request.nextUrl.hostname.endsWith('.onrender.com'))) &&
+    env.SMARTEXIT_STAGING_SUPABASE_PROJECT_REF === 'ghecpkpaxbrvehquhzkr' &&
+    isApprovedAdminDemoStagingTarget(env);
 }
 
 function approved(provider: string) {
-  const sha = process.env.SMARTEXIT_ADMIN_DEMO_CREDENTIALS_APPROVED_SHA;
-  const deadline = Date.parse(process.env.SMARTEXIT_ADMIN_DEMO_CREDENTIALS_APPROVED_UNTIL ?? '');
+  const env = process.env;
+  const sha = env.SMARTEXIT_ADMIN_DEMO_CREDENTIALS_APPROVED_SHA;
+  const currentSha = env.RENDER_GIT_COMMIT || env.VERCEL_GIT_COMMIT_SHA;
+  const deadline = Date.parse(env.SMARTEXIT_ADMIN_DEMO_CREDENTIALS_APPROVED_UNTIL ?? '');
   const remaining = deadline - Date.now();
-  return Boolean(sha && /^[a-f0-9]{40}$/.test(sha) && sha === process.env.VERCEL_GIT_COMMIT_SHA &&
-    provider === process.env.SMARTEXIT_ADMIN_DEMO_CREDENTIALS_APPROVED_PROVIDER &&
+  return Boolean(sha && /^[a-f0-9]{40}$/.test(sha) && sha === currentSha &&
+    provider === env.SMARTEXIT_ADMIN_DEMO_CREDENTIALS_APPROVED_PROVIDER &&
     remaining > 0 && remaining <= 15 * 60_000);
 }
 

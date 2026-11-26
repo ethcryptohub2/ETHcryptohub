@@ -83,7 +83,7 @@ export async function GET() {
       label: 'Staging · Sydney',
       projectRef: activeRef || stagingExpectedRef,
       region: 'ap-southeast-2',
-      hosting: 'Vercel Preview',
+      hosting: env.RENDER ? 'Render Staging' : (vercelEnv ? 'Vercel Preview' : 'Staging'),
       liveTradingEnabled: false,
     });
   }

@@ -76,8 +76,12 @@ export function isPreviewMarketRequestApproved(
 ) {
   const sha = env[`SMARTEXIT_${operation}_APPROVED_SHA`];
   const expires = Date.parse(env[`SMARTEXIT_${operation}_APPROVED_UNTIL`] ?? '');
-  return Boolean(sha && /^[a-f0-9]{40}$/.test(sha) && sha === env.VERCEL_GIT_COMMIT_SHA &&
-    hostname === env.VERCEL_URL && env.VERCEL_ENV === 'preview' &&
+  const isStaging = env.VERCEL_ENV === 'preview' || env.SMARTEXIT_DEPLOYMENT_ENV === 'staging';
+  const expectedSha = env.RENDER_GIT_COMMIT || env.VERCEL_GIT_COMMIT_SHA;
+  const expectedHost = env.RENDER_EXTERNAL_HOSTNAME || env.VERCEL_URL;
+  const hostMatches = Boolean(expectedHost && (hostname === expectedHost || (env.RENDER && hostname.endsWith('.onrender.com'))));
+  return Boolean(sha && /^[a-f0-9]{40}$/.test(sha) && sha === expectedSha &&
+    hostMatches && isStaging &&
     env.SMARTEXIT_STAGING_SUPABASE_PROJECT_REF === 'ghecpkpaxbrvehquhzkr' &&
     expires > now && expires - now <= 15 * 60_000 && isApprovedAdminDemoStagingTarget(env));
 }

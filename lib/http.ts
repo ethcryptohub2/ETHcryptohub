@@ -53,6 +53,7 @@ export function isTrustedDeploymentHost(candidateHost: string, env: Record<strin
 
   const trustedHostPatterns: Array<string | null> = [
     extractHostFromUrl(env.APP_URL),
+    extractHostFromUrl(env.RENDER_EXTERNAL_URL),
     extractHostFromUrl(env.SMARTEXIT_STAGING_PREVIEW_URL),
     extractHostFromUrl(env.SMARTEXIT_PRODUCTION_APP_URL),
     extractHostFromUrl(env.VERCEL_PROJECT_PRODUCTION_URL),
@@ -69,6 +70,12 @@ export function isTrustedDeploymentHost(candidateHost: string, env: Record<strin
   // Preview wildcard matching (*.vercel.app for trusted deployment scope)
   if (env.VERCEL_ENV === 'preview' && normalizedCandidate.endsWith('.vercel.app')) {
     const sub = normalizedCandidate.slice(0, -'.vercel.app'.length);
+    if (/^[a-z0-9-]+$/i.test(sub)) return true;
+  }
+
+  // Render Staging wildcard matching (*.onrender.com for trusted staging scope)
+  if ((env.RENDER || env.SMARTEXIT_DEPLOYMENT_ENV === 'staging') && normalizedCandidate.endsWith('.onrender.com')) {
+    const sub = normalizedCandidate.slice(0, -'.onrender.com'.length);
     if (/^[a-z0-9-]+$/i.test(sub)) return true;
   }
 
