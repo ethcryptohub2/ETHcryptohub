@@ -233,7 +233,9 @@ $env:SMARTEXIT_ADMIN_TEST_EMAIL = $adminCredential.UserName
 $env:SMARTEXIT_ADMIN_TEST_PASSWORD = $adminCredential.Secret
 $env:SMARTEXIT_USER_TEST_EMAIL = $userCredential.UserName
 $env:SMARTEXIT_USER_TEST_PASSWORD = $userCredential.Secret
-$env:SMARTEXIT_TEST_BASE_URL = 'https://cryptohub-git-functional-staging-eth-cryptohub.vercel.app'
+if (-not $env:SMARTEXIT_TEST_BASE_URL) {
+  $env:SMARTEXIT_TEST_BASE_URL = 'https://smartexit-staging.onrender.com'
+}
 
 try {
   $previewCredential = [SmartExitCredentialStore]::Read($previewTarget)

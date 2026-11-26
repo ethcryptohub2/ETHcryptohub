@@ -7,7 +7,7 @@ type Identity = {
   role: TestRole;
 };
 
-const defaultPreviewUrl = 'https://cryptohub-git-functional-staging-eth-cryptohub.vercel.app';
+const defaultPreviewUrl = process.env.SMARTEXIT_TEST_BASE_URL ?? 'https://smartexit-staging.onrender.com';
 
 function credentials(role: TestRole) {
   const prefix = role === 'admin' ? 'SMARTEXIT_ADMIN_TEST' : 'SMARTEXIT_USER_TEST';
@@ -44,9 +44,9 @@ async function openLoginPage(page: Page) {
     landedUrl.protocol !== 'https:' ||
     hostname === 'cryptohub.vercel.app' ||
     hostname === 'cryptohub.app' ||
-    !hostname.endsWith('.vercel.app')
+    (!hostname.endsWith('.vercel.app') && !hostname.endsWith('.onrender.com'))
   ) {
-    throw new Error('The configured target is not an HTTPS Vercel Preview. Production is not an E2E target.');
+    throw new Error('The configured target is not an HTTPS staging environment. Production is not an E2E target.');
   }
 
   const origin = landedUrl.origin;
@@ -65,14 +65,24 @@ async function openLoginPage(page: Page) {
 }
 
 async function submitLogin(page: Page, email: string, password: string) {
-  await page.locator('input[name="email"]').fill(email);
-  await page.locator('input[name="password"]').fill(password);
-  const responsePromise = page.waitForResponse((response) =>
-    response.request().method() === 'POST' &&
-    new URL(response.url()).pathname === '/api/auth/login',
-  );
-  await page.getByRole('button', { name: 'Sign in' }).click();
-  return responsePromise;
+  const emailInput = page.locator('input[name="email"]');
+  const passwordInput = page.locator('input[name="password"]');
+  const submitButton = page.getByRole('button', { name: 'Sign in' });
+
+  await emailInput.waitFor({ state: 'visible' });
+  await emailInput.fill(email);
+  await passwordInput.waitFor({ state: 'visible' });
+  await passwordInput.fill(password);
+  await expect(passwordInput).toHaveValue(password);
+
+  const [response] = await Promise.all([
+    page.waitForResponse((response) =>
+      response.request().method() === 'POST' &&
+      new URL(response.url()).pathname === '/api/auth/login',
+    ),
+    submitButton.click(),
+  ]);
+  return response;
 }
 
 async function getIdentity(page: Page, origin: string) {
@@ -88,7 +98,7 @@ async function signIn(page: Page, origin: string, role: TestRole) {
   const response = await submitLogin(page, account.email.toUpperCase(), account.password);
   expect(response.status()).toBe(200);
   await expect(page).toHaveURL(/\/dashboard(?:\?.*)?$/);
-  await expect(page.getByRole('heading', { name: 'Market intelligence dashboard.' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: /Trading Dashboard/i })).toBeVisible();
 
   const identity = await getIdentity(page, origin);
   expect(identity.role).toBe(role);
@@ -97,6 +107,16 @@ async function signIn(page: Page, origin: string, role: TestRole) {
 }
 
 async function revokeSession(page: Page, origin: string) {
+  const hasSessionCookie = (await page.context().cookies(origin))
+    .some((cookie) => cookie.name === 'ethcryptohub_session');
+  if (!hasSessionCookie) {
+    const identityResponse = await page.request.get(`${origin}/api/auth/me`);
+    if (identityResponse.ok()) {
+      const identityBody = await identityResponse.json() as { data: Identity | null };
+      if (identityBody.data === null) return;
+    }
+  }
+
   for (let attempt = 0; attempt < 2; attempt += 1) {
     try {
       const csrfResponse = await page.request.get(`${origin}/api/csrf`);
@@ -234,9 +254,13 @@ test('admin: login persists across refresh and logout invalidates the session', 
     expect(sessionCookie?.secure).toBe(true);
 
     await page.reload();
-    await expect(page.getByRole('heading', { name: 'Market intelligence dashboard.' })).toBeVisible();
+    await expect(page.getByRole('heading', { name: /Trading Dashboard/i })).toBeVisible();
     expect((await getIdentity(page, origin)).role).toBe('admin');
 
+    const accountButton = page.getByLabel('Account');
+    if (await accountButton.isVisible()) {
+      await accountButton.click();
+    }
     const logoutButton = page.getByRole('button', { name: 'Log out' }).first();
     await expect(logoutButton).toBeVisible();
     await logoutButton.click();
@@ -253,7 +277,7 @@ test('admin: invalid password is rejected without creating a session', async ({ 
   const response = await submitLogin(page, account.email, 'invalid-e2e-password');
 
   expect(response.status()).toBe(401);
-  await expect(page.getByRole('alert')).toHaveText('Email or password is incorrect.');
+  await expect(page.locator('p[role="alert"]')).toHaveText('Email or password is incorrect.');
   expect((await page.context().cookies(origin))
     .some((cookie) => cookie.name === 'ethcryptohub_session')).toBe(false);
 });
@@ -261,7 +285,7 @@ test('admin: invalid password is rejected without creating a session', async ({ 
 test('admin: authorized account reaches the Admin dashboard and API', async ({ page }) => {
   await withSignedInPage(page, 'admin', async (origin) => {
     await page.goto(`${origin}/admin`, { waitUntil: 'domcontentloaded' });
-    await expect(page.getByRole('heading', { name: 'Command center.' })).toBeVisible();
+    await expect(page.getByRole('heading', { name: /Admin Command Center/i })).toBeVisible();
     expect((await page.request.get(`${origin}/api/admin/users`)).status()).toBe(200);
   });
 });
@@ -276,9 +300,13 @@ test('user: login persists across refresh and logout invalidates the session', a
     expect(sessionCookie?.secure).toBe(true);
 
     await page.reload();
-    await expect(page.getByRole('heading', { name: 'Market intelligence dashboard.' })).toBeVisible();
+    await expect(page.getByRole('heading', { name: /Trading Dashboard/i })).toBeVisible();
     expect((await getIdentity(page, origin)).role).toBe('user');
 
+    const accountButton = page.getByLabel('Account');
+    if (await accountButton.isVisible()) {
+      await accountButton.click();
+    }
     const logoutButton = page.getByRole('button', { name: 'Log out' }).first();
     await expect(logoutButton).toBeVisible();
     await logoutButton.click();
