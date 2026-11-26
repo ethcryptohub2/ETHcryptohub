@@ -3,7 +3,7 @@
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { isWithinClientQuietHours, playSignalAlarm } from '../notification-audio';
+import { isWithinClientQuietHours, playAlarm } from '../notification-audio';
 import { SignalCountdown } from '../countdown';
 
 type NotificationItem = {
@@ -129,7 +129,7 @@ export function NotificationsCenter() {
             )
           ) {
             try {
-              void playSignalAlarm(prefs.alarm_volume)
+              void playAlarm('signal', { volume: prefs.alarm_volume })
                 .catch((reason: unknown) => setError(reason instanceof Error ? reason.message : 'Signal sound could not be played.'));
             } catch (reason) {
               setError(reason instanceof Error ? reason.message : 'Signal sound could not be played.');

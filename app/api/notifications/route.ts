@@ -15,7 +15,8 @@ export async function GET() {
       query(
         `SELECT n.id, n.read_at, n.created_at, e.event_type, e.payload, s.id AS signal_id,
                 s.symbol, s.timeframe, s.side, s.setup_score, s.entry_price, s.initial_stop,
-                s.tp1, s.tp2, s.tp3, s.generated_at, s.expires_at, s.status
+                s.tp1, s.tp2, s.tp3, s.generated_at, s.expires_at, s.status, s.strategy_name,
+                s.scanner_type, s.repeated_scan_count
            FROM public.user_signal_notifications n
            JOIN public.signal_events e ON e.id = n.event_id
            JOIN public.market_signals s ON s.id = n.signal_id
@@ -50,7 +51,7 @@ export async function PATCH(request: NextRequest) {
     let body: unknown;
     try { body = await request.json(); } catch { return NextResponse.json({ error: 'Invalid notification update.' }, { status: 400 }); }
     const parsedBody = z.object({
-      action: z.enum(['mark_read', 'mark_all_read']),
+      action: z.enum(['mark_read', 'mark_all_read', 'clear_all']),
       id: z.coerce.number().int().positive().optional(),
     }).strict().safeParse(body);
     if (!parsedBody.success || (parsedBody.data.action === 'mark_read' && !parsedBody.data.id)) {
@@ -59,6 +60,11 @@ export async function PATCH(request: NextRequest) {
     if (parsedBody.data.action === 'mark_all_read') {
       await query(
         'UPDATE public.user_signal_notifications SET read_at = NOW() WHERE user_id = $1 AND read_at IS NULL',
+        [user.id],
+      );
+    } else if (parsedBody.data.action === 'clear_all') {
+      await query(
+        'DELETE FROM public.user_signal_notifications WHERE user_id = $1',
         [user.id],
       );
     } else {
@@ -71,6 +77,20 @@ export async function PATCH(request: NextRequest) {
   } catch (error) {
     return NextResponse.json(
       { error: error instanceof AuthError || error instanceof SubscriptionError ? error.message : 'Notification update failed.' },
+      { status: error instanceof AuthError || error instanceof SubscriptionError ? error.status : 503 },
+    );
+  }
+}
+
+export async function DELETE(request: NextRequest) {
+  if (!validCsrf(request)) return NextResponse.json({ error: 'Refresh and retry.' }, { status: 403 });
+  try {
+    const { user } = await requirePremiumUser();
+    await query('DELETE FROM public.user_signal_notifications WHERE user_id = $1', [user.id]);
+    return NextResponse.json({ data: { cleared: true } }, { headers: { 'Cache-Control': 'no-store' } });
+  } catch (error) {
+    return NextResponse.json(
+      { error: error instanceof AuthError || error instanceof SubscriptionError ? error.message : 'Failed to clear notifications.' },
       { status: error instanceof AuthError || error instanceof SubscriptionError ? error.status : 503 },
     );
   }

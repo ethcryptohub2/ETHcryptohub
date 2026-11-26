@@ -807,8 +807,9 @@ function StandardSignals({
                         ? 'table-badge-diag-warning'
                         : 'table-badge-diag-muted';
 
+                  const isNew = isReady && signal && (signalNow > 0 ? (signalNow - Date.parse(signal.generatedAt) < 15 * 60 * 1000) : true);
                   const rowClass = isReady
-                    ? (isLong ? 'is-ready-row' : 'is-short-row')
+                    ? `${isLong ? 'is-ready-row' : 'is-short-row'}${isNew ? ' is-new-signal-highlight' : ''}`
                     : 'is-wait-row';
 
                   const riskRewardRatio = item.setup
@@ -828,6 +829,22 @@ function StandardSignals({
                               <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
                                 <strong style={{ fontSize: 12 }}>{item.symbol.replace(/USDT$/, '')}</strong>
                                 <span className="muted" style={{ fontSize: 10 }}>/USDT</span>
+                                {isNew && (
+                                  <span
+                                    className="table-badge"
+                                    style={{
+                                      background: '#6366f1',
+                                      color: '#fff',
+                                      fontSize: 9,
+                                      fontWeight: 700,
+                                      padding: '1px 5px',
+                                      borderRadius: 4,
+                                      letterSpacing: 0.5,
+                                    }}
+                                  >
+                                    NEW
+                                  </span>
+                                )}
                               </div>
                               <div style={{ fontSize: 11, color: priceColor, marginTop: 1 }}>
                                 {currentPrice ? `$${formatPrice(currentPrice)}` : '—'}
