@@ -12,10 +12,25 @@ function formatPrice(val: number): string {
 }
 
 export function LiveMarketTickerBar({ className = '' }: { className?: string }) {
-  const { tickers, status, lastPingTime } = useLiveMarketFeed(CORE_SYMBOLS);
+  const { tickers, status, lastPingTime, error } = useLiveMarketFeed(CORE_SYMBOLS);
 
   const isConnected = status === 'CONNECTED_WS';
-  const isPolling = status === 'POLLING_REST';
+  const isWarning = status === 'POLLING_REST' || status === 'STALE' || status === 'RECONNECTING';
+  const isDisconnected = status === 'DISCONNECTED';
+
+  const statusColor = isConnected ? '#10b981' : isWarning ? '#f59e0b' : isDisconnected ? '#ef4444' : '#9ca3af';
+  const statusLabel =
+    status === 'CONNECTED_WS'
+      ? 'LIVE FEED: BINANCE USDⓈ-M WS'
+      : status === 'POLLING_REST'
+        ? 'LIVE FEED: REST POLLING'
+        : status === 'STALE'
+          ? 'FEED: STALE'
+          : status === 'RECONNECTING'
+            ? 'FEED: RECONNECTING…'
+            : status === 'DISCONNECTED'
+              ? 'FEED: DISCONNECTED'
+              : 'FEED: CONNECTING…';
 
   return (
     <aside
@@ -43,7 +58,7 @@ export function LiveMarketTickerBar({ className = '' }: { className?: string }) 
             alignItems: 'center',
             gap: 6,
             fontWeight: 700,
-            color: isConnected ? '#10b981' : isPolling ? '#f59e0b' : '#9ca3af',
+            color: statusColor,
             fontSize: 11,
             letterSpacing: '0.04em',
           }}
@@ -53,17 +68,20 @@ export function LiveMarketTickerBar({ className = '' }: { className?: string }) 
               width: 8,
               height: 8,
               borderRadius: '50%',
-              background: isConnected ? '#10b981' : isPolling ? '#f59e0b' : '#9ca3af',
+              background: statusColor,
               boxShadow: isConnected ? '0 0 8px #10b981' : 'none',
               animation: isConnected ? 'pulse-glow 2s infinite' : 'none',
             }}
           />
-          {isConnected ? 'LIVE FEED: BINANCE USDⓈ-M WS' : isPolling ? 'LIVE FEED: REST POLLING' : 'FEED: CONNECTING…'}
+          {statusLabel}
         </span>
         {lastPingTime && (
           <span className="muted mono" style={{ fontSize: 10 }} suppressHydrationWarning>
             {new Date(lastPingTime).toLocaleTimeString('en-US')}
           </span>
+        )}
+        {error && isDisconnected && (
+          <span style={{ fontSize: 10, color: '#ef4444' }}>{error}</span>
         )}
       </div>
 
@@ -101,11 +119,11 @@ export function LiveMarketTickerBar({ className = '' }: { className?: string }) 
                 className="mono"
                 style={{
                   fontWeight: 600,
-                  color: tickColor ?? 'var(--text, #ffffff)',
+                  color: tickColor ?? 'var(--text-primary, #0f172a)',
                   transition: 'color 0.2s ease',
                 }}
               >
-                {item ? formatPrice(item.price) : '—'}
+                {item ? `$${formatPrice(item.price)}` : '—'}
               </span>
               {item && (
                 <span

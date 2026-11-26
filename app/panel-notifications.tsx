@@ -5,14 +5,13 @@ import { useEffect, useState, useRef } from 'react';
 import {
   playAlarm,
   stopAlarm,
-  unlockAudio,
-  isAudioUnlocked,
-  getAlarmVolume,
-  setAlarmVolume,
-  getAlarmDuration,
-  setAlarmDuration,
   type AlarmDuration,
 } from './notification-audio';
+import {
+  loadStoredAlarmPreferences,
+  useAlarmPreferences,
+  type UnifiedAlarmPreferences,
+} from './use-alarm-preferences';
 
 export type NotificationItem = {
   id: string | number;
@@ -42,63 +41,7 @@ export type NotificationItem = {
   } | null;
 };
 
-export type NotificationPreferences = {
-  master_enabled: boolean;
-  sound_enabled: boolean;
-  push_enabled: boolean;
-  standard_strategy_enabled: boolean;
-  high_risk_strategy_enabled: boolean;
-  repeated_trade_enabled: boolean;
-  trade_execution_enabled: boolean;
-  take_profit_enabled: boolean;
-  stop_loss_enabled: boolean;
-  exchange_failure_enabled: boolean;
-  volume: number; // 0 to 1
-  duration: AlarmDuration; // 3, 5, 10, 'full'
-};
-
-const PREFERENCES_STORAGE_KEY = 'ethcryptohub-notification-preferences';
-
-const DEFAULT_PREFERENCES: NotificationPreferences = {
-  master_enabled: true,
-  sound_enabled: true,
-  push_enabled: false,
-  standard_strategy_enabled: true,
-  high_risk_strategy_enabled: true,
-  repeated_trade_enabled: true,
-  trade_execution_enabled: true,
-  take_profit_enabled: true,
-  stop_loss_enabled: true,
-  exchange_failure_enabled: true,
-  volume: 0.8,
-  duration: 5,
-};
-
-function loadStoredPreferences(): NotificationPreferences {
-  if (typeof window === 'undefined') return DEFAULT_PREFERENCES;
-  try {
-    const raw = localStorage.getItem(PREFERENCES_STORAGE_KEY);
-    if (raw) {
-      const parsed = JSON.parse(raw);
-      return {
-        ...DEFAULT_PREFERENCES,
-        ...parsed,
-        volume: getAlarmVolume(),
-        duration: getAlarmDuration(),
-      };
-    }
-  } catch {}
-  return DEFAULT_PREFERENCES;
-}
-
-function saveStoredPreferences(prefs: NotificationPreferences) {
-  if (typeof window === 'undefined') return;
-  try {
-    localStorage.setItem(PREFERENCES_STORAGE_KEY, JSON.stringify(prefs));
-    setAlarmVolume(prefs.volume);
-    setAlarmDuration(prefs.duration);
-  } catch {}
-}
+export type NotificationPreferences = UnifiedAlarmPreferences;
 
 async function getCsrfToken() {
   const response = await fetch('/api/csrf', { cache: 'no-store' });
@@ -182,13 +125,16 @@ export function PanelNotifications({
   const [unreadCount, setUnreadCount] = useState(0);
   const [loading, setLoading] = useState(access === 'available');
   const [error, setError] = useState('');
-  const [audioUnlocked, setAudioUnlocked] = useState(() => (typeof window !== 'undefined' ? isAudioUnlocked() : false));
   const [soundPlaying, setSoundPlaying] = useState(false);
   const [confirmClear, setConfirmClear] = useState(false);
   const [busyAction, setBusyAction] = useState(false);
-  const [preferences, setPreferences] = useState<NotificationPreferences>(() =>
-    typeof window !== 'undefined' ? loadStoredPreferences() : DEFAULT_PREFERENCES,
-  );
+  const {
+    preferences,
+    audioUnlocked,
+    saveError,
+    updatePreferences,
+    unlockAudio: handleUnlockAudio,
+  } = useAlarmPreferences();
   const sseRef = useRef<EventSource | null>(null);
 
   useEffect(() => {
@@ -230,7 +176,7 @@ export function PanelNotifications({
           });
 
           // Play alarm if enabled
-          const currentPrefs = loadStoredPreferences();
+          const currentPrefs = loadStoredAlarmPreferences();
           if (currentPrefs.master_enabled && currentPrefs.sound_enabled) {
             const badge = eventBadge(item);
             if (badge.isExecution && currentPrefs.trade_execution_enabled) {
@@ -263,11 +209,6 @@ export function PanelNotifications({
       active = false;
     };
   }, [access, onUnreadCount]);
-
-  const handleUnlockAudio = async () => {
-    const ok = await unlockAudio();
-    if (ok) setAudioUnlocked(true);
-  };
 
   const handleTestSignalSound = async () => {
     await handleUnlockAudio();
@@ -345,42 +286,16 @@ export function PanelNotifications({
   };
 
   const updatePreference = <K extends keyof NotificationPreferences>(key: K, val: NotificationPreferences[K]) => {
-    const next = { ...preferences, [key]: val };
-    setPreferences(next);
-    saveStoredPreferences(next);
-
-    // Sync with backend preferences API
-    void getCsrfToken()
-      .then((csrf) =>
-        fetch('/api/notifications/preferences', {
-          method: 'PUT',
-          headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrf },
-          body: JSON.stringify({
-            push_enabled: next.push_enabled,
-            sound_enabled: next.sound_enabled,
-            long_enabled: true,
-            short_enabled: true,
-            high_conviction_enabled: true,
-            tp1_enabled: next.take_profit_enabled,
-            tp2_enabled: next.take_profit_enabled,
-            tp3_enabled: next.take_profit_enabled,
-            stop_loss_enabled: next.stop_loss_enabled,
-            expiry_enabled: true,
-            minimum_setup_score: 60,
-            alarm_volume: next.volume,
-            quiet_hours_enabled: false,
-            quiet_hours_start: '22:00',
-            quiet_hours_end: '07:00',
-            quiet_hours_timezone: 'UTC',
-            do_not_disturb: !next.master_enabled,
-          }),
-        }),
-      )
-      .catch(() => {});
+    void updatePreferences({ [key]: val });
   };
 
   return (
     <div className="notification-center-dropdown" style={{ width: '100%', minWidth: 320, maxWidth: 440 }}>
+      {saveError && (
+        <div style={{ padding: '6px 10px', background: 'rgba(239, 68, 68, 0.12)', color: '#ef4444', borderRadius: 6, fontSize: 11, marginBottom: 8 }}>
+          {saveError}
+        </div>
+      )}
       {/* Header bar */}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12, paddingBottom: 8, borderBottom: '1px solid var(--surface-border)' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>

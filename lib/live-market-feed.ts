@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useRef, useState, useCallback, useMemo } from 'react';
+import { useEffect, useRef, useState, useCallback } from 'react';
 
 export interface LiveTickerItem {
   symbol: string;
@@ -13,9 +13,17 @@ export interface LiveTickerItem {
   direction: 'UP' | 'DOWN' | 'SAME';
 }
 
+export type LiveFeedStatus =
+  | 'CONNECTED_WS'
+  | 'POLLING_REST'
+  | 'CONNECTING'
+  | 'RECONNECTING'
+  | 'STALE'
+  | 'DISCONNECTED';
+
 export interface LiveMarketFeedState {
   tickers: Record<string, LiveTickerItem>;
-  status: 'CONNECTED_WS' | 'POLLING_REST' | 'CONNECTING' | 'OFFLINE';
+  status: LiveFeedStatus;
   lastPingTime: number | null;
   messageCount: number;
   error: string | null;
@@ -23,7 +31,8 @@ export interface LiveMarketFeedState {
 
 const WS_URL = 'wss://fstream.binance.com/ws/!miniTicker@arr';
 const REST_URL = 'https://fapi.binance.com/fapi/v1/ticker/24hr';
-const REST_FALLBACK_INTERVAL_MS = 5_000;
+const REST_FALLBACK_INTERVAL_MS = 30_000;
+const STALE_THRESHOLD_MS = 15_000;
 
 export function useLiveMarketFeed(filterSymbols?: string[]) {
   const [feedState, setFeedState] = useState<LiveMarketFeedState>({
@@ -39,26 +48,31 @@ export function useLiveMarketFeed(filterSymbols?: string[]) {
   const restIntervalRef = useRef<number | null>(null);
   const prevPricesRef = useRef<Record<string, number>>({});
   const isTabVisibleRef = useRef<boolean>(true);
+  const reconnectAttemptRef = useRef<number>(0);
+  const lastPingRef = useRef<number | null>(null);
+  const restCooldownUntilRef = useRef<number>(0);
 
-  const filterSet = useMemo(
-    () => (filterSymbols ? new Set(filterSymbols.map((s) => s.toUpperCase())) : null),
-    [filterSymbols],
-  );
+  const filterKey = filterSymbols ? [...filterSymbols].map((s) => s.toUpperCase()).sort().join(',') : '';
+  const filterSetRef = useRef<Set<string> | null>(null);
+  useEffect(() => {
+    filterSetRef.current = filterKey ? new Set(filterKey.split(',')) : null;
+  }, [filterKey]);
 
   const updateTickers = useCallback((rawTickers: Array<{
-    s: string; // symbol
-    c: string; // close / current price
-    h?: string; // high
-    l?: string; // low
-    q?: string; // quote volume
-    o?: string; // open
-  }>) => {
+    s: string;
+    c: string;
+    h?: string;
+    l?: string;
+    q?: string;
+    o?: string;
+  }>, sourceStatus: LiveFeedStatus) => {
     const now = Date.now();
     const newItems: Record<string, LiveTickerItem> = {};
+    const activeFilter = filterSetRef.current;
 
     for (const item of rawTickers) {
       const sym = item.s;
-      if (filterSet && !filterSet.has(sym)) continue;
+      if (activeFilter && !activeFilter.has(sym)) continue;
 
       const price = Number.parseFloat(item.c);
       if (!Number.isFinite(price) || price <= 0) continue;
@@ -83,20 +97,36 @@ export function useLiveMarketFeed(filterSymbols?: string[]) {
     }
 
     if (Object.keys(newItems).length > 0) {
+      lastPingRef.current = now;
       setFeedState((prev) => ({
         ...prev,
+        status: sourceStatus,
         tickers: { ...prev.tickers, ...newItems },
         lastPingTime: now,
         messageCount: prev.messageCount + 1,
         error: null,
       }));
     }
-  }, [filterSet]);
+  }, []);
 
   const pollRestFallback = useCallback(async () => {
     if (!isTabVisibleRef.current) return;
+    const now = Date.now();
+    if (now < restCooldownUntilRef.current) return;
+
     try {
       const response = await fetch(REST_URL, { cache: 'no-store' });
+      if (response.status === 418 || response.status === 429) {
+        const retryHeader = Number(response.headers.get('retry-after'));
+        const cooldownMs = Number.isFinite(retryHeader) && retryHeader > 0 ? retryHeader * 1000 : 120_000;
+        restCooldownUntilRef.current = Date.now() + cooldownMs;
+        setFeedState((prev) => ({
+          ...prev,
+          status: 'DISCONNECTED',
+          error: `Binance REST cooldown (${response.status}).`,
+        }));
+        return;
+      }
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
       const data = (await response.json()) as Array<{
         symbol: string;
@@ -117,74 +147,87 @@ export function useLiveMarketFeed(filterSymbols?: string[]) {
             q: d.quoteVolume,
             o: d.openPrice,
           })),
+          'POLLING_REST',
         );
-        setFeedState((prev) => ({ ...prev, status: 'POLLING_REST' }));
       }
     } catch (err) {
       setFeedState((prev) => ({
         ...prev,
-        status: 'OFFLINE',
+        status: 'DISCONNECTED',
         error: err instanceof Error ? err.message : 'REST polling failed',
       }));
     }
   }, [updateTickers]);
 
+  const stopRestFallback = useCallback(() => {
+    if (restIntervalRef.current) {
+      window.clearInterval(restIntervalRef.current);
+      restIntervalRef.current = null;
+    }
+  }, []);
+
+  const startRestFallback = useCallback(() => {
+    if (!restIntervalRef.current) {
+      void pollRestFallback();
+      restIntervalRef.current = window.setInterval(pollRestFallback, REST_FALLBACK_INTERVAL_MS);
+    }
+  }, [pollRestFallback]);
+
   const connectWs = useCallback(() => {
     if (typeof window === 'undefined') return;
     if (wsRef.current) {
+      wsRef.current.onclose = null;
+      wsRef.current.onerror = null;
       wsRef.current.close();
       wsRef.current = null;
     }
 
     try {
-      setFeedState((prev) => ({ ...prev, status: 'CONNECTING' }));
+      setFeedState((prev) => ({
+        ...prev,
+        status: reconnectAttemptRef.current > 0 ? 'RECONNECTING' : 'CONNECTING',
+      }));
       const ws = new WebSocket(WS_URL);
       wsRef.current = ws;
 
       ws.onopen = () => {
-        setFeedState((prev) => ({ ...prev, status: 'CONNECTED_WS', error: null }));
-        if (restIntervalRef.current) {
-          window.clearInterval(restIntervalRef.current);
-          restIntervalRef.current = null;
-        }
+        reconnectAttemptRef.current = 0;
+        // Stay CONNECTING until first genuine ticker payload arrives
+        stopRestFallback();
       };
 
       ws.onmessage = (event) => {
         try {
           const parsed = JSON.parse(event.data);
           if (Array.isArray(parsed)) {
-            updateTickers(parsed);
+            updateTickers(parsed, 'CONNECTED_WS');
           }
-        } catch {}
+        } catch {
+          // ignore malformed ws frame
+        }
       };
 
       ws.onerror = () => {
-        setFeedState((prev) => ({ ...prev, status: 'POLLING_REST' }));
-        if (!restIntervalRef.current) {
-          void pollRestFallback();
-          restIntervalRef.current = window.setInterval(pollRestFallback, REST_FALLBACK_INTERVAL_MS);
-        }
+        startRestFallback();
       };
 
       ws.onclose = () => {
         wsRef.current = null;
         if (isTabVisibleRef.current) {
-          // Schedule reconnect in 3s
-          if (!restIntervalRef.current) {
-            void pollRestFallback();
-            restIntervalRef.current = window.setInterval(pollRestFallback, REST_FALLBACK_INTERVAL_MS);
-          }
-          reconnectTimeoutRef.current = window.setTimeout(connectWs, 3_000);
+          startRestFallback();
+          reconnectAttemptRef.current += 1;
+          const delayMs = Math.min(60_000, 3_000 * 2 ** Math.min(4, reconnectAttemptRef.current - 1));
+          setFeedState((prev) => ({ ...prev, status: 'RECONNECTING' }));
+          if (reconnectTimeoutRef.current) window.clearTimeout(reconnectTimeoutRef.current);
+          reconnectTimeoutRef.current = window.setTimeout(connectWs, delayMs);
+        } else {
+          setFeedState((prev) => ({ ...prev, status: 'DISCONNECTED' }));
         }
       };
     } catch {
-      setFeedState((prev) => ({ ...prev, status: 'POLLING_REST' }));
-      if (!restIntervalRef.current) {
-        void pollRestFallback();
-        restIntervalRef.current = window.setInterval(pollRestFallback, REST_FALLBACK_INTERVAL_MS);
-      }
+      startRestFallback();
     }
-  }, [pollRestFallback, updateTickers]);
+  }, [startRestFallback, stopRestFallback, updateTickers]);
 
   useEffect(() => {
     const handleVisibility = () => {
@@ -195,33 +238,41 @@ export function useLiveMarketFeed(filterSymbols?: string[]) {
         }
       } else {
         if (wsRef.current) {
+          wsRef.current.onclose = null;
           wsRef.current.close();
           wsRef.current = null;
         }
-        if (restIntervalRef.current) {
-          window.clearInterval(restIntervalRef.current);
-          restIntervalRef.current = null;
-        }
+        stopRestFallback();
       }
     };
 
     document.addEventListener('visibilitychange', handleVisibility);
-    connectWs();
+    const initTimer = window.setTimeout(connectWs, 0);
+
+    // Heartbeat & stale-data detection every 5s
+    const staleTimer = window.setInterval(() => {
+      if (!isTabVisibleRef.current) return;
+      const last = lastPingRef.current;
+      if (last && Date.now() - last > STALE_THRESHOLD_MS) {
+        setFeedState((prev) => (prev.status === 'CONNECTED_WS' ? { ...prev, status: 'STALE' } : prev));
+      }
+    }, 5_000);
 
     return () => {
+      window.clearTimeout(initTimer);
+      window.clearInterval(staleTimer);
       document.removeEventListener('visibilitychange', handleVisibility);
       if (wsRef.current) {
+        wsRef.current.onclose = null;
         wsRef.current.close();
         wsRef.current = null;
       }
       if (reconnectTimeoutRef.current) {
         window.clearTimeout(reconnectTimeoutRef.current);
       }
-      if (restIntervalRef.current) {
-        window.clearInterval(restIntervalRef.current);
-      }
+      stopRestFallback();
     };
-  }, [connectWs]);
+  }, [connectWs, stopRestFallback]);
 
   return feedState;
 }

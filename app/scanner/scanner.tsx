@@ -17,6 +17,12 @@ import { ScannerRadar } from '../../components/ui/scanner-radar';
 import { Pagination } from '../../components/pagination';
 import { LiveMarketTickerBar } from '../../components/live-market-ticker';
 import { useLiveMarketFeed } from '../../lib/live-market-feed';
+import { useAlarmPreferences } from '../use-alarm-preferences';
+
+const DEFAULT_LIVE_SYMBOLS = ['BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'BNBUSDT'];
+const AUTO_SCAN_INTERVAL_SECONDS = 60;
+const SCANNER_REFRESH_STORAGE_KEY = 'smartexit-scanner-refresh-minutes';
+const SCANNER_AUTOSCAN_STORAGE_KEY = 'smartexit-scanner-autoscan';
 
 type SignalMetadata = {
   signals: Record<string, {
@@ -35,7 +41,21 @@ function formatPrice(value: number): string {
 
 export function Scanner({ isAdmin, initialTab, alphaSnapshot }: { isAdmin: boolean; initialTab: ScannerTab; alphaSnapshot: AlphaSnapshot }) {
   const [tab, setTab] = useState<ScannerTab>(initialTab);
-  const [refreshMinutes, setRefreshMinutes] = useState<RefreshMinutes>(2);
+  const [refreshMinutes, setRefreshMinutesState] = useState<RefreshMinutes>(() => {
+    if (typeof window === 'undefined') return 2;
+    const saved = Number(window.localStorage.getItem(SCANNER_REFRESH_STORAGE_KEY));
+    return saved === 1 || saved === 2 || saved === 5 ? saved : 2;
+  });
+  const setRefreshMinutes = useCallback((minutes: RefreshMinutes) => {
+    setRefreshMinutesState(minutes);
+    if (typeof window !== 'undefined') {
+      try {
+        window.localStorage.setItem(SCANNER_REFRESH_STORAGE_KEY, String(minutes));
+      } catch {
+        // ignore
+      }
+    }
+  }, []);
   const [watchlist, setWatchlist] = useState<string[]>([]);
   const [savedAlpha, setSavedAlpha] = useState(alphaSnapshot);
   const changeTab = useCallback((nextTab: ScannerTab) => {
@@ -101,7 +121,13 @@ function StandardSignals({
   const [loading, setLoading] = useState(false);
   const [lastCheckedAt, setLastCheckedAt] = useState<number | null>(null);
   const [freshnessNow, setFreshnessNow] = useState(0);
-  const [soundEnabled, setSoundEnabled] = useState(true);
+  const {
+    preferences: alarmPrefs,
+    audioUnlocked: alarmAudioUnlocked,
+    saveError: alarmSaveError,
+    updatePreferences: updateAlarmPrefs,
+    unlockAudio: unlockAlarmAudio,
+  } = useAlarmPreferences();
   const requestInFlight = useRef<AbortController | null>(null);
   const [timeframe, setTimeframe] = useState<ScannerCandidate['timeframe']>('15m');
   const [selection, setSelection] = useState<{ coverage: ScannerCoverage; symbol: string; rank: ScannerRank | null; page: number }>({
@@ -110,8 +136,23 @@ function StandardSignals({
   const [symbolInput, setSymbolInput] = useState('');
   const [filterError, setFilterError] = useState('');
   const [isScanning, setIsScanning] = useState(false);
+  const [circuitCooldownUntil, setCircuitCooldownUntil] = useState<number | null>(null);
+  const [circuitCooldownReason, setCircuitCooldownReason] = useState<string | null>(null);
+  const [scanDiagnostics, setScanDiagnostics] = useState<{
+    scannedCount: number;
+    successfulCount: number;
+    failedCount: number;
+    skippedCount: number;
+    batchIndex: number;
+    totalBatches: number;
+    scanDurationMs: number | null;
+    cycleId: string;
+  } | null>(null);
   const [scanResult, setScanResult] = useState<{
     scannedCount: number;
+    successfulCount?: number;
+    failedCount?: number;
+    skippedCount?: number;
     qualifiedCount: number;
     newSignals: number;
     cycleId: string;
@@ -122,8 +163,22 @@ function StandardSignals({
     scannedAt: string;
   } | null>(null);
   const [scanNotice, setScanNotice] = useState<string | null>(null);
-  const [autoScanEnabled, setAutoScanEnabled] = useState(true);
-  const [autoScanCountdown, setAutoScanCountdown] = useState(15);
+  const [autoScanEnabled, setAutoScanEnabledState] = useState(() => {
+    if (typeof window === 'undefined') return true;
+    const saved = window.localStorage.getItem(SCANNER_AUTOSCAN_STORAGE_KEY);
+    return saved === null ? true : saved === 'true';
+  });
+  const setAutoScanEnabled = useCallback((next: boolean) => {
+    setAutoScanEnabledState(next);
+    if (typeof window !== 'undefined') {
+      try {
+        window.localStorage.setItem(SCANNER_AUTOSCAN_STORAGE_KEY, String(next));
+      } catch {
+        // ignore
+      }
+    }
+  }, []);
+  const [autoScanCountdown, setAutoScanCountdown] = useState(AUTO_SCAN_INTERVAL_SECONDS);
   const [hasDemoCredentials, setHasDemoCredentials] = useState(false);
 
   useEffect(() => {
@@ -142,7 +197,11 @@ function StandardSignals({
     };
   }, []);
   const candidateSymbols = useMemo(() => (savedData?.candidates ?? []).map((c) => c.symbol), [savedData]);
-  const liveMarket = useLiveMarketFeed(candidateSymbols.length > 0 ? candidateSymbols : ['BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'BNBUSDT']);
+  const liveSymbols = useMemo(
+    () => (candidateSymbols.length > 0 ? candidateSymbols : DEFAULT_LIVE_SYMBOLS),
+    [candidateSymbols],
+  );
+  const liveMarket = useLiveMarketFeed(liveSymbols);
   const { coverage, symbol, rank, page } = selection;
   const data = savedData?.timeframe === timeframe && savedData.selection.coverage === coverage &&
     savedData.selection.symbol === symbol && savedData.selection.rank === rank && savedData.selection.page === page ? savedData : null;
@@ -179,6 +238,21 @@ function StandardSignals({
         error?: string;
         signalMetadata?: SignalMetadata;
         notificationWarning?: string;
+        diagnostics?: {
+          scannedCount: number;
+          successfulCount: number;
+          failedCount: number;
+          skippedCount: number;
+          batchIndex: number;
+          totalBatches: number;
+          scanDurationMs: number | null;
+          cycleId: string;
+        };
+        circuitBreaker?: {
+          state: string;
+          cooldownUntil: number | null;
+          reason: string | null;
+        };
       } | null = null;
       try {
         body = JSON.parse(rawText);
@@ -201,6 +275,18 @@ function StandardSignals({
       setSignalMetadata(body.signalMetadata ? { ...body.signalMetadata, serverNow } : null);
       setSignalClock({ serverNow, receivedAt });
       setNotificationWarning(body.notificationWarning ?? '');
+      if (body.diagnostics) {
+        setScanDiagnostics(body.diagnostics);
+      }
+      if (body.circuitBreaker) {
+        if (body.circuitBreaker.state === 'OPEN' && body.circuitBreaker.cooldownUntil) {
+          setCircuitCooldownUntil(body.circuitBreaker.cooldownUntil);
+          setCircuitCooldownReason(body.circuitBreaker.reason);
+        } else {
+          setCircuitCooldownUntil(null);
+          setCircuitCooldownReason(null);
+        }
+      }
       setLastCheckedAt(Date.now());
       setFreshnessNow(receivedAt);
     } catch (reason) {
@@ -219,6 +305,11 @@ function StandardSignals({
 
   const triggerScan = useCallback(async () => {
     if (isScanning) return;
+    if (circuitCooldownUntil && Date.now() < circuitCooldownUntil) {
+      const resumeTime = new Date(circuitCooldownUntil).toLocaleTimeString('en-US');
+      setError(`Binance API cooldown active. Resuming at ${resumeTime}.`);
+      return;
+    }
     setIsScanning(true);
     setError('');
     setScanNotice('Executing live on-demand algorithmic market scan across Binance USDⓈ-M perpetual contracts…');
@@ -240,11 +331,18 @@ function StandardSignals({
       let body: {
         ok?: boolean;
         error?: string;
+        cooldown?: boolean;
+        cooldownUntil?: number;
+        circuitBreaker?: { state: string; cooldownUntil: number | null; reason: string | null };
         data?: {
           scannedCount: number;
+          successfulCount?: number;
+          failedCount?: number;
+          skippedCount?: number;
           qualifiedCount: number;
           newSignals: number;
           deduplicatedSignals?: number;
+          enabledCoins?: number;
           cycleId: string;
           batchIndex: number;
           totalBatches: number;
@@ -264,14 +362,21 @@ function StandardSignals({
               : `Scan request failed (HTTP ${response.status}): ${rawText.slice(0, 100)}`
         );
       }
+      if (body?.cooldownUntil) {
+        setCircuitCooldownUntil(body.cooldownUntil);
+        setCircuitCooldownReason(body.error ?? null);
+      }
       if (!response.ok || !body?.ok || !body?.data) {
         throw new Error(body?.error ?? `Scan failed (${response.status})`);
       }
+      setCircuitCooldownUntil(null);
+      setCircuitCooldownReason(null);
       setScanResult(body.data);
       const dedupSuffix = (body.data.deduplicatedSignals ?? 0) > 0
         ? ` (${body.data.newSignals} new + ${body.data.deduplicatedSignals} deduplicated)`
         : ` (${body.data.newSignals} new signals)`;
-      setScanNotice(`Scan completed: ${body.data.scannedCount} pairs analyzed in ${body.data.durationMs}ms. ${body.data.qualifiedCount} qualified setups${dedupSuffix}. Batch ${body.data.batchIndex}/${body.data.totalBatches} (${body.data.cycleId}) · Complete 522-coin universe rotates continuously.`);
+      const totalPairs = body.data.enabledCoins ?? body.data.scannedCount;
+      setScanNotice(`Scan completed: ${body.data.scannedCount} pairs analyzed (${body.data.successfulCount ?? body.data.scannedCount} OK, ${body.data.failedCount ?? 0} failed, ${body.data.skippedCount ?? 0} skipped) in ${body.data.durationMs}ms. ${body.data.qualifiedCount} qualified setups${dedupSuffix}. Batch ${body.data.batchIndex}/${body.data.totalBatches} (${body.data.cycleId}) · ${totalPairs}-coin universe rotates continuously.`);
       await load();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Scan request failed.');
@@ -279,7 +384,7 @@ function StandardSignals({
     } finally {
       setIsScanning(false);
     }
-  }, [timeframe, isScanning, load]);
+  }, [timeframe, isScanning, load, circuitCooldownUntil]);
 
   useEffect(() => {
     if (!autoScanEnabled) {
@@ -290,18 +395,21 @@ function StandardSignals({
       if (document.visibilityState !== 'visible' || isScanning || loading) {
         return;
       }
+      if (circuitCooldownUntil && Date.now() < circuitCooldownUntil) {
+        return;
+      }
 
       setAutoScanCountdown((prev) => {
         if (prev <= 1) {
           void triggerScan();
-          return 20;
+          return AUTO_SCAN_INTERVAL_SECONDS;
         }
         return prev - 1;
       });
     }, 1000);
 
     return () => window.clearInterval(timer);
-  }, [autoScanEnabled, isScanning, loading, triggerScan]);
+  }, [autoScanEnabled, isScanning, loading, triggerScan, circuitCooldownUntil]);
 
   useEffect(() => {
     const refreshWhenVisible = () => {
@@ -375,12 +483,14 @@ function StandardSignals({
 
   const hiddenCount = Math.max(0, candidates.length - visibleCandidates.length);
   const pageCount = data ? Math.max(1, Math.ceil(data.matchingCount / data.selection.limit)) : 1;
-  const batchDisplay = scanResult
-    ? `Batch ${scanResult.batchIndex}/${scanResult.totalBatches}`
-    : `Batch 1/${Math.max(1, Math.ceil((data?.eligibleCount ?? 522) / 35))}`;
-  const latencyDisplay = scanResult?.durationMs
-    ? `${scanResult.durationMs}ms`
-    : loading ? 'Syncing…' : '< 1.5s';
+  const activeBatchIndex = scanResult?.batchIndex ?? scanDiagnostics?.batchIndex ?? 1;
+  const activeTotalBatches = scanResult?.totalBatches ?? scanDiagnostics?.totalBatches ?? (data?.eligibleCount ? Math.max(1, Math.ceil(data.eligibleCount / 35)) : 1);
+  const batchDisplay = `Batch ${activeBatchIndex}/${activeTotalBatches}`;
+  const activeDurationMs = scanResult?.durationMs ?? scanDiagnostics?.scanDurationMs ?? null;
+  const latencyDisplay = activeDurationMs !== null
+    ? `${activeDurationMs}ms`
+    : loading ? 'Refreshing…' : 'Cached';
+  const activeScannedCount = scanResult?.scannedCount ?? scanDiagnostics?.scannedCount ?? candidates.length;
 
   return (
     <main className="shell">
@@ -412,11 +522,16 @@ function StandardSignals({
       <section className="compact-summary-ribbon" aria-label="Scanner summary metrics">
         <div className="ribbon-item">
           <span className="ribbon-label">Total Eligible</span>
-          <span className="ribbon-value">{data?.eligibleCount ?? 522}</span>
+          <span className="ribbon-value">{data?.eligibleCount ?? '—'}</span>
         </div>
         <div className="ribbon-item">
           <span className="ribbon-label">Scanned Count</span>
-          <span className="ribbon-value">{scanResult?.scannedCount ?? candidates.length}</span>
+          <span
+            className="ribbon-value"
+            title={`OK: ${scanResult?.successfulCount ?? scanDiagnostics?.successfulCount ?? activeScannedCount}, Failed: ${scanResult?.failedCount ?? scanDiagnostics?.failedCount ?? 0}, Skipped: ${scanResult?.skippedCount ?? scanDiagnostics?.skippedCount ?? 0}`}
+          >
+            {activeScannedCount}
+          </span>
         </div>
         <div className="ribbon-item">
           <span className="ribbon-label">Batch Progress</span>
@@ -486,11 +601,26 @@ function StandardSignals({
             <button
               type="button"
               className="button-secondary"
-              onClick={() => setSoundEnabled(!soundEnabled)}
-              title={soundEnabled ? 'Mute signal sound alerts' : 'Enable signal sound alerts'}
+              onClick={() => {
+                const next = !alarmPrefs.sound_enabled;
+                if (next) void unlockAlarmAudio();
+                void updateAlarmPrefs({ sound_enabled: next });
+              }}
+              title={alarmPrefs.sound_enabled ? 'Mute signal sound alerts' : 'Enable signal sound alerts'}
             >
-              {soundEnabled ? '🔔 Sound: ON' : '🔕 Sound: OFF'}
+              {alarmPrefs.sound_enabled ? '🔔 Sound: ON' : '🔕 Sound: OFF'}
             </button>
+            {alarmPrefs.sound_enabled && !alarmAudioUnlocked && (
+              <button
+                type="button"
+                className="button-secondary"
+                onClick={() => void unlockAlarmAudio()}
+                style={{ borderColor: '#6366f1', color: '#6366f1', fontSize: 12, fontWeight: 600 }}
+                title="Browser requires interaction after reload to play audio"
+              >
+                🔊 Enable Sound
+              </button>
+            )}
             <SavedResultsRefresh minutes={refreshMinutes} onChange={onRefreshChange} />
             <button
               type="button"
@@ -534,6 +664,19 @@ function StandardSignals({
             )}
           </div>
         </div>
+
+        {alarmSaveError && (
+          <div style={{ padding: '8px 12px', background: 'rgba(239, 68, 68, 0.1)', border: '1px solid rgba(239, 68, 68, 0.3)', color: '#ef4444', borderRadius: 8, fontSize: 12 }}>
+            ⚠ {alarmSaveError}
+          </div>
+        )}
+
+        {circuitCooldownUntil && (
+          <div style={{ padding: '10px 14px', background: 'rgba(245, 158, 11, 0.12)', border: '1px solid rgba(245, 158, 11, 0.4)', borderRadius: 8, fontSize: 12, color: '#d97706' }} suppressHydrationWarning>
+            <strong>⏸ BINANCE COOLDOWN ACTIVE:</strong>{' '}
+            {circuitCooldownReason ?? `Rate-limit cooldown active until ${new Date(circuitCooldownUntil).toLocaleTimeString('en-US')}.`}
+          </div>
+        )}
 
         {scanNotice && (
           <div style={{
@@ -710,7 +853,7 @@ function StandardSignals({
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, flex: '1 1 240px', maxWidth: 360 }}>
             <input
               type="search"
-              placeholder="🔍 Search all 522 pairs (e.g. BTC, ETH, SOL)..."
+              placeholder={`🔍 Search all ${data?.eligibleCount ?? 'eligible'} pairs (e.g. BTC, ETH, SOL)...`}
               value={tableSearch}
               onChange={(e) => {
                 setTableSearch(e.target.value);
@@ -1111,13 +1254,13 @@ function StandardSignals({
               <ScannerRadar
                 state={isScanning ? 'SCANNING' : (scanResult ? (scanResult.qualifiedCount > 0 ? 'SCAN_COMPLETED' : 'NO_QUALIFIED_SIGNALS') : (loading ? 'FETCHING_MARKET_DATA' : 'WAITING'))}
                 scannedCount={scanResult?.scannedCount ?? candidates.length}
-                totalEligible={data?.eligibleCount ?? 522}
+                totalEligible={data?.eligibleCount ?? 0}
                 strategy={`Standard Multi-Indicator Confluence (${timeframe.toUpperCase()})`}
                 lastScanTime={scanResult?.scannedAt ?? (data?.universeSyncedAt || null)}
                 rejectionReasons={scanResult?.rejections}
                 onScanNow={() => void triggerScan()}
                 isScanning={isScanning}
-                emptyStateTitle="Monitoring 522 Perpetual Contracts — Awaiting Confluence Setup"
+                emptyStateTitle={`Monitoring ${data?.eligibleCount ?? 'All'} Perpetual Contracts — Awaiting Confluence Setup`}
                 emptyStateSubtitle={`The scanner is continuously analyzing live market candles. Currently 0 pairs meet all ENTRY READY criteria (Confluence Score ≥ 60). However, ${awaiting.length + entryAwaiting.length} pairs are currently being tracked in Awaiting Confirmation / Entry Awaiting.`}
                 emptyStateFooter="Market conditions update automatically. Switch tabs above to inspect monitored candidates or run an on-demand scan."
               />

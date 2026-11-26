@@ -4,17 +4,21 @@ import {
   type MarketResearchProvider,
   type MarketResearchSummary,
 } from './market-research.js';
+import { binanceRateLimiter, BinanceCooldownError, fetchBinanceRest } from '../../../../../lib/binance-rate-limit';
 
 const BINANCE_FUTURES_BASE_URL = 'https://fapi.binance.com';
 const BYBIT_BASE_URL = 'https://api.bybit.com';
-const CANDLE_CACHE_MS = 15_000;
+const CANDLE_CACHE_MS = 45_000;
 const CANDLE_LIMIT = 400;
-const MAX_CONCURRENT_CANDLE_REQUESTS = 10;
+const MAX_CONCURRENT_CANDLE_REQUESTS = 3;
 const TOP_MOVER_LIMIT = 5;
 
 const candleRowSchema = z.array(z.union([z.string(), z.number()])).min(7);
 
 async function fetchCandleData(request: typeof fetch, url: URL): Promise<Response> {
+  if (url.hostname === 'fapi.binance.com') {
+    return fetchBinanceRest(request, url, { weight: 2, timeoutMs: 10_000 });
+  }
   let lastError: unknown;
   for (let attempt = 0; attempt < 3; attempt += 1) {
     let response: Response;
@@ -704,19 +708,33 @@ export class BinanceMarketScannerService implements MarketScannerProvider {
     }
     const selectedMarkets = [...rankedMarkets.values()];
     const candidates: MarketScannerCandidate[] = [];
+    let cooldownTripped: BinanceCooldownError | null = null;
     for (let offset = 0; offset < selectedMarkets.length; offset += MAX_CONCURRENT_CANDLE_REQUESTS) {
+      if (cooldownTripped) {
+        const msg = (cooldownTripped as BinanceCooldownError).message;
+        for (const { market, ranks } of selectedMarkets.slice(offset)) {
+          candidates.push(unavailableCandidate(market, config, [...ranks], `Skipped due to Binance cooldown: ${msg}`));
+        }
+        break;
+      }
       const batch = selectedMarkets.slice(offset, offset + MAX_CONCURRENT_CANDLE_REQUESTS);
       const results = await Promise.all(
         batch.map(async ({ market, ranks }) => {
           try {
             return await this.analyzeMarket(market, snapshot.updatedAt, config, [...ranks], snapshot.exchange);
           } catch (error) {
+            if (error instanceof BinanceCooldownError) {
+              cooldownTripped = error;
+            }
             const message = error instanceof Error ? error.message : 'Unknown candle provider error.';
             return unavailableCandidate(market, config, [...ranks], `Candle data unavailable: ${message}`);
           }
         }),
       );
       candidates.push(...results);
+      if (!cooldownTripped && offset + MAX_CONCURRENT_CANDLE_REQUESTS < selectedMarkets.length) {
+        await new Promise((resolve) => setTimeout(resolve, 60));
+      }
     }
     candidates.sort((left, right) => {
       if (left.status === 'READY' && right.status !== 'READY') return -1;
@@ -743,56 +761,73 @@ export class BinanceMarketScannerService implements MarketScannerProvider {
     timeframe: ScannerConfiguration['timeframe'],
     preferredExchange: FuturesMarketSnapshot['exchange'],
   ): Promise<MarketCandle[]> {
-    const key = `${preferredExchange}:${symbol}:${timeframe}`;
-    const cached = this.candleCache.get(key);
-    if (cached && cached.expiresAt > this.now()) return cached.candles;
-    const providers = [preferredExchange] as const;
-    const failures: string[] = [];
-    for (const provider of providers) {
-      try {
-        const url = new URL(provider === 'BYBIT'
-          ? `${BYBIT_BASE_URL}/v5/market/kline`
-          : `${BINANCE_FUTURES_BASE_URL}/fapi/v1/klines`);
-        if (provider === 'BYBIT') {
-          url.searchParams.set('category', 'linear');
-          url.searchParams.set('interval', timeframe === '1h' ? '60' : timeframe === '4h' ? '240' : timeframe.slice(0, -1));
-        } else {
-          url.searchParams.set('interval', timeframe);
-        }
-        url.searchParams.set('symbol', symbol);
-        url.searchParams.set('limit', String(CANDLE_LIMIT));
-        const response = await fetchCandleData(this.request, url);
-        const body = await response.json();
-        let candles: MarketCandle[] | null;
-        if (provider === 'BYBIT') {
-          const parsed = z.object({
-            retCode: z.literal(0),
-            result: z.object({ list: z.array(candleRowSchema) }),
-          }).safeParse(body);
-          candles = parsed.success
-            ? parsed.data.result.list.map((row) => ({
-                openTime: Number(row[0]),
-                high: Number(row[2]),
-                low: Number(row[3]),
-                close: Number(row[4]),
-                volume: Number(row[5]),
-                closeTime: Number(row[0]) + intervalMilliseconds(timeframe) - 1,
-              })).sort((left, right) => left.openTime - right.openTime)
-            : null;
-        } else {
-          candles = parseCandles(body);
-        }
-        if (!candles?.length || candles.some((candle) =>
-          ![candle.openTime, candle.high, candle.low, candle.closeTime].every(Number.isFinite) ||
-          ![candle.high, candle.low, candle.close, candle.volume].every(Number.isFinite)
-        )) throw new Error('invalid candle response');
-        this.candleCache.set(key, { expiresAt: this.now() + CANDLE_CACHE_MS, candles });
-        return candles;
-      } catch (error) {
-        failures.push(`${provider}: ${error instanceof Error ? error.message : 'unknown error'}`);
+    const key = `candles:${preferredExchange}:${symbol}:${timeframe}`;
+    const localCached = this.candleCache.get(key);
+    if (localCached && localCached.expiresAt > this.now()) return localCached.candles;
+    const useSharedCache = this.request === globalThis.fetch;
+    if (useSharedCache) {
+      const sharedCached = binanceRateLimiter.getCached<MarketCandle[]>(key, this.now());
+      if (sharedCached) {
+        this.candleCache.set(key, { expiresAt: this.now() + CANDLE_CACHE_MS, candles: sharedCached });
+        return sharedCached;
       }
     }
-    throw new Error(`Candle data is unavailable from public futures providers (${failures.join('; ')}).`);
+
+    const fetchAndParse = async () => {
+      const providers = [preferredExchange] as const;
+      const failures: string[] = [];
+      for (const provider of providers) {
+        try {
+          const url = new URL(provider === 'BYBIT'
+            ? `${BYBIT_BASE_URL}/v5/market/kline`
+            : `${BINANCE_FUTURES_BASE_URL}/fapi/v1/klines`);
+          if (provider === 'BYBIT') {
+            url.searchParams.set('category', 'linear');
+            url.searchParams.set('interval', timeframe === '1h' ? '60' : timeframe === '4h' ? '240' : timeframe.slice(0, -1));
+          } else {
+            url.searchParams.set('interval', timeframe);
+          }
+          url.searchParams.set('symbol', symbol);
+          url.searchParams.set('limit', String(CANDLE_LIMIT));
+          const response = await fetchCandleData(this.request, url);
+          const body = await response.json();
+          let candles: MarketCandle[] | null;
+          if (provider === 'BYBIT') {
+            const parsed = z.object({
+              retCode: z.literal(0),
+              result: z.object({ list: z.array(candleRowSchema) }),
+            }).safeParse(body);
+            candles = parsed.success
+              ? parsed.data.result.list.map((row) => ({
+                  openTime: Number(row[0]),
+                  high: Number(row[2]),
+                  low: Number(row[3]),
+                  close: Number(row[4]),
+                  volume: Number(row[5]),
+                  closeTime: Number(row[0]) + intervalMilliseconds(timeframe) - 1,
+                })).sort((left, right) => left.openTime - right.openTime)
+              : null;
+          } else {
+            candles = parseCandles(body);
+          }
+          if (!candles?.length || candles.some((candle) =>
+            ![candle.openTime, candle.high, candle.low, candle.closeTime].every(Number.isFinite) ||
+            ![candle.high, candle.low, candle.close, candle.volume].every(Number.isFinite)
+          )) throw new Error('invalid candle response');
+          this.candleCache.set(key, { expiresAt: this.now() + CANDLE_CACHE_MS, candles });
+          if (useSharedCache) {
+            binanceRateLimiter.setCached(key, candles, CANDLE_CACHE_MS, this.now());
+          }
+          return candles;
+        } catch (error) {
+          if (error instanceof BinanceCooldownError) throw error;
+          failures.push(`${provider}: ${error instanceof Error ? error.message : 'unknown error'}`);
+        }
+      }
+      throw new Error(`Candle data is unavailable from public futures providers (${failures.join('; ')}).`);
+    };
+
+    return useSharedCache ? binanceRateLimiter.dedupe(key, fetchAndParse) : fetchAndParse();
   }
 
   private async analyzeMarket(

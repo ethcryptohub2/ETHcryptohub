@@ -182,18 +182,85 @@ export async function getNotificationPreferences(userId: number) {
     [userId],
   );
   if (!result.rows[0]) {
-    // Match the defaults in 202611060002_signal_notifications.sql.
     return {
-      push_enabled: false, sound_enabled: false,
+      push_enabled: false, sound_enabled: true,
       long_enabled: true, short_enabled: true, high_conviction_enabled: true,
       tp1_enabled: true, tp2_enabled: true, tp3_enabled: true,
       stop_loss_enabled: true, expiry_enabled: true,
-      minimum_setup_score: 60, alarm_volume: 0.7, quiet_hours_enabled: false,
+      minimum_setup_score: 60, alarm_volume: 0.8, quiet_hours_enabled: false,
       quiet_hours_start: '22:00', quiet_hours_end: '07:00',
       quiet_hours_timezone: 'UTC', do_not_disturb: false,
     };
   }
   return { ...result.rows[0], alarm_volume: Number(result.rows[0].alarm_volume) };
+}
+
+export interface ExtendedAlarmPreferences {
+  duration: 3 | 5 | 10 | 'full';
+  master_enabled: boolean;
+  standard_strategy_enabled: boolean;
+  high_risk_strategy_enabled: boolean;
+  repeated_trade_enabled: boolean;
+  trade_execution_enabled: boolean;
+  exchange_failure_enabled: boolean;
+}
+
+export function defaultExtendedAlarmPreferences(): ExtendedAlarmPreferences {
+  return {
+    duration: 5,
+    master_enabled: true,
+    standard_strategy_enabled: true,
+    high_risk_strategy_enabled: true,
+    repeated_trade_enabled: true,
+    trade_execution_enabled: true,
+    exchange_failure_enabled: true,
+  };
+}
+
+export async function getExtendedAlarmPreferences(userId: number): Promise<ExtendedAlarmPreferences> {
+  const defaults = defaultExtendedAlarmPreferences();
+  try {
+    const res = await query<{ value_json: Partial<ExtendedAlarmPreferences> }>(
+      `SELECT value_json FROM public.app_settings WHERE key = $1`,
+      [`user_alarm_prefs:${userId}`],
+    );
+    const stored = res.rows[0]?.value_json;
+    if (!stored) return defaults;
+    return {
+      duration: stored.duration === 3 || stored.duration === 5 || stored.duration === 10 || stored.duration === 'full' ? stored.duration : defaults.duration,
+      master_enabled: typeof stored.master_enabled === 'boolean' ? stored.master_enabled : defaults.master_enabled,
+      standard_strategy_enabled: typeof stored.standard_strategy_enabled === 'boolean' ? stored.standard_strategy_enabled : defaults.standard_strategy_enabled,
+      high_risk_strategy_enabled: typeof stored.high_risk_strategy_enabled === 'boolean' ? stored.high_risk_strategy_enabled : defaults.high_risk_strategy_enabled,
+      repeated_trade_enabled: typeof stored.repeated_trade_enabled === 'boolean' ? stored.repeated_trade_enabled : defaults.repeated_trade_enabled,
+      trade_execution_enabled: typeof stored.trade_execution_enabled === 'boolean' ? stored.trade_execution_enabled : defaults.trade_execution_enabled,
+      exchange_failure_enabled: typeof stored.exchange_failure_enabled === 'boolean' ? stored.exchange_failure_enabled : defaults.exchange_failure_enabled,
+    };
+  } catch {
+    return defaults;
+  }
+}
+
+export async function updateExtendedAlarmPreferences(
+  userId: number,
+  partial: Partial<ExtendedAlarmPreferences>,
+): Promise<ExtendedAlarmPreferences> {
+  const current = await getExtendedAlarmPreferences(userId);
+  const next: ExtendedAlarmPreferences = {
+    duration: partial.duration !== undefined ? partial.duration : current.duration,
+    master_enabled: partial.master_enabled !== undefined ? partial.master_enabled : current.master_enabled,
+    standard_strategy_enabled: partial.standard_strategy_enabled !== undefined ? partial.standard_strategy_enabled : current.standard_strategy_enabled,
+    high_risk_strategy_enabled: partial.high_risk_strategy_enabled !== undefined ? partial.high_risk_strategy_enabled : current.high_risk_strategy_enabled,
+    repeated_trade_enabled: partial.repeated_trade_enabled !== undefined ? partial.repeated_trade_enabled : current.repeated_trade_enabled,
+    trade_execution_enabled: partial.trade_execution_enabled !== undefined ? partial.trade_execution_enabled : current.trade_execution_enabled,
+    exchange_failure_enabled: partial.exchange_failure_enabled !== undefined ? partial.exchange_failure_enabled : current.exchange_failure_enabled,
+  };
+  await query(
+    `INSERT INTO public.app_settings (key, value_json, updated_at)
+     VALUES ($1, $2::jsonb, NOW())
+     ON CONFLICT (key) DO UPDATE SET value_json = EXCLUDED.value_json, updated_at = NOW()`,
+    [`user_alarm_prefs:${userId}`, JSON.stringify(next)],
+  );
+  return next;
 }
 
 function stableSignalKey(candidate: MarketScannerCandidate) {

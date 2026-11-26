@@ -1,8 +1,9 @@
 import { z } from 'zod';
+import { binanceRateLimiter, fetchBinanceRest } from '../../../../../lib/binance-rate-limit';
 
 const BINANCE_FUTURES_BASE_URL = 'https://fapi.binance.com';
 const BYBIT_BASE_URL = 'https://api.bybit.com';
-const CACHE_DURATION_MS = 30_000;
+const CACHE_DURATION_MS = 60_000;
 const REQUEST_TIMEOUT_MS = 10_000;
 
 export async function fetchWithBackoff(
@@ -10,15 +11,19 @@ export async function fetchWithBackoff(
   input: string | URL | Request,
   timeoutMs = REQUEST_TIMEOUT_MS,
 ): Promise<Response> {
-  let lastError: unknown;
   const inputStr = typeof input === 'string' ? input : input instanceof URL ? input.toString() : typeof input === 'object' && input !== null && 'url' in input ? (input as Request).url : '';
+  const isBinanceFapi = inputStr.includes('fapi.binance.com') && !inputStr.includes('demo-fapi.binance.com');
+  const weight = inputStr.includes('/ticker/24hr') ? 40 : 1;
+
+  if (isBinanceFapi) {
+    return fetchBinanceRest(request, inputStr, { weight, timeoutMs });
+  }
+
+  let lastError: unknown;
   for (let attempt = 0; attempt < 3; attempt += 1) {
     let response: Response;
-    const targetUrl = (attempt > 0 && inputStr && inputStr.includes('fapi.binance.com') && !inputStr.includes('demo-fapi.binance.com'))
-      ? inputStr.replace('https://fapi.binance.com', 'https://demo-fapi.binance.com')
-      : input;
     try {
-      response = await request(targetUrl, { signal: AbortSignal.timeout(timeoutMs) });
+      response = await request(input, { signal: AbortSignal.timeout(timeoutMs) });
     } catch (error) {
       lastError = error;
       if (attempt === 2) break;
@@ -27,13 +32,12 @@ export async function fetchWithBackoff(
     }
     if (response.ok) return response;
     lastError = new Error(`HTTP ${response.status}`);
-    if (![408, 418, 429].includes(response.status) && response.status < 500) break;
+    if (response.status === 418 || response.status === 429) {
+      throw binanceRateLimiter.trip(response.status, response.headers.get('retry-after'), `Exchange API ${response.status}`);
+    }
+    if (response.status !== 408 && response.status < 500) break;
     if (attempt < 2) {
-      const retryAfter = Number(response.headers.get('retry-after')) * 1000;
-      const delay = Number.isFinite(retryAfter) && retryAfter > 0
-        ? Math.min(2_000, retryAfter)
-        : 200 * 2 ** attempt;
-      await new Promise((resolve) => setTimeout(resolve, delay));
+      await new Promise((resolve) => setTimeout(resolve, 200 * 2 ** attempt));
     }
   }
   throw lastError instanceof Error ? lastError : new Error('Public exchange request failed.');

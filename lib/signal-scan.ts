@@ -1,6 +1,7 @@
 import type { QueryResultRow } from 'pg';
 import { BinanceFuturesMarketsService, BinanceMarketDataError } from '../smartexit/apps/api/src/services/binance-futures-markets';
 import { BinanceMarketScannerService, recommendedMaxAgeSeconds } from '../smartexit/apps/api/src/services/market-scanner';
+import { binanceRateLimiter, BinanceCooldownError } from './binance-rate-limit';
 import { loadMarketResearchProvider } from './market-research-settings';
 import {
   flushSignalNotifications,
@@ -135,10 +136,21 @@ export async function runSignalScan(
 ) {
   const startedMs = Date.now();
   const startedAt = new Date(startedMs).toISOString();
+
+  const cbStatus = binanceRateLimiter.getStatus(startedMs);
+  if (cbStatus.state === 'OPEN' && cbStatus.cooldownUntil) {
+    throw new SignalScanError(
+      `Binance API cooldown active (HTTP ${cbStatus.statusCode ?? 418}). Resuming at ${new Date(cbStatus.cooldownUntil).toLocaleTimeString('en-US')}.`,
+    );
+  }
+
   const syncState = await getScannerSyncState();
   const lastAttempt = syncState?.last_attempt_at ? Date.parse(syncState.last_attempt_at) : 0;
   if (!lastAttempt || Date.now() - lastAttempt >= SYMBOL_SYNC_INTERVAL_MS) {
-    await syncBinanceScannerUniverse(null);
+    await syncBinanceScannerUniverse(null).catch((err) => {
+      if (err instanceof BinanceCooldownError) throw new SignalScanError(err.message);
+      console.warn('Universe sync deferred:', err instanceof Error ? err.message : err);
+    });
   }
   const settings = await getNotificationSystemSettings();
   const scannerConfig = await getScannerConfiguration();
@@ -146,6 +158,9 @@ export async function runSignalScan(
   const effectiveBatchLimit = options.limit ?? scannerConfig.batchSize;
 
   const marketSnapshot = await markets.list().catch((error: unknown) => {
+    if (error instanceof BinanceCooldownError) {
+      throw new SignalScanError(error.message);
+    }
     if (error instanceof BinanceMarketDataError) {
       throw new SignalScanError('Binance exchange metadata or ticker acquisition failed. Check provider access before retrying.');
     }
@@ -250,15 +265,45 @@ export async function runSignalScan(
     }
   }
 
+  const skippedCount = result.candidates.filter((c) =>
+    c.warnings.some((w) => w.includes('Skipped due to Binance cooldown')),
+  ).length;
+  const failedCount = result.candidates.filter((c) =>
+    c.status === 'DATA_UNAVAILABLE' && !c.warnings.some((w) => w.includes('Skipped due to Binance cooldown')),
+  ).length;
+  const successfulCount = Math.max(0, result.candidates.length - failedCount - skippedCount);
+  const durationMs = Date.now() - startedMs;
+  const completedAt = new Date().toISOString();
+
+  await safeDbQuery(
+    `UPDATE public.app_settings
+        SET value_json = COALESCE(value_json, '{}'::jsonb) || $1::jsonb,
+            updated_at = NOW()
+      WHERE key = 'scanner_rotation_state'`,
+    [JSON.stringify({
+      lastDurationMs: durationMs,
+      lastScannedCount: result.candidates.length,
+      lastSuccessfulCount: successfulCount,
+      lastFailedCount: failedCount,
+      lastSkippedCount: skippedCount,
+      lastBatchIndex: cursorInfo.batchIndex,
+      lastTotalBatches: cursorInfo.totalBatches,
+      lastCompletedAt: completedAt,
+    })],
+  );
+
   return {
     startedAt,
-    completedAt: new Date().toISOString(),
-    durationMs: Date.now() - startedMs,
+    completedAt,
+    durationMs,
     exchange: result.exchange,
     source: result.source,
     timeframe,
     scannerStatus: result.status,
     candidates: result.candidates.length,
+    successfulCount,
+    failedCount,
+    skippedCount,
     qualifiedCount: qualifiedCandidates.length,
     enabledCoins: enabledSymbols.length,
     batchSize: symbols.length,

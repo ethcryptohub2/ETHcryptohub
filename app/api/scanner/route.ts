@@ -66,14 +66,22 @@ export async function GET(request: NextRequest) {
     const isStale = !universe.saved_count || !universe.recent_until.some(expiry => expiry >= now);
     let scanDurationMs: number | null = null;
 
-    if (forceRefresh || (isStale && coverage === 'saved')) {
+    let cbStatus: { state: string; cooldownUntil: number | null; reason: string | null } = { state: 'CLOSED', cooldownUntil: null, reason: null };
+    try {
+      const { binanceRateLimiter } = await import('../../../lib/binance-rate-limit');
+      cbStatus = binanceRateLimiter.getStatus(now);
+    } catch {
+      // Fallback when running under isolated unit-test stubs
+    }
+
+    if ((forceRefresh || (isStale && coverage === 'saved')) && cbStatus.state !== 'OPEN') {
       const lastScanTime = Date.parse(universe.latest_saved_at ?? '');
       const elapsedSinceLastScan = Number.isFinite(lastScanTime) ? now - lastScanTime : Infinity;
-      if (forceRefresh || elapsedSinceLastScan > 45_000) {
+      if (forceRefresh || elapsedSinceLastScan > 60_000) {
         try {
           const scanStart = Date.now();
           const { runSignalScan } = await import('../../../lib/signal-scan');
-          await runSignalScan(configuration.timeframe, { executeAutomaticTrades: false, deliverNotifications: false });
+          await runSignalScan(configuration.timeframe, { executeAutomaticTrades: false, deliverNotifications: true });
           scanDurationMs = Date.now() - scanStart;
           universe = await getSavedScannerUniverse({
             timeframe: configuration.timeframe, coverage, symbol, rank, page, limit: configuration.limit,
@@ -83,6 +91,17 @@ export async function GET(request: NextRequest) {
           console.warn('Auto/on-demand signal scan notice:', scanErr instanceof Error ? scanErr.message : scanErr);
         }
       }
+    }
+
+    let rotationState: Record<string, unknown> | null = null;
+    try {
+      const { query } = await import('../../../lib/db');
+      const rotRes = await query<{ value_json: Record<string, unknown> }>(
+        `SELECT value_json FROM public.app_settings WHERE key = 'scanner_rotation_state'`,
+      );
+      rotationState = rotRes.rows[0]?.value_json ?? null;
+    } catch {
+      // non-blocking
     }
 
     let settings = defaultNotificationSystemSettings();
@@ -153,12 +172,21 @@ export async function GET(request: NextRequest) {
       diagnostics: {
         discoveredCount: universe.eligible_count,
         eligibleCount: universe.eligible_count,
-        scannedCount: displayedCandidates.length,
+        scannedCount: Number(rotationState?.lastScannedCount ?? displayedCandidates.length),
+        successfulCount: Number(rotationState?.lastSuccessfulCount ?? displayedCandidates.length),
+        failedCount: Number(rotationState?.lastFailedCount ?? 0),
+        skippedCount: Number(rotationState?.lastSkippedCount ?? 0),
         rejectedCount: Math.max(0, universe.matching_count - ready.length),
         qualifiedCount: ready.length,
-        scanDurationMs,
+        scanDurationMs: scanDurationMs ?? (typeof rotationState?.lastDurationMs === 'number' ? rotationState.lastDurationMs : null),
         lastScanTimestamp: universe.latest_saved_at,
+        batchIndex: typeof rotationState?.lastBatchIndex === 'number' ? rotationState.lastBatchIndex : 1,
+        totalBatches: typeof rotationState?.lastTotalBatches === 'number'
+          ? rotationState.lastTotalBatches
+          : Math.max(1, Math.ceil(universe.eligible_count / 35)),
+        cycleId: typeof rotationState?.cycleId === 'string' ? rotationState.cycleId : 'CYCLE-1',
       },
+      circuitBreaker: cbStatus,
       signalMetadata: { signals: signalMap, serverNow: new Date(serverNow).toISOString() },
       ...(notificationWarning ? { notificationWarning } : {}),
     }, { headers: noStore });

@@ -12,6 +12,7 @@ import {
 } from './high-risk-scalping-types';
 import { isSupportedPushEndpoint } from './notifications';
 import { processPersistedSignalLifecycle } from './signal-lifecycle';
+import { binanceRateLimiter, BinanceCooldownError, fetchBinanceRest } from './binance-rate-limit';
 import { getEnabledScannerSymbols } from './scanner-coins';
 import { highRiskEntryWindowOpen } from './high-risk-scalping-status';
 import { BinanceFuturesMarketsService } from '../smartexit/apps/api/src/services/binance-futures-markets';
@@ -248,21 +249,29 @@ export function analyzeHighRiskScalpingSetup(input: {
 }
 
 async function fetchCandles(symbol: string, timeframe: ScalpingTimeframe, request: typeof fetch): Promise<MarketCandle[]> {
-  const url = new URL('https://fapi.binance.com/fapi/v1/klines');
-  url.searchParams.set('symbol', symbol);
-  url.searchParams.set('interval', timeframe);
-  url.searchParams.set('limit', '100');
-  const response = await request(url, { signal: AbortSignal.timeout(10_000), cache: 'no-store' });
-  if (!response.ok) throw new Error(`Binance candle request failed (${response.status}) for ${symbol} ${timeframe}.`);
-  const body: unknown = await response.json();
-  if (!Array.isArray(body)) throw new Error(`Binance returned invalid candle data for ${symbol} ${timeframe}.`);
-  return body.map((row): MarketCandle => {
-    if (!Array.isArray(row) || row.length < 7) throw new Error(`Binance returned invalid candle data for ${symbol} ${timeframe}.`);
-    const [openTime, open, high, low, close, volume, closeTime] = row.map(Number);
-    if (![openTime, open, high, low, close, volume, closeTime].every(Number.isFinite) || [open, high, low, close].some((value) => value <= 0) || volume < 0) {
-      throw new Error(`Binance returned invalid candle values for ${symbol} ${timeframe}.`);
-    }
-    return { openTime, high, low, close, volume, closeTime };
+  const key = `candles:BINANCE:${symbol}:${timeframe}`;
+  const cached = binanceRateLimiter.getCached<MarketCandle[]>(key);
+  if (cached) return cached;
+
+  return binanceRateLimiter.dedupe(key, async () => {
+    const url = new URL('https://fapi.binance.com/fapi/v1/klines');
+    url.searchParams.set('symbol', symbol);
+    url.searchParams.set('interval', timeframe);
+    url.searchParams.set('limit', '100');
+    const response = await fetchBinanceRest(request, url, { weight: 2, timeoutMs: 10_000 });
+    if (!response.ok) throw new Error(`Binance candle request failed (${response.status}) for ${symbol} ${timeframe}.`);
+    const body: unknown = await response.json();
+    if (!Array.isArray(body)) throw new Error(`Binance returned invalid candle data for ${symbol} ${timeframe}.`);
+    const candles = body.map((row): MarketCandle => {
+      if (!Array.isArray(row) || row.length < 7) throw new Error(`Binance returned invalid candle data for ${symbol} ${timeframe}.`);
+      const [openTime, open, high, low, close, volume, closeTime] = row.map(Number);
+      if (![openTime, open, high, low, close, volume, closeTime].every(Number.isFinite) || [open, high, low, close].some((value) => value <= 0) || volume < 0) {
+        throw new Error(`Binance returned invalid candle values for ${symbol} ${timeframe}.`);
+      }
+      return { openTime, high, low, close, volume, closeTime };
+    });
+    binanceRateLimiter.setCached(key, candles, 45_000);
+    return candles;
   });
 }
 
@@ -435,8 +444,9 @@ export async function runHighRiskScalpingScan(
   );
   let nextCandidate = 0;
   let failed = 0;
+  let cooldownTripped = false;
   const scanWorker = async () => {
-    while (nextCandidate < candidates.length) {
+    while (nextCandidate < candidates.length && !cooldownTripped) {
       const { symbol, timeframe } = candidates[nextCandidate++]!;
       const market = snapshot.symbols.find((item) => item.symbol === symbol);
       if (!market?.lastPrice || market.quoteVolume24h < settings.minimumQuoteVolume) continue;
@@ -497,11 +507,16 @@ export async function runHighRiskScalpingScan(
         }
       } catch (error) {
         failed += 1;
+        if (error instanceof BinanceCooldownError) {
+          cooldownTripped = true;
+          console.warn(`High-risk scalping paused due to Binance cooldown: ${error.message}`);
+          break;
+        }
         console.error(`High-risk scalping scan failed for ${symbol} ${timeframe}:`, error instanceof Error ? error.message : 'Unknown scan error.');
       }
     }
   };
-  await Promise.all(Array.from({ length: Math.min(8, candidates.length) }, () => scanWorker()));
+  await Promise.all(Array.from({ length: Math.min(3, candidates.length) }, () => scanWorker()));
   return { enabled: true, scanned, created, failed, timeframes: settings.enabledTimeframes, batchSize: symbols.length, enabledPairs: enabled.length, scannedAt: new Date(now).toISOString() };
 }
 

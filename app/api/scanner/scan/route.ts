@@ -3,6 +3,7 @@ import { AuthError } from '../../../../lib/auth';
 import { requirePremiumUser, SubscriptionError } from '../../../../lib/subscriptions';
 import { runSignalScan, getScannerConfiguration, SignalScanError } from '../../../../lib/signal-scan';
 import { runHighRiskScalpingScan } from '../../../../lib/high-risk-scalping';
+import { binanceRateLimiter } from '../../../../lib/binance-rate-limit';
 import { z } from 'zod';
 
 export const runtime = 'nodejs';
@@ -87,6 +88,17 @@ export async function POST(request: NextRequest) {
 
   const { timeframe, strategy, limit } = parsed.data;
 
+  const cbStatus = binanceRateLimiter.getStatus();
+  if (cbStatus.state === 'OPEN' && cbStatus.cooldownUntil) {
+    return NextResponse.json({
+      ok: false,
+      cooldown: true,
+      cooldownUntil: cbStatus.cooldownUntil,
+      circuitBreaker: cbStatus,
+      error: cbStatus.reason ?? `Binance API cooldown active until ${new Date(cbStatus.cooldownUntil).toLocaleTimeString('en-US')}.`,
+    }, { status: 429, headers: noStore });
+  }
+
   const lockStatus = await checkAndAcquireScanLock();
   if (!lockStatus.acquired) {
     if (lockStatus.lastResult) {
@@ -131,7 +143,7 @@ export async function POST(request: NextRequest) {
     const scanStart = Date.now();
     const result = await runSignalScan(timeframe, {
       executeAutomaticTrades: false,
-      deliverNotifications: false,
+      deliverNotifications: true,
       limit,
     });
     const durationMs = Date.now() - scanStart;
@@ -141,6 +153,9 @@ export async function POST(request: NextRequest) {
       timeframe: result.timeframe,
       scannerStatus: result.scannerStatus,
       scannedCount: result.candidates,
+      successfulCount: result.successfulCount,
+      failedCount: result.failedCount,
+      skippedCount: result.skippedCount,
       qualifiedCount: result.qualifiedCount,
       newSignals: result.newSignals,
       deduplicatedSignals: result.deduplicatedSignals,
@@ -155,6 +170,7 @@ export async function POST(request: NextRequest) {
       startedAt: result.startedAt,
       completedAt: result.completedAt,
       durationMs,
+      circuitBreaker: binanceRateLimiter.getStatus(),
       rows: result.rows,
     };
     await releaseScanLock(responseData);

@@ -31,7 +31,7 @@ type Preferences = {
 
 const defaultPreferences: Preferences = {
   push_enabled: false,
-  sound_enabled: false,
+  sound_enabled: true,
   long_enabled: true,
   short_enabled: true,
   high_conviction_enabled: true,
@@ -41,7 +41,7 @@ const defaultPreferences: Preferences = {
   stop_loss_enabled: true,
   expiry_enabled: true,
   minimum_setup_score: 60,
-  alarm_volume: 0.7,
+  alarm_volume: 0.8,
   quiet_hours_enabled: false,
   quiet_hours_start: '22:00',
   quiet_hours_end: '07:00',

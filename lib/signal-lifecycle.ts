@@ -1,4 +1,5 @@
 import { pool, query } from './db';
+import { binanceRateLimiter, BinanceCooldownError, fetchBinanceRest } from './binance-rate-limit';
 import type { FuturesMarketSnapshot } from '../smartexit/apps/api/src/services/binance-futures-markets';
 
 type LifecycleStatus =
@@ -68,20 +69,30 @@ async function fetchLifecycleCandles(
   const startTime = Math.max(Date.parse(signal.generated_at), Date.parse(signal.lifecycle_checked_at));
   const endTime = Math.min(now, Date.parse(signal.expires_at));
   if (!Number.isFinite(startTime) || !Number.isFinite(endTime) || endTime <= startTime) return [];
-  const url = new URL('https://fapi.binance.com/fapi/v1/klines');
-  url.searchParams.set('symbol', signal.symbol);
-  url.searchParams.set('interval', signal.timeframe);
-  url.searchParams.set('startTime', String(startTime));
-  url.searchParams.set('endTime', String(endTime));
-  url.searchParams.set('limit', '1000');
-  const response = await request(url, { signal: AbortSignal.timeout(10_000), cache: 'no-store' });
-  if (!response.ok) throw new Error(`Binance lifecycle candle request failed (${response.status}) for ${signal.symbol} ${signal.timeframe}.`);
-  const payload: unknown = await response.json();
-  if (!Array.isArray(payload)) throw new Error(`Binance returned invalid lifecycle candles for ${signal.symbol} ${signal.timeframe}.`);
-  return payload
-    .map((row) => parseCandle(row, signal.symbol, signal.timeframe))
-    .filter((candle) => candle.closeTime < now && candle.closeTime <= Date.parse(signal.expires_at) && candle.closeTime >= startTime)
-    .sort((left, right) => left.openTime - right.openTime);
+
+  const cacheKey = `lifecycle:${signal.symbol}:${signal.timeframe}:${Math.floor(startTime / 60_000)}:${Math.floor(endTime / 60_000)}`;
+  const cached = binanceRateLimiter.getCached<TriggerCandle[]>(cacheKey, now);
+  if (cached) return cached;
+
+  return binanceRateLimiter.dedupe(cacheKey, async () => {
+    const url = new URL('https://fapi.binance.com/fapi/v1/klines');
+    url.searchParams.set('symbol', signal.symbol);
+    url.searchParams.set('interval', signal.timeframe);
+    url.searchParams.set('startTime', String(startTime));
+    url.searchParams.set('endTime', String(endTime));
+    // Weight 1 for limit <= 99 (vs weight 5 for 1000)
+    url.searchParams.set('limit', '99');
+    const response = await fetchBinanceRest(request, url, { weight: 1, timeoutMs: 10_000, now });
+    if (!response.ok) throw new Error(`Binance lifecycle candle request failed (${response.status}) for ${signal.symbol} ${signal.timeframe}.`);
+    const payload: unknown = await response.json();
+    if (!Array.isArray(payload)) throw new Error(`Binance returned invalid lifecycle candles for ${signal.symbol} ${signal.timeframe}.`);
+    const parsed = payload
+      .map((row) => parseCandle(row, signal.symbol, signal.timeframe))
+      .filter((candle) => candle.closeTime < now && candle.closeTime <= Date.parse(signal.expires_at) && candle.closeTime >= startTime)
+      .sort((left, right) => left.openTime - right.openTime);
+    binanceRateLimiter.setCached(cacheKey, parsed, 30_000, now);
+    return parsed;
+  });
 }
 
 function crossed(side: TrackedSignal['side'], candle: TriggerCandle, level: number) {
@@ -328,6 +339,12 @@ export async function processPersistedSignalLifecycle(
   now = Date.now(),
   request: typeof fetch = globalThis.fetch,
 ) {
+  const cbStatus = binanceRateLimiter.getStatus(now);
+  if (cbStatus.state === 'OPEN') {
+    console.warn(`Signal lifecycle reconciliation deferred: ${cbStatus.reason}`);
+    return;
+  }
+
   const result = await query<TrackedSignal>(
     `SELECT id::TEXT AS id, signal_key, legacy_scalping_signal_id::TEXT, scanner_type, symbol, timeframe, side, status,
             entry_status, generated_at, lifecycle_checked_at, entry_expires_at, expires_at,
@@ -336,7 +353,7 @@ export async function processPersistedSignalLifecycle(
             latest_price::TEXT, setup_score
        FROM public.market_signals
       WHERE status IN ('ACTIVE', 'TP1_HIT', 'TP2_HIT')
-      ORDER BY expires_at ASC LIMIT 1000`,
+      ORDER BY expires_at ASC LIMIT 200`,
   );
   const prices = new Map(snapshot.symbols.map((market) => [market.symbol, market.lastPrice]));
   const candleCache = new Map<string, TriggerCandle[]>();
@@ -344,8 +361,17 @@ export async function processPersistedSignalLifecycle(
     const key = `${signal.symbol}:${signal.timeframe}:${signal.generated_at}:${signal.lifecycle_checked_at}`;
     let candles = candleCache.get(key);
     if (!candles) {
-      candles = await fetchLifecycleCandles(signal, now, request);
-      candleCache.set(key, candles);
+      try {
+        candles = await fetchLifecycleCandles(signal, now, request);
+        candleCache.set(key, candles);
+      } catch (err) {
+        if (err instanceof BinanceCooldownError) {
+          console.warn(`Signal lifecycle paused due to Binance cooldown: ${err.message}`);
+          break;
+        }
+        console.warn(`Lifecycle candle fetch skipped for ${signal.symbol} ${signal.timeframe}:`, err instanceof Error ? err.message : err);
+        continue;
+      }
     }
     await persistCandleTransitions(signal, candles, prices.get(signal.symbol) ?? null, now);
   }
