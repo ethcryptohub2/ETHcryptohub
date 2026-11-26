@@ -34,7 +34,11 @@ import { BinanceMarketScannerService, recommendedMaxAgeSeconds } from '../smarte
 
 export const FULL_SCAN_INTERVAL_MS = 300_000; // 5 minutes
 export const DEFAULT_V2_BATCH_SIZE = 32;
-export const DEFAULT_V2_CONCURRENCY = 4; // Selected from 2/4/6 worker pool benchmark
+export const DEFAULT_V2_CONCURRENCY = 2; // Bounded concurrency for 0.2 vCPU Northflank runtime
+
+export function isBackgroundScannerEnabled(): boolean {
+  return process.env.VERCEL !== '1' && process.env.DISABLE_BACKGROUND_SCANNER !== 'true';
+}
 const SCANNER_V2_STATE_KEY = 'scanner_v2_state';
 const SCANNER_V2_LOCK_KEY = 'scanner_v2_lock';
 const COINAPI_QUOTA_KEY = 'coinapi_daily_quota';
@@ -713,6 +717,7 @@ async function executeCoordinatedV2Cycle(options: {
 }
 
 export function startFiveMinuteScheduler(): void {
+  if (!isBackgroundScannerEnabled()) return;
   if (globalForScheduler.__smartexitSchedulerTimer) return;
   globalForScheduler.__smartexitSchedulerTimer = setInterval(() => {
     if (globalForScheduler.__smartexitActiveCyclePromise) return; // Never overlap cycles

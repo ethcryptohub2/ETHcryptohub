@@ -44,7 +44,7 @@ async function openLoginPage(page: Page) {
     landedUrl.protocol !== 'https:' ||
     hostname === 'cryptohub.vercel.app' ||
     hostname === 'cryptohub.app' ||
-    (!hostname.endsWith('.vercel.app') && !hostname.endsWith('.onrender.com'))
+    (!hostname.endsWith('.vercel.app') && !hostname.endsWith('.onrender.com') && !hostname.endsWith('.code.run'))
   ) {
     throw new Error('The configured target is not an HTTPS staging environment. Production is not an E2E target.');
   }

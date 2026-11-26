@@ -69,8 +69,10 @@ export async function GET(request: NextRequest) {
     try {
       const { ensureBinanceCooldownHydrated } = await import('../../../lib/binance-rate-limit-db');
       cbStatus = await ensureBinanceCooldownHydrated(now);
-      const { getScannerV2State, startFiveMinuteScheduler } = await import('../../../lib/scanner-scheduler');
-      startFiveMinuteScheduler();
+      const { getScannerV2State, isBackgroundScannerEnabled, startFiveMinuteScheduler } = await import('../../../lib/scanner-scheduler');
+      if (isBackgroundScannerEnabled()) {
+        startFiveMinuteScheduler();
+      }
       v2State = (await getScannerV2State()) as unknown as Record<string, unknown>;
     } catch {
       // Fallback when running under isolated unit-test stubs
@@ -156,19 +158,31 @@ export async function GET(request: NextRequest) {
       diagnostics: {
         discoveredCount: universe.eligible_count,
         eligibleCount: universe.eligible_count,
-        scannedCount: Number(rotationState?.lastScannedCount ?? displayedCandidates.length),
-        successfulCount: Number(rotationState?.lastSuccessfulCount ?? displayedCandidates.length),
-        failedCount: Number(rotationState?.lastFailedCount ?? 0),
-        skippedCount: Number(rotationState?.lastSkippedCount ?? 0),
+        scannedCount: typeof v2State?.successfulCount === 'number' && typeof v2State?.failedCount === 'number'
+          ? v2State.successfulCount + v2State.failedCount
+          : Number(rotationState?.lastScannedCount ?? displayedCandidates.length),
+        successfulCount: typeof v2State?.successfulCount === 'number'
+          ? v2State.successfulCount
+          : Number(rotationState?.lastSuccessfulCount ?? displayedCandidates.length),
+        failedCount: typeof v2State?.failedCount === 'number'
+          ? v2State.failedCount
+          : Number(rotationState?.lastFailedCount ?? 0),
+        skippedCount: typeof v2State?.skippedCount === 'number'
+          ? v2State.skippedCount
+          : Number(rotationState?.lastSkippedCount ?? 0),
         rejectedCount: Math.max(0, universe.matching_count - ready.length),
         qualifiedCount: ready.length,
-        scanDurationMs: scanDurationMs ?? (typeof rotationState?.lastDurationMs === 'number' ? rotationState.lastDurationMs : null),
-        lastScanTimestamp: universe.latest_saved_at,
-        batchIndex: typeof rotationState?.lastBatchIndex === 'number' ? rotationState.lastBatchIndex : 1,
-        totalBatches: typeof rotationState?.lastTotalBatches === 'number'
-          ? rotationState.lastTotalBatches
-          : Math.max(1, Math.ceil(universe.eligible_count / 35)),
-        cycleId: typeof rotationState?.cycleId === 'string' ? rotationState.cycleId : 'CYCLE-1',
+        scanDurationMs: scanDurationMs ?? (typeof v2State?.durationMs === 'number' ? v2State.durationMs : typeof rotationState?.lastDurationMs === 'number' ? rotationState.lastDurationMs : null),
+        lastScanTimestamp: typeof v2State?.lastSuccessfulScanAt === 'string' ? v2State.lastSuccessfulScanAt : universe.latest_saved_at,
+        batchIndex: typeof v2State?.completedBatches === 'number'
+          ? v2State.completedBatches
+          : typeof rotationState?.lastBatchIndex === 'number' ? rotationState.lastBatchIndex : 1,
+        totalBatches: typeof v2State?.totalBatches === 'number' && v2State.totalBatches > 0
+          ? v2State.totalBatches
+          : typeof rotationState?.lastTotalBatches === 'number'
+            ? rotationState.lastTotalBatches
+            : Math.max(1, Math.ceil(universe.eligible_count / 32)),
+        cycleId: typeof v2State?.cycleId === 'string' ? v2State.cycleId : typeof rotationState?.cycleId === 'string' ? rotationState.cycleId : 'CYCLE-1',
       },
       circuitBreaker: {
         state: isGlobalCooldown ? 'OPEN' : 'CLOSED',

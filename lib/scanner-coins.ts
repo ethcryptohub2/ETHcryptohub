@@ -551,7 +551,9 @@ export async function getSavedScannerUniverse(input: ScannerUniverseInput) {
          AND ($5::text IS NULL OR candidate_json->'marketRank' ? $5)
      ), result_page AS (
        SELECT * FROM matching
-        ORDER BY CASE WHEN $2 = 'saved' THEN scanned_at END DESC NULLS LAST, symbol
+        ORDER BY CASE WHEN $2 = 'saved' AND candidate_json->>'status' = 'READY' THEN 0 ELSE 1 END,
+                 CASE WHEN $2 = 'saved' THEN scanned_at END DESC NULLS LAST,
+                 symbol
         LIMIT $6 OFFSET $7
      )
      SELECT (SELECT count(*)::int FROM matching) AS matching_count,

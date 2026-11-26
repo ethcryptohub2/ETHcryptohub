@@ -1,5 +1,8 @@
 export async function register() {
   if (process.env.NEXT_RUNTIME === 'nodejs') {
+    if (process.env.VERCEL === '1' || process.env.DISABLE_BACKGROUND_SCANNER === 'true') {
+      return;
+    }
     try {
       const { ensureBinanceCooldownHydrated } = await import('./lib/binance-rate-limit-db');
       const cb = await ensureBinanceCooldownHydrated();

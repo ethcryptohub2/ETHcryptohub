@@ -9,7 +9,7 @@ export default defineConfig({
   workers: 1,
   reporter: 'list',
   outputDir: join(tmpdir(), 'smartexit-auth-e2e-results'),
-  timeout: 45_000,
+  timeout: 60_000,
   expect: {
     timeout: 10_000,
   },

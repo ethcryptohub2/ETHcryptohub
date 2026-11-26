@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import process from 'node:process';
+import { forwardRequestToBackend, shouldForwardToBackend } from '../../../lib/backend-proxy';
 import { binanceRateLimiter } from '../../../lib/binance-rate-limit';
 import { sharedCandleCache } from '../../../lib/candle-cache';
 import { isDatabaseConfigured, query } from '../../../lib/db';
@@ -11,6 +12,18 @@ export const dynamic = 'force-dynamic';
 const noStore = { 'Cache-Control': 'no-store' };
 
 export async function GET(request: NextRequest) {
+  if (shouldForwardToBackend()) {
+    try {
+      const forwarded = await forwardRequestToBackend(
+        request,
+        `/api/health${request.nextUrl.search}`,
+        { method: 'GET', timeoutMs: 10_000 },
+      );
+      if (forwarded) return forwarded;
+    } catch {
+      // Fall through to local degraded diagnostic if backend unreachable
+    }
+  }
   const readyCheck = request.nextUrl.searchParams.get('ready') === '1';
   const mem = process.memoryUsage();
 

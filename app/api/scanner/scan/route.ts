@@ -5,7 +5,8 @@ import { getScannerConfiguration, SignalScanError } from '../../../../lib/signal
 import { runHighRiskScalpingScan } from '../../../../lib/high-risk-scalping';
 import { binanceRateLimiter } from '../../../../lib/binance-rate-limit';
 import { ensureBinanceCooldownHydrated } from '../../../../lib/binance-rate-limit-db';
-import { getScannerV2State, triggerCoordinatedV2Scan } from '../../../../lib/scanner-scheduler';
+import { forwardRequestToBackend, shouldForwardToBackend } from '../../../../lib/backend-proxy';
+import { triggerCoordinatedV2Scan } from '../../../../lib/scanner-scheduler';
 import { z } from 'zod';
 
 export const runtime = 'nodejs';
@@ -89,6 +90,15 @@ export async function POST(request: NextRequest) {
   }
 
   const { timeframe, strategy } = parsed.data;
+
+  if (shouldForwardToBackend()) {
+    const forwarded = await forwardRequestToBackend(request, '/api/scanner/scan', {
+      method: 'POST',
+      bodyText: JSON.stringify(parsed.data),
+      timeoutMs: 28_000,
+    });
+    if (forwarded) return forwarded;
+  }
 
   await ensureBinanceCooldownHydrated();
   const lockStatus = await checkAndAcquireScanLock();

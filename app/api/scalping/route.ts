@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { AuthError } from '../../../lib/auth';
+import { forwardRequestToBackend, shouldForwardToBackend } from '../../../lib/backend-proxy';
 import {
   listHighRiskScalpingSignals,
   markScalpingSignalEntered,
@@ -41,6 +42,14 @@ export async function POST(request: NextRequest) {
     if (!parsed.success) return NextResponse.json({ error: 'Invalid scalping action.' }, { status: 422 });
 
     if (parsed.data.action === 'scan') {
+      if (shouldForwardToBackend()) {
+        const forwarded = await forwardRequestToBackend(request, '/api/scalping', {
+          method: 'POST',
+          bodyText: JSON.stringify(parsed.data),
+          timeoutMs: 28_000,
+        });
+        if (forwarded) return forwarded;
+      }
       const { runHighRiskScalpingScan } = await import('../../../lib/high-risk-scalping');
       const scanStart = Date.now();
       const result = await runHighRiskScalpingScan(globalThis.fetch, scanStart, { deliverNotifications: false });
