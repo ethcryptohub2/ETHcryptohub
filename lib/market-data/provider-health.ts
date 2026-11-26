@@ -82,6 +82,19 @@ export class ProviderHealthTracker {
     this.dailyUsed += cost;
   }
 
+  exportQuotaState(now = Date.now()): { dailyUsed: number; dailyWindowStart: number } {
+    this.rollDailyWindowIfNeeded(now);
+    return { dailyUsed: this.dailyUsed, dailyWindowStart: this.dailyWindowStart };
+  }
+
+  hydrateQuotaState(dailyUsed: number, dailyWindowStart: number, now = Date.now()): void {
+    const dayMs = 24 * 60 * 60_000;
+    if (dailyWindowStart > 0 && now - dailyWindowStart < dayMs) {
+      this.dailyWindowStart = dailyWindowStart;
+      this.dailyUsed = Math.max(0, Math.floor(dailyUsed));
+    }
+  }
+
   isEligible(now = Date.now()): boolean {
     if (!this.enabled || !this.configured) return false;
     if (!this.hasQuota(1, now)) return false;

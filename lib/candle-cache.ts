@@ -75,6 +75,58 @@ export class RollingCandleCache {
     this.store.clear();
   }
 
+  exportSnapshot(maxCandlesPerKey = 220): Array<{
+    key: string;
+    candles: CachedCandle[];
+    lastUpdatedAt: number;
+    lastWsUpdateAt: number | null;
+    source: 'WS_INCREMENTAL' | 'REST_HISTORY';
+  }> {
+    const out: Array<{
+      key: string;
+      candles: CachedCandle[];
+      lastUpdatedAt: number;
+      lastWsUpdateAt: number | null;
+      source: 'WS_INCREMENTAL' | 'REST_HISTORY';
+    }> = [];
+    for (const [key, entry] of this.store.entries()) {
+      if (entry.candles.length === 0) continue;
+      out.push({
+        key,
+        candles: entry.candles.slice(-maxCandlesPerKey),
+        lastUpdatedAt: entry.lastUpdatedAt,
+        lastWsUpdateAt: entry.lastWsUpdateAt,
+        source: entry.source,
+      });
+    }
+    return out;
+  }
+
+  importSnapshot(
+    entries: ReadonlyArray<{
+      key: string;
+      candles: CachedCandle[];
+      lastUpdatedAt: number;
+      lastWsUpdateAt: number | null;
+      source: 'WS_INCREMENTAL' | 'REST_HISTORY';
+    }>,
+  ): number {
+    let imported = 0;
+    for (const entry of entries) {
+      if (!entry.key || !Array.isArray(entry.candles) || entry.candles.length === 0) continue;
+      if (this.store.has(entry.key)) continue;
+      this.evictIfNeeded();
+      this.store.set(entry.key, {
+        candles: entry.candles.slice(-MAX_ROLLING_CANDLES),
+        lastUpdatedAt: entry.lastUpdatedAt,
+        lastWsUpdateAt: entry.lastWsUpdateAt,
+        source: entry.source,
+      });
+      imported += 1;
+    }
+    return imported;
+  }
+
   private evictIfNeeded(): void {
     if (this.store.size < MAX_CACHE_KEYS) return;
     const oldestKey = this.store.keys().next().value;

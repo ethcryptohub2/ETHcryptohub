@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { gunzipSync, gzipSync } from 'node:zlib';
 import type { QueryResultRow } from 'pg';
 import { binanceRateLimiter, BinanceCooldownError } from './binance-rate-limit';
 import { ensureBinanceCooldownHydrated } from './binance-rate-limit-db';
@@ -36,8 +37,64 @@ export const DEFAULT_V2_BATCH_SIZE = 32;
 export const DEFAULT_V2_CONCURRENCY = 4; // Selected from 2/4/6 worker pool benchmark
 const SCANNER_V2_STATE_KEY = 'scanner_v2_state';
 const SCANNER_V2_LOCK_KEY = 'scanner_v2_lock';
+const COINAPI_QUOTA_KEY = 'coinapi_daily_quota';
+const CANDLE_CACHE_SNAPSHOT_KEY = 'scanner_candle_cache_snapshot';
 const LOCK_TTL_MS = 270_000; // 4.5m lease
 const INSTANCE_OWNER_ID = randomUUID();
+
+async function hydrateCoinApiQuotaFromDb(): Promise<void> {
+  const res = await safeDbQuery<{ value_json: { dailyUsed?: number; dailyWindowStart?: number } }>(
+    `SELECT value_json FROM public.app_settings WHERE key = $1 LIMIT 1`,
+    [COINAPI_QUOTA_KEY],
+  );
+  const row = res.rows[0]?.value_json;
+  if (row && typeof row.dailyUsed === 'number' && typeof row.dailyWindowStart === 'number') {
+    coinapiTracker.hydrateQuotaState(row.dailyUsed, row.dailyWindowStart);
+  }
+}
+
+async function persistCoinApiQuotaToDb(): Promise<void> {
+  const state = coinapiTracker.exportQuotaState();
+  await safeDbQuery(
+    `INSERT INTO public.app_settings (key, value_json, updated_at)
+     VALUES ($1, $2::jsonb, NOW())
+     ON CONFLICT (key) DO UPDATE SET value_json = EXCLUDED.value_json, updated_at = NOW()`,
+    [COINAPI_QUOTA_KEY, JSON.stringify(state)],
+  );
+}
+
+async function hydrateCandleCacheFromDb(): Promise<number> {
+  if (sharedCandleCache.size() > 0) return 0;
+  const res = await safeDbQuery<{ value_json: { gzipBase64?: string } }>(
+    `SELECT value_json FROM public.app_settings WHERE key = $1 LIMIT 1`,
+    [CANDLE_CACHE_SNAPSHOT_KEY],
+  );
+  const b64 = res.rows[0]?.value_json?.gzipBase64;
+  if (!b64) return 0;
+  try {
+    const json = gunzipSync(Buffer.from(b64, 'base64')).toString('utf8');
+    const entries = JSON.parse(json);
+    return Array.isArray(entries) ? sharedCandleCache.importSnapshot(entries) : 0;
+  } catch {
+    return 0;
+  }
+}
+
+async function persistCandleCacheToDb(): Promise<void> {
+  const entries = sharedCandleCache.exportSnapshot(220);
+  if (entries.length === 0) return;
+  try {
+    const gzipBase64 = gzipSync(Buffer.from(JSON.stringify(entries), 'utf8')).toString('base64');
+    await safeDbQuery(
+      `INSERT INTO public.app_settings (key, value_json, updated_at)
+       VALUES ($1, $2::jsonb, NOW())
+       ON CONFLICT (key) DO UPDATE SET value_json = EXCLUDED.value_json, updated_at = NOW()`,
+      [CANDLE_CACHE_SNAPSHOT_KEY, JSON.stringify({ gzipBase64, entries: entries.length, savedAt: new Date().toISOString() })],
+    );
+  } catch {
+    // Non-fatal persistence warning
+  }
+}
 
 async function acquireGlobalV2Lock(now = Date.now()): Promise<boolean> {
   try {
@@ -163,6 +220,10 @@ export async function saveScannerV2State(state: ScannerV2PersistedState): Promis
 export async function getScannerV2State(): Promise<ScannerV2PersistedState> {
   const now = Date.now();
   const cb = await ensureBinanceCooldownHydrated(now);
+  await hydrateCoinApiQuotaFromDb();
+  if (sharedCandleCache.size() === 0) {
+    await hydrateCandleCacheFromDb();
+  }
   const mdSettings = await getStoredMarketDataSettings();
   const coinapiKey = resolveCoinApiKey(mdSettings);
   syncProviderTrackersWithConfig(
@@ -254,6 +315,8 @@ async function executeCoordinatedV2Cycle(options: {
   const cycleId = `V2-${startedMs}`;
 
   const cb = await ensureBinanceCooldownHydrated(startedMs);
+  await hydrateCoinApiQuotaFromDb();
+  await hydrateCandleCacheFromDb();
   const existing = await getScannerV2State();
   const mdSettings = await getStoredMarketDataSettings();
   const coinapiKey = resolveCoinApiKey(mdSettings);
@@ -325,7 +388,7 @@ async function executeCoordinatedV2Cycle(options: {
     const researchProvider = await loadMarketResearchProvider();
 
     if (!useFailoverMode && binanceRateLimiter.getStatus().state !== 'OPEN') {
-      binanceWsKlineEngine.start(enabledSymbols.slice(0, 180), timeframe);
+      binanceWsKlineEngine.start(enabledSymbols, timeframe);
     }
 
     let marketSnapshot: FuturesMarketSnapshot;
@@ -527,10 +590,15 @@ async function executeCoordinatedV2Cycle(options: {
         const skipped = result.candidates.filter((c) =>
           c.warnings.some((w) => w.includes('Skipped due to Binance cooldown')),
         ).length;
-        const failed = result.candidates.filter((c) =>
+        const failedFromCandidates = result.candidates.filter((c) =>
           c.status === 'DATA_UNAVAILABLE' && !c.warnings.some((w) => w.includes('Skipped due to Binance cooldown')),
         ).length;
-        const successful = Math.max(0, result.candidates.length - failed - skipped);
+        const evaluatedSymbols = new Set(result.candidates.map((c) => c.symbol));
+        const missingFailoverCount = useFailoverMode
+          ? activeBatchSymbols.filter((s) => !evaluatedSymbols.has(s)).length
+          : 0;
+        const failed = failedFromCandidates + missingFailoverCount;
+        const successful = Math.max(0, result.candidates.length - failedFromCandidates - skipped);
         const qualified = result.candidates.filter((c) => c.status === 'READY' && c.setup).length;
 
         return {
@@ -604,6 +672,12 @@ async function executeCoordinatedV2Cycle(options: {
     };
 
     await saveScannerV2State(finalState);
+    if (useFailoverMode) {
+      await persistCoinApiQuotaToDb();
+    }
+    if (sharedCandleCache.size() > 0) {
+      await persistCandleCacheToDb();
+    }
     return finalState;
   } catch (err) {
     const cbErr = binanceRateLimiter.getStatus();

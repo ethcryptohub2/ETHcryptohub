@@ -38,6 +38,11 @@ function timeframeMs(tf: ProviderTimeframe): number {
   }
 }
 
+function sanitizeErrorBody(raw: string, apiKey: string): string {
+  const withoutKey = apiKey ? raw.split(apiKey).join('[REDACTED]') : raw;
+  return withoutKey.replace(/\s+/g, ' ').trim().slice(0, 240);
+}
+
 export async function discoverCoinApiInstruments(
   apiKey: string,
   request: typeof fetch = globalThis.fetch,
@@ -50,7 +55,8 @@ export async function discoverCoinApiInstruments(
     cache: 'no-store',
   });
   if (!response.ok) {
-    const err = new Error(`CoinAPI symbols failed (${response.status}).`);
+    const bodyText = sanitizeErrorBody(await response.text().catch(() => ''), apiKey);
+    const err = new Error(`CoinAPI symbols failed (${response.status})${bodyText ? `: ${bodyText}` : '.'}`);
     (err as Error & { statusCode?: number }).statusCode = response.status;
     throw err;
   }
@@ -105,7 +111,10 @@ export async function fetchCoinApiCandles(
     cache: 'no-store',
   });
   if (!response.ok) {
-    const err = new Error(`CoinAPI OHLCV failed (${response.status}) for ${coinApiSymbol} ${period}.`);
+    const bodyText = sanitizeErrorBody(await response.text().catch(() => ''), apiKey);
+    const err = new Error(
+      `CoinAPI OHLCV failed (${response.status}) for ${coinApiSymbol} ${period}${bodyText ? `: ${bodyText}` : '.'}`,
+    );
     (err as Error & { statusCode?: number }).statusCode = response.status;
     throw err;
   }
@@ -153,4 +162,105 @@ export async function fetchCoinApiCandles(
   }
 
   return candles.sort((a, b) => a.openTime - b.openTime);
+}
+
+export interface CoinApiEntitlementProbeResult {
+  restOhlcv: { status: number | null; body: string };
+  restSymbols: { status: number | null; body: string };
+  wsStream: { connected: boolean; messages: string[]; error: string | null };
+}
+
+export async function probeCoinApiEntitlements(
+  apiKey: string,
+  request: typeof fetch = globalThis.fetch,
+): Promise<CoinApiEntitlementProbeResult> {
+  const restOhlcv = await (async () => {
+    try {
+      const res = await request(
+        `${COINAPI_BASE_URL}/ohlcv/BINANCEFTS_PERP_BTC_USDT/latest?period_id=15MIN&limit=1`,
+        {
+          headers: { 'X-CoinAPI-Key': apiKey, accept: 'application/json' },
+          signal: AbortSignal.timeout(10_000),
+          cache: 'no-store',
+        },
+      );
+      const body = sanitizeErrorBody(await res.text().catch(() => ''), apiKey);
+      return { status: res.status, body };
+    } catch (err) {
+      return { status: null, body: err instanceof Error ? err.message : 'Request failed' };
+    }
+  })();
+
+  const restSymbols = await (async () => {
+    try {
+      const res = await request(
+        `${COINAPI_BASE_URL}/symbols?filter_exchange_id=${BINANCEFTS_EXCHANGE_ID}`,
+        {
+          headers: { 'X-CoinAPI-Key': apiKey, accept: 'application/json' },
+          signal: AbortSignal.timeout(10_000),
+          cache: 'no-store',
+        },
+      );
+      const raw = await res.text().catch(() => '');
+      const body = res.ok
+        ? `OK (payload length=${raw.length})`
+        : sanitizeErrorBody(raw, apiKey);
+      return { status: res.status, body };
+    } catch (err) {
+      return { status: null, body: err instanceof Error ? err.message : 'Request failed' };
+    }
+  })();
+
+  const wsStream = await new Promise<{ connected: boolean; messages: string[]; error: string | null }>((resolve) => {
+    if (typeof WebSocket === 'undefined') {
+      resolve({ connected: false, messages: [], error: 'WebSocket unavailable in runtime' });
+      return;
+    }
+    let settled = false;
+    let connected = false;
+    const messages: string[] = [];
+    let ws: WebSocket | null = null;
+    const finish = (error: string | null) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      try {
+        ws?.close();
+      } catch {
+        // ignore
+      }
+      resolve({ connected, messages, error });
+    };
+    const timer = setTimeout(() => finish(messages.length === 0 ? 'Timed out waiting for WS message' : null), 5_000);
+    try {
+      ws = new WebSocket('wss://ws.coinapi.io/v1/');
+      ws.onopen = () => {
+        connected = true;
+        ws?.send(JSON.stringify({
+          type: 'hello',
+          apikey: apiKey,
+          heartbeat: false,
+          subscribe_data_type: ['trade'],
+          subscribe_filter_symbol_id: ['BINANCEFTS_PERP_BTC_USDT'],
+        }));
+      };
+      ws.onmessage = (evt) => {
+        const text = sanitizeErrorBody(typeof evt.data === 'string' ? evt.data : String(evt.data), apiKey);
+        messages.push(text);
+        if (messages.length >= 2 || text.toLowerCase().includes('error')) {
+          finish(null);
+        }
+      };
+      ws.onerror = () => {
+        finish('CoinAPI WebSocket connection error');
+      };
+      ws.onclose = (evt) => {
+        finish(`Closed (code=${evt.code}${evt.reason ? `, reason=${sanitizeErrorBody(evt.reason, apiKey)}` : ''})`);
+      };
+    } catch (err) {
+      finish(err instanceof Error ? err.message : 'WS init failed');
+    }
+  });
+
+  return { restOhlcv, restSymbols, wsStream };
 }

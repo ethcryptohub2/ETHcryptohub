@@ -7,6 +7,7 @@ import {
   getProviderDiagnosticsForAdmin,
   syncProviderTrackersWithConfig,
 } from '../../../../lib/market-data/provider-manager';
+import { probeCoinApiEntitlements } from '../../../../lib/market-data/providers/coinapi';
 import {
   getMarketDataSettingsView,
   getStoredMarketDataSettings,
@@ -29,22 +30,27 @@ const updateSchema = z.object({
   fullScanIntervalSeconds: z.coerce.number().int().min(60).max(3600).optional(),
 }).strict();
 
-export async function GET() {
+export async function GET(request: NextRequest) {
   try {
     await requireAdmin();
     await ensureBinanceCooldownHydrated();
     const stored = await getStoredMarketDataSettings();
+    const coinapiKey = resolveCoinApiKey(stored);
     syncProviderTrackersWithConfig({
       autoFailoverEnabled: stored.autoFailoverEnabled,
       binanceEnabled: stored.binanceEnabled,
       coinapiEnabled: stored.coinapiEnabled,
-      coinapiApiKey: resolveCoinApiKey(stored),
+      coinapiApiKey: coinapiKey,
       alternativeEnabled: stored.alternativeEnabled,
       historicalCacheEnabled: stored.historicalCacheEnabled,
     });
     const settings = await getMarketDataSettingsView();
     const providers = getProviderDiagnosticsForAdmin();
-    return NextResponse.json({ data: { settings, providers } }, { headers: noStore });
+    const shouldProbe = request.nextUrl.searchParams.get('probe') === 'coinapi';
+    const coinapiProbe = shouldProbe && coinapiKey
+      ? await probeCoinApiEntitlements(coinapiKey)
+      : undefined;
+    return NextResponse.json({ data: { settings, providers, ...(coinapiProbe ? { coinapiProbe } : {}) } }, { headers: noStore });
   } catch (error) {
     return NextResponse.json(
       { error: error instanceof AuthError ? error.message : 'Market data settings unavailable.' },
