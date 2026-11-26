@@ -147,6 +147,21 @@ class BinanceRateLimitCoordinator {
     }
   }
 
+  async waitForBudget(weight: number, maxWaitMs = 65_000): Promise<void> {
+    const startWait = Date.now();
+    while (true) {
+      const now = Date.now();
+      const status = this.getStatus(now);
+      if (status.state === 'OPEN') return; // Fail fast if already in cooldown
+      const used = this.getCurrentUsedWeight(now);
+      if (used + weight <= BINANCE_FUTURES_1M_SAFE_BUDGET - 80) return;
+      if (now - startWait >= maxWaitMs) return;
+      const oldest = this.weightWindow[0]?.timestamp ?? now;
+      const sleepMs = Math.min(5_000, Math.max(250, oldest + 60_050 - now));
+      await new Promise((resolve) => setTimeout(resolve, sleepMs));
+    }
+  }
+
   recordWeight(weight: number, now = Date.now()): void {
     this.weightWindow.push({ timestamp: now, weight });
   }
@@ -276,6 +291,9 @@ export async function fetchBinanceRest(
   url: string | URL,
   options: { weight: number; timeoutMs?: number; now?: number } = { weight: 2 },
 ): Promise<Response> {
+  if (options.now === undefined) {
+    await binanceRateLimiter.waitForBudget(options.weight);
+  }
   const now = options.now ?? Date.now();
   binanceRateLimiter.assertCanRequest(options.weight, now);
   binanceRateLimiter.recordWeight(options.weight, now);

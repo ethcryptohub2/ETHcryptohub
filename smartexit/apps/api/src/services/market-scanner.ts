@@ -773,7 +773,11 @@ export class BinanceMarketScannerService implements MarketScannerProvider {
     if (useSharedCache) {
       const cbOpen = binanceRateLimiter.getStatus(this.now()).state === 'OPEN';
       const rolling = sharedCandleCache.assess(preferredExchange, symbol, timeframe, this.now(), cbOpen);
-      if (rolling.status === 'FRESH_LIVE' && !rolling.hasGaps) {
+      const latestClose = rolling.candles.at(-1)?.closeTime ?? 0;
+      const isFreshOrCurrent =
+        rolling.status === 'FRESH_LIVE' ||
+        (rolling.status === 'VALID_CACHED' && latestClose >= this.now() - intervalMilliseconds(timeframe) - 30_000);
+      if (isFreshOrCurrent && !rolling.hasGaps) {
         this.candleCache.set(key, { expiresAt: this.now() + CANDLE_CACHE_MS, candles: rolling.candles });
         return rolling.candles;
       }

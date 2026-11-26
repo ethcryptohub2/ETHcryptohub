@@ -3,7 +3,7 @@ export async function register() {
     try {
       const { ensureBinanceCooldownHydrated } = await import('./lib/binance-rate-limit-db');
       const cb = await ensureBinanceCooldownHydrated();
-      const { startFiveMinuteScheduler } = await import('./lib/scanner-scheduler');
+      const { startFiveMinuteScheduler, triggerCoordinatedV2Scan } = await import('./lib/scanner-scheduler');
       startFiveMinuteScheduler();
 
       if (cb.state !== 'OPEN') {
@@ -11,7 +11,12 @@ export async function register() {
         const { binanceWsKlineEngine } = await import('./lib/ws-kline-engine');
         const symbols = await getEnabledScannerSymbols().catch(() => []);
         if (symbols.length > 0) {
-          binanceWsKlineEngine.start(symbols.slice(0, 180), '15m');
+          binanceWsKlineEngine.start(symbols, '15m');
+        }
+        if (process.env.DISABLE_STARTUP_SCAN !== 'true') {
+          setTimeout(() => {
+            void triggerCoordinatedV2Scan({ timeframe: '15m', deliverNotifications: true }).catch(() => {});
+          }, 8_000);
         }
       }
     } catch (err) {
