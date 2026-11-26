@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { NextRequest } from 'next/server';
 import { AuthError, requireUser } from '../../../../lib/auth';
+import { forwardRequestToBackend, shouldForwardToBackend } from '../../../../lib/backend-proxy';
 import { BinanceFuturesError } from '../../../../lib/binance-futures';
 import { executeSignal } from '../../../../lib/trading-execution';
 import { validCsrf } from '../../../../lib/http';
@@ -28,6 +29,14 @@ export async function POST(request: NextRequest) {
   if (!validCsrf(request)) return Response.json({ error: 'Refresh and retry.' }, { status: 403 });
   try {
     const user = await requireUser();
+    if (shouldForwardToBackend()) {
+      const rawBody = await request.text();
+      const forwarded = await forwardRequestToBackend(request, '/api/trading/execute', {
+        method: 'POST',
+        bodyText: rawBody,
+      });
+      if (forwarded) return forwarded;
+    }
     const body: unknown = await request.json().catch(() => null);
     const parsed = schema.safeParse(body);
     if (!parsed.success) return Response.json({ error: 'Explicit trade confirmation is required.' }, { status: 422 });

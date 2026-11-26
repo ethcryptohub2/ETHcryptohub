@@ -1,6 +1,8 @@
 import { randomUUID } from 'node:crypto';
+import os from 'node:os';
 import { gunzipSync, gzipSync } from 'node:zlib';
 import type { QueryResultRow } from 'pg';
+import { tradingExecutionGate } from './binance-futures';
 import { binanceRateLimiter, BinanceCooldownError } from './binance-rate-limit';
 import { ensureBinanceCooldownHydrated } from './binance-rate-limit-db';
 import { sharedCandleCache } from './candle-cache';
@@ -44,10 +46,17 @@ const SCANNER_V2_LOCK_KEY = 'scanner_v2_lock';
 const COINAPI_QUOTA_KEY = 'coinapi_daily_quota';
 const CANDLE_CACHE_SNAPSHOT_KEY = 'scanner_candle_cache_snapshot';
 const LOCK_TTL_MS = 480_000; // 8m lease for full cold-start warmups
+const AUTOMATION_TICK_INTERVAL_MS = 45_000;
 const globalForScheduler = globalThis as typeof globalThis & {
   __smartexitInstanceOwnerId?: string;
   __smartexitActiveCyclePromise?: Promise<ScannerV2PersistedState> | null;
   __smartexitSchedulerTimer?: ReturnType<typeof setInterval> | null;
+  __smartexitAutomationTimer?: ReturnType<typeof setInterval> | null;
+  __smartexitAutomationBusy?: boolean;
+  __smartexitAutomationTickCount?: number;
+  __smartexitAutomationFailures?: number;
+  __smartexitAutomationLastError?: string | null;
+  __smartexitAutomationSignalsBound?: boolean;
 };
 const INSTANCE_OWNER_ID = globalForScheduler.__smartexitInstanceOwnerId ??= randomUUID();
 
@@ -460,6 +469,7 @@ async function executeCoordinatedV2Cycle(options: {
       highRiskStatus: highRiskSettings?.enabled ? 'ACTIVE' : 'DISABLED',
     };
     await saveScannerV2State(runningState);
+    const createdSignalIds: string[] = [];
 
     const summary = await runHybridParallelWorkPool({
       cycleId,
@@ -552,6 +562,9 @@ async function executeCoordinatedV2Cycle(options: {
         const persisted = await persistSignalScan(result.candidates, settings, {
           dispatchNotifications: options.deliverNotifications ?? true,
         });
+        for (const id of persisted.createdSignalIds) {
+          createdSignalIds.push(id);
+        }
         if ((options.deliverNotifications ?? true) && persisted.created > 0) {
           await flushSignalNotifications();
         }
@@ -584,7 +597,10 @@ async function executeCoordinatedV2Cycle(options: {
                 await client.query('BEGIN');
                 const hrRes = await insertHighRiskSignal(client, setup, highRiskSettings);
                 await client.query('COMMIT');
-                if (hrRes) hrCreated += 1;
+                if (hrRes) {
+                  hrCreated += 1;
+                  createdSignalIds.push(hrRes.centralId);
+                }
               }
             } catch {
               await client.query('ROLLBACK').catch(() => {});
@@ -643,6 +659,22 @@ async function executeCoordinatedV2Cycle(options: {
       await processSignalLifecycle(marketSnapshot).catch((err) => {
         console.warn('V2 lifecycle reconciliation notice:', err instanceof Error ? err.message : err);
       });
+    }
+
+    // Immediate automatic Demo order dispatch for newly generated signals when enabled on backend
+    if (
+      isBackgroundScannerEnabled() &&
+      process.env.WORKER_SAFE_MODE !== 'true' &&
+      process.env.DEMO_ORDER_DISPATCH_ENABLED === 'true' &&
+      createdSignalIds.length > 0 &&
+      tradingExecutionGate('DEMO')
+    ) {
+      try {
+        const { processNewAutomaticTrades } = await import('./trading-execution');
+        await processNewAutomaticTrades(createdSignalIds);
+      } catch (err) {
+        console.warn('[V2 Auto-Execution] Post-scan Demo dispatch warning:', err instanceof Error ? err.message : err);
+      }
     }
 
     const cbEnd = binanceRateLimiter.getStatus();
@@ -730,5 +762,132 @@ export function stopFiveMinuteScheduler(): void {
   if (globalForScheduler.__smartexitSchedulerTimer) {
     clearInterval(globalForScheduler.__smartexitSchedulerTimer);
     globalForScheduler.__smartexitSchedulerTimer = null;
+  }
+}
+
+async function runDemoAutomationTick(workerId: string): Promise<void> {
+  if (!isBackgroundScannerEnabled() || globalForScheduler.__smartexitAutomationBusy) return;
+  globalForScheduler.__smartexitAutomationBusy = true;
+  const safeMode =
+    process.env.WORKER_SAFE_MODE === 'true' ||
+    process.env.DEMO_ORDER_DISPATCH_ENABLED !== 'true' ||
+    !tradingExecutionGate('DEMO');
+  const nextTick = (globalForScheduler.__smartexitAutomationTickCount ?? 0) + 1;
+  globalForScheduler.__smartexitAutomationTickCount = nextTick;
+  let protectionFailures = 0;
+
+  try {
+    const { acquireWorkerLease, renewWorkerLease, releaseWorkerLease } = await import('./worker-lease');
+    const hostname = os.hostname() || 'northflank-container';
+
+    if (!globalForScheduler.__smartexitAutomationSignalsBound) {
+      globalForScheduler.__smartexitAutomationSignalsBound = true;
+      const onExit = () => {
+        stopDemoAutomationLoop();
+        void releaseWorkerLease(workerId).catch(() => {});
+      };
+      process.once('SIGTERM', onExit);
+      process.once('SIGINT', onExit);
+    }
+
+    const leaseAttempt = await acquireWorkerLease({
+      workerId,
+      hostname,
+      pid: process.pid,
+      version: '2.1.0-northflank',
+      environment: 'DEMO',
+      ttlSeconds: 120,
+      safeMode,
+    });
+    if (!leaseAttempt.ok) {
+      return;
+    }
+
+    if (!safeMode) {
+      const { reconcileBinanceDemoProtection, processNewAutomaticTrades } = await import('./trading-execution');
+      const reconciled = await reconcileBinanceDemoProtection(10).catch((err) => {
+        console.warn('[Automation] Demo protection reconciliation error:', err instanceof Error ? err.message : err);
+        return null;
+      });
+      if (reconciled && Array.isArray(reconciled.results)) {
+        protectionFailures = reconciled.results.filter(
+          (r) => r.status === 'FAILED' || r.status === 'PROTECTION_FAILED',
+        ).length;
+      }
+      await processNewAutomaticTrades([]).catch((err) => {
+        console.warn('[Automation] Demo signal dispatch error:', err instanceof Error ? err.message : err);
+      });
+    }
+
+    const v2 = await getScannerV2State().catch(() => null);
+    let totalTradesExecuted = 0;
+    try {
+      const { query } = await import('./db');
+      const countRes = await query<{ cnt: string }>(
+        `SELECT COUNT(*)::TEXT AS cnt FROM public.trade_executions WHERE environment = 'DEMO' AND execution_status IN ('PROTECTED', 'CLOSED', 'ENTRY_FILLED')`,
+      );
+      totalTradesExecuted = Number(countRes.rows[0]?.cnt ?? 0);
+    } catch {}
+
+    globalForScheduler.__smartexitAutomationFailures = 0;
+    globalForScheduler.__smartexitAutomationLastError = null;
+    await renewWorkerLease({
+      workerId,
+      tickCount: nextTick,
+      activeCycle: v2?.cycleId ?? 'V2-RUNTIME',
+      batchProgress: v2 ? `${v2.completedBatches}/${v2.totalBatches}` : '0/0',
+      scannedPairsCount: v2?.successfulCount ?? 0,
+      lastSuccessfulScanAt: v2?.lastSuccessfulScanAt ?? null,
+      lastScanDurationMs: v2?.durationMs ?? undefined,
+      lastCandidateCount: v2?.totalEligible ?? 0,
+      lastQualifiedCount: v2?.qualifiedCount ?? 0,
+      totalTradesExecuted,
+      exchangeExecutionStatus: safeMode ? 'SAFE_MODE (READ_ONLY)' : 'DEMO_DISPATCH_ENABLED',
+      protectionFailures,
+      emergencyStopStatus: 'CLEAR',
+      consecutiveFailures: 0,
+      lastError: null,
+      safeMode,
+      ttlSeconds: 120,
+    });
+  } catch (err) {
+    const failures = (globalForScheduler.__smartexitAutomationFailures ?? 0) + 1;
+    globalForScheduler.__smartexitAutomationFailures = failures;
+    const msg = err instanceof Error ? err.message.slice(0, 240) : 'Automation tick error';
+    globalForScheduler.__smartexitAutomationLastError = msg;
+    const { renewWorkerLease } = await import('./worker-lease').catch(() => ({ renewWorkerLease: null }));
+    if (renewWorkerLease) {
+      await renewWorkerLease({
+        workerId,
+        tickCount: nextTick,
+        exchangeExecutionStatus: safeMode ? 'SAFE_MODE (READ_ONLY)' : 'DEGRADED',
+        protectionFailures,
+        consecutiveFailures: failures,
+        lastError: msg,
+        safeMode,
+        ttlSeconds: 120,
+      }).catch(() => {});
+    }
+  } finally {
+    globalForScheduler.__smartexitAutomationBusy = false;
+  }
+}
+
+export function startDemoAutomationLoop(): void {
+  if (!isBackgroundScannerEnabled()) return;
+  if (globalForScheduler.__smartexitAutomationTimer) return;
+  const workerId = `northflank-${os.hostname() || 'worker'}-${INSTANCE_OWNER_ID.slice(0, 8)}`;
+  setTimeout(() => {
+    void runDemoAutomationTick(workerId);
+  }, 5_000);
+  globalForScheduler.__smartexitAutomationTimer = setInterval(() => {
+    void runDemoAutomationTick(workerId);
+  }, AUTOMATION_TICK_INTERVAL_MS);
+}
+
+export function stopDemoAutomationLoop(): void {
+  if (globalForScheduler.__smartexitAutomationTimer) {
+    clearInterval(globalForScheduler.__smartexitAutomationTimer);
+    globalForScheduler.__smartexitAutomationTimer = null;
   }
 }

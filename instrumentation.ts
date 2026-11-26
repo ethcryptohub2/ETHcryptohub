@@ -6,8 +6,9 @@ export async function register() {
     try {
       const { ensureBinanceCooldownHydrated } = await import('./lib/binance-rate-limit-db');
       const cb = await ensureBinanceCooldownHydrated();
-      const { startFiveMinuteScheduler, triggerCoordinatedV2Scan } = await import('./lib/scanner-scheduler');
+      const { startFiveMinuteScheduler, startDemoAutomationLoop, triggerCoordinatedV2Scan } = await import('./lib/scanner-scheduler');
       startFiveMinuteScheduler();
+      startDemoAutomationLoop();
 
       if (cb.state !== 'OPEN') {
         const { getEnabledScannerSymbols } = await import('./lib/scanner-coins');

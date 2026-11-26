@@ -594,13 +594,33 @@ async function computeOrder(
   const rawQuantity = profile.order_size_mode === 'RISK_BASED'
     ? riskAmount / Math.abs(entry - stop)
     : notional / entry;
-  const quantity = floorToStep(rawQuantity, step);
-  const numericQuantity = Number(quantity);
-  const roundedNotional = numericQuantity * entry;
+  let quantity = floorToStep(rawQuantity, step);
+  let numericQuantity = Number(quantity);
+  let roundedNotional = numericQuantity * Math.min(entry, markPrice);
+  if (
+    roundedNotional < minNotional &&
+    profile.order_size_mode === 'FIXED' &&
+    notional >= minNotional &&
+    minNotional > 0
+  ) {
+    const minValidQty = ceilToStep((minNotional * 1.005) / Math.min(entry, markPrice), step);
+    const minValidNum = Number(minValidQty);
+    if (
+      Number.isFinite(minValidNum) &&
+      minValidNum * entry <= notional * 1.15 &&
+      minValidNum >= minQty &&
+      minValidNum <= maxQty
+    ) {
+      quantity = minValidQty;
+      numericQuantity = minValidNum;
+      roundedNotional = numericQuantity * Math.min(entry, markPrice);
+    }
+  }
+  const orderNotionalAtEntry = numericQuantity * entry;
   if (numericQuantity < minQty || numericQuantity > maxQty || roundedNotional < minNotional) {
     throw new BinanceFuturesError('Calculated order does not meet Binance quantity or notional limits.', 422);
   }
-  if (!Number.isFinite(available) || roundedNotional / profile.leverage > available) {
+  if (!Number.isFinite(available) || orderNotionalAtEntry / profile.leverage > available) {
     throw new BinanceFuturesError('Available Futures balance is insufficient for this order and leverage.', 422);
   }
 
@@ -619,7 +639,7 @@ async function computeOrder(
     info,
     adapter,
     quantity,
-    notionalUsdt: roundedNotional.toFixed(8),
+    notionalUsdt: orderNotionalAtEntry.toFixed(8),
     leverage: profile.leverage,
     markPrice: markPrice.toString(),
     stopPrice,
@@ -702,6 +722,7 @@ export async function previewSignalOrder(userId: number, signalId: string, envir
   }
   const prepared = await computeOrder(signal, userId, environment, profile);
   const executionMode = profile.execution_mode;
+  const canExecute = environment === 'DEMO' && tradingExecutionGate('DEMO');
   return {
     strategy,
     exchange: profile.exchange,
@@ -717,10 +738,10 @@ export async function previewSignalOrder(userId: number, signalId: string, envir
     takeProfit: prepared.targetPrice,
     executionMode,
     protectionPolicy: 'Initial Stop Loss; TP1/TP2 retain full size; TP3 is the full-position close.',
-    canExecute: false,
-    executionBlockReason: strategy === 'HIGH_RISK_SCALPING'
-      ? 'High-Risk customer execution is not implemented.'
-      : 'Customer execution is blocked until exchange-side TP1/TP2 trailing protection is implemented and verified.',
+    canExecute,
+    executionBlockReason: canExecute
+      ? null
+      : 'Execution is locked until Demo deployment gates or explicit environment authorization are active.',
   };
 }
 
@@ -1455,10 +1476,46 @@ export async function executeMultiExchangeDemo(
   }
 }
 
+export interface DemoAutoTelemetryEntry {
+  at: string;
+  userId: number;
+  signalId: string;
+  symbol: string;
+  side: string;
+  strategy: string;
+  exchange: string;
+  environment: string;
+  status: 'EXECUTED' | 'SKIPPED' | 'FAILED';
+  reasonMessage: string;
+  executionId?: string;
+}
+
+async function appendDemoAutoTelemetry(events: DemoAutoTelemetryEntry[]) {
+  if (!events.length) return;
+  try {
+    const existing = await query<{ value_json: unknown }>(
+      `SELECT value_json FROM public.app_settings WHERE key = 'demo_auto_execution_telemetry'`,
+    );
+    const prior = Array.isArray(existing.rows[0]?.value_json)
+      ? (existing.rows[0].value_json as DemoAutoTelemetryEntry[])
+      : [];
+    const merged = [...events, ...prior].slice(0, 30);
+    await query(
+      `INSERT INTO public.app_settings (key, value_json, updated_at)
+       VALUES ('demo_auto_execution_telemetry', $1::jsonb, NOW())
+       ON CONFLICT (key) DO UPDATE SET value_json = EXCLUDED.value_json, updated_at = NOW()`,
+      [JSON.stringify(merged)],
+    );
+  } catch {
+    // Telemetry persistence must never block order dispatch or unit tests
+  }
+}
+
 export async function processNewAutomaticTrades(signalIds: string[]) {
   if (process.env.WORKER_SAFE_MODE === 'true' || process.env.DEMO_ORDER_DISPATCH_ENABLED === 'false') {
     return;
   }
+  const adminOnly = process.env.SMARTEXIT_DEMO_AUTO_EXECUTION_ADMIN_ONLY === 'true';
   const candidateSignalIds = [...signalIds];
   try {
     const unexecuted = await query<{ id: string }>(
@@ -1483,24 +1540,28 @@ export async function processNewAutomaticTrades(signalIds: string[]) {
   } catch {}
 
   if (!candidateSignalIds.length) return;
+  const telemetryEvents: DemoAutoTelemetryEntry[] = [];
   for (const signalId of candidateSignalIds) {
-    const signal = await query<{ scanner_type: Signal['scanner_type'] }>(
-      'SELECT scanner_type FROM public.market_signals WHERE id = $1',
+    const signal = await query<{ scanner_type: Signal['scanner_type']; symbol?: string; side?: string }>(
+      'SELECT scanner_type, symbol, side FROM public.market_signals WHERE id = $1',
       [signalId],
     );
-    if (!signal.rows[0]) continue;
-    const strategy = strategyForSignal(signal.rows[0].scanner_type);
+    const sigRow = signal.rows[0];
+    if (!sigRow) continue;
+    const strategy = strategyForSignal(sigRow.scanner_type);
     const configuredUsers = await query<{ user_id: number; environment: TradingEnvironment; exchange: string }>(
       `SELECT DISTINCT s.user_id, s.environment, s.exchange
          FROM public.user_strategy_settings s
+         JOIN public.users u ON u.id = s.user_id
          LEFT JOIN public.user_trading_settings t ON t.user_id = s.user_id
         WHERE s.strategy = $1 AND s.enabled = TRUE AND s.auto_execution_enabled = TRUE
           AND s.execution_mode = 'AUTOMATIC' AND s.emergency_stop_enabled = FALSE
           AND s.environment = 'DEMO'
+          AND ($2::BOOLEAN = FALSE OR u.role = 'admin')
           AND (t.demo_auto_trade_enabled IS NULL OR t.demo_auto_trade_enabled = TRUE)
           AND (t.demo_kill_switch_enabled IS NULL OR t.demo_kill_switch_enabled = FALSE)
         ORDER BY s.user_id`,
-      [strategy],
+      [strategy, adminOnly],
     );
 
     const destinations: Array<{ exchange: 'BINANCE' | 'BYBIT' | 'OKX' | 'BITGET' | 'GATE'; env: 'DEMO' | 'TESTNET' }> = [
@@ -1522,8 +1583,8 @@ export async function processNewAutomaticTrades(signalIds: string[]) {
       }>(
         `SELECT exchange, auto_trade_enabled, execution_mode, emergency_stop_enabled
            FROM public.user_exchange_trading_settings
-          WHERE user_id = $1`,
-        [userId],
+          WHERE user_id = $1 AND environment = $2`,
+        [userId, environment],
       );
       const activeExchanges = new Set<string>();
       if (userSettings.rows.length === 0) {
@@ -1539,16 +1600,59 @@ export async function processNewAutomaticTrades(signalIds: string[]) {
       const activeDestinations = destinations.filter(({ exchange }) => activeExchanges.has(exchange));
       const jobs = activeDestinations.map(async ({ exchange, env }) => {
         try {
-          if (exchange === 'BINANCE') {
-            return await executeSignal(userId, signalId, environment, 'AUTOMATIC');
-          } else {
-            return await executeMultiExchangeDemo(userId, signalId, exchange, env);
+          const outcome = exchange === 'BINANCE'
+            ? await executeSignal(userId, signalId, environment, 'AUTOMATIC')
+            : await executeMultiExchangeDemo(userId, signalId, exchange, env);
+          if (outcome && typeof outcome === 'object' && 'status' in outcome) {
+            const st = String(outcome.status);
+            if (st === 'PROTECTED') {
+              telemetryEvents.push({
+                at: new Date().toISOString(),
+                userId,
+                signalId,
+                symbol: sigRow.symbol ?? '',
+                side: sigRow.side ?? '',
+                strategy,
+                exchange,
+                environment: env,
+                status: 'EXECUTED',
+                reasonMessage: `Protected Demo order executed (${outcome.id ?? 'recorded'}).`,
+                executionId: 'id' in outcome && typeof outcome.id === 'string' ? outcome.id : undefined,
+              });
+            } else if (st !== 'SKIPPED_EXISTING' && st !== 'DUPLICATE') {
+              telemetryEvents.push({
+                at: new Date().toISOString(),
+                userId,
+                signalId,
+                symbol: sigRow.symbol ?? '',
+                side: sigRow.side ?? '',
+                strategy,
+                exchange,
+                environment: env,
+                status: st === 'FAILED' || st === 'PROTECTION_FAILED' ? 'FAILED' : 'SKIPPED',
+                reasonMessage: 'error' in outcome && typeof outcome.error === 'string' ? outcome.error.slice(0, 240) : st,
+              });
+            }
           }
+          return outcome;
         } catch (error) {
+          const msg = error instanceof Error ? error.message.slice(0, 240) : 'Execution error.';
           console.warn(
             `[MULTI-EXCHANGE FANOUT] ${exchange} auto-trade skipped for user ${userId} and signal ${signalId}:`,
-            error instanceof Error ? error.message.slice(0, 240) : 'Execution error.',
+            msg,
           );
+          telemetryEvents.push({
+            at: new Date().toISOString(),
+            userId,
+            signalId,
+            symbol: sigRow.symbol ?? '',
+            side: sigRow.side ?? '',
+            strategy,
+            exchange,
+            environment: env,
+            status: 'SKIPPED',
+            reasonMessage: msg,
+          });
           return null;
         }
       });
@@ -1556,6 +1660,7 @@ export async function processNewAutomaticTrades(signalIds: string[]) {
       await Promise.allSettled(jobs);
     }
   }
+  await appendDemoAutoTelemetry(telemetryEvents);
 }
 
 export async function listUserExecutions(userId: number, input: {

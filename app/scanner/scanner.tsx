@@ -205,6 +205,54 @@ function StandardSignals({
   }, []);
   const [autoScanCountdown, setAutoScanCountdown] = useState(AUTO_SCAN_INTERVAL_SECONDS);
   const [hasDemoCredentials, setHasDemoCredentials] = useState(false);
+  const [autoStatus, setAutoStatus] = useState<{
+    workerHealth?: { status: string; message?: string; lease?: { heartbeatAt?: string; exchangeExecutionStatus?: string; safeMode?: boolean } | null } | null;
+    trading?: {
+      active_environment: 'DEMO' | 'LIVE';
+      demo_auto_trade_enabled: boolean;
+      demo_execution_mode: 'CONFIRM' | 'AUTOMATIC';
+      demo_kill_switch_enabled: boolean;
+    } | null;
+    strategies?: Array<{ strategy: string; enabled: boolean; auto_execution_enabled: boolean; execution_mode: string; emergency_stop_enabled: boolean }>;
+    exchanges?: Array<{ exchange: string; name: string; userAutoTradeEnabled: boolean; credentialsConfigured: boolean; lastVerifiedAt: string | null }>;
+    executions?: Array<{ id: string; signal_id: string; symbol: string; side: string; execution_status: string; binance_order_id: string | null; created_at: string }>;
+    telemetry?: Array<{ at: string; signalId: string; symbol: string; side: string; exchange: string; status: string; reasonMessage: string }>;
+    gate?: { demoDispatchEnabled: boolean; adminOnlyAutoTrade: boolean; eligibleForUser: boolean; liveLocked: boolean };
+  } | null>(null);
+  const [emergencyBusy, setEmergencyBusy] = useState(false);
+
+  const loadAutoStatus = useCallback(() => {
+    fetch('/api/trading/auto-status', { cache: 'no-store' })
+      .then(async (res) => {
+        if (!res.ok) return;
+        const json = (await res.json().catch(() => null)) as { data?: typeof autoStatus };
+        if (json?.data) {
+          setAutoStatus(json.data);
+          const binanceEx = json.data.exchanges?.find((e) => e.exchange === 'BINANCE');
+          if (binanceEx) setHasDemoCredentials(Boolean(binanceEx.credentialsConfigured));
+        }
+      })
+      .catch(() => {});
+  }, []);
+
+  const triggerEmergencyStop = useCallback(async () => {
+    if (emergencyBusy) return;
+    setEmergencyBusy(true);
+    try {
+      const csrfRes = await fetch('/api/csrf', { cache: 'no-store' });
+      const csrfJson = (await csrfRes.json().catch(() => null)) as { data?: { csrfToken?: string } };
+      const csrfToken = csrfJson?.data?.csrfToken;
+      if (!csrfToken) return;
+      await fetch('/api/trading/emergency-stop', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken },
+        body: JSON.stringify({ environment: 'DEMO', action: 'STOP' }),
+      });
+      loadAutoStatus();
+    } finally {
+      setEmergencyBusy(false);
+    }
+  }, [emergencyBusy, loadAutoStatus]);
 
   useEffect(() => {
     let active = true;
@@ -217,10 +265,13 @@ function StandardSignals({
         }
       })
       .catch(() => {});
+    loadAutoStatus();
+    const timer = window.setInterval(loadAutoStatus, 45_000);
     return () => {
       active = false;
+      window.clearInterval(timer);
     };
-  }, []);
+  }, [loadAutoStatus]);
   const candidateSymbols = useMemo(() => (savedData?.candidates ?? []).map((c) => c.symbol), [savedData]);
   const liveSymbols = useMemo(
     () => (candidateSymbols.length > 0 ? candidateSymbols : DEFAULT_LIVE_SYMBOLS),
@@ -588,7 +639,12 @@ function StandardSignals({
         </div>
         <div className="ribbon-item">
           <span className="ribbon-label">Auto Executions</span>
-          <span className="ribbon-value is-accent">{scanResult?.newSignals ?? ready.length}</span>
+          <span
+            className="ribbon-value is-accent"
+            title="Actual Demo exchange orders recorded for your account"
+          >
+            {autoStatus?.executions?.length ?? 0}
+          </span>
         </div>
         <div className="ribbon-item">
           <span className="ribbon-label">Blocked</span>
@@ -806,6 +862,73 @@ function StandardSignals({
             </div>
           </div>
         </div>
+
+        {autoStatus && (
+          <div
+            style={{
+              padding: '10px 14px',
+              background: 'var(--surface-raised)',
+              border: '1px solid var(--surface-border)',
+              borderRadius: 8,
+              display: 'flex',
+              flexDirection: 'column',
+              gap: 8,
+              fontSize: 12,
+            }}
+          >
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 8 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+                <strong className="mono" style={{ fontSize: 11 }}>
+                  AUTO-DEMO ENGINE:{' '}
+                  <span style={{ color: autoStatus.workerHealth?.status === 'ONLINE' && autoStatus.gate?.demoDispatchEnabled ? '#10b981' : '#f59e0b' }}>
+                    {autoStatus.workerHealth?.status === 'ONLINE'
+                      ? autoStatus.gate?.demoDispatchEnabled
+                        ? '● ONLINE & ARMED'
+                        : '● ONLINE (SAFE MODE)'
+                      : `○ ${autoStatus.workerHealth?.status ?? 'STANDBY'}`}
+                  </span>
+                </strong>
+                <span className="muted mono" style={{ fontSize: 11 }}>
+                  Auto-Trade: {autoStatus.trading?.demo_auto_trade_enabled ? 'ON' : 'OFF'} · Binance Switch:{' '}
+                  {autoStatus.exchanges?.find((e) => e.exchange === 'BINANCE')?.userAutoTradeEnabled ? 'ON' : 'OFF'} · Standard:{' '}
+                  {autoStatus.strategies?.find((s) => s.strategy === 'STANDARD')?.auto_execution_enabled ? 'AUTO' : 'OFF'}
+                  {autoStatus.gate?.adminOnlyAutoTrade ? ' · Admin Staging Mode' : ''}
+                </span>
+              </div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                {!autoStatus.trading?.demo_kill_switch_enabled ? (
+                  <button
+                    type="button"
+                    className="button-secondary"
+                    disabled={emergencyBusy}
+                    onClick={() => void triggerEmergencyStop()}
+                    style={{ padding: '4px 10px', fontSize: 11, borderColor: '#ef4444', color: '#ef4444' }}
+                  >
+                    {emergencyBusy ? 'Stopping…' : '🛑 Emergency Stop (Demo)'}
+                  </button>
+                ) : (
+                  <Link href="/settings" className="mono" style={{ color: '#ef4444', fontWeight: 700, fontSize: 11 }}>
+                    🛑 EMERGENCY STOP ACTIVE (Reset in Settings)
+                  </Link>
+                )}
+              </div>
+            </div>
+            {autoStatus.telemetry && autoStatus.telemetry.length > 0 && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 4, borderTop: '1px solid var(--surface-border)', paddingTop: 6 }}>
+                <span className="muted mono" style={{ fontSize: 10 }}>RECENT AUTO-EXECUTION DECISIONS / SKIP REASONS:</span>
+                {autoStatus.telemetry.slice(0, 3).map((ev, idx) => (
+                  <div key={`${ev.signalId}-${ev.at}-${idx}`} style={{ fontSize: 11, display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                    <span className="mono" style={{ color: ev.status === 'EXECUTED' ? '#10b981' : ev.status === 'FAILED' ? '#ef4444' : '#f59e0b' }}>
+                      [{ev.status}]
+                    </span>
+                    <strong>{ev.symbol || `Signal #${ev.signalId}`}</strong>
+                    <span className="muted">{ev.exchange}: {ev.reasonMessage}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
 
         {scanNotice && (
           <div style={{
@@ -1052,6 +1175,26 @@ function StandardSignals({
                   const priceColor = liveTicker?.direction === 'UP' ? '#10b981' : liveTicker?.direction === 'DOWN' ? '#ef4444' : undefined;
                   const isExpanded = expandedSymbol === item.symbol;
 
+                  const binanceEx = autoStatus?.exchanges?.find((e) => e.exchange === 'BINANCE');
+                  const stratProfile = autoStatus?.strategies?.find((s) => s.strategy === 'STANDARD');
+                  const workerIsActive = autoStatus
+                    ? (autoStatus.workerHealth?.status === 'ONLINE' || Boolean(v2State?.lastSuccessfulScanAt))
+                    : true;
+                  const autoIsEnabled = Boolean(
+                    autoStatus?.trading?.demo_auto_trade_enabled &&
+                    stratProfile?.enabled &&
+                    stratProfile?.auto_execution_enabled &&
+                    autoStatus?.gate?.demoDispatchEnabled !== false &&
+                    autoStatus?.gate?.eligibleForUser !== false,
+                  );
+                  const exchangeIsEnabled = Boolean(binanceEx ? binanceEx.userAutoTradeEnabled : true);
+                  const hasExistingExec = Boolean(
+                    signal?.id && autoStatus?.executions?.some((e) => e.signal_id === signal.id && e.execution_status !== 'FAILED'),
+                  );
+                  const emergencyStopped = Boolean(
+                    autoStatus?.trading?.demo_kill_switch_enabled || stratProfile?.emergency_stop_enabled,
+                  );
+
                   const autoDiag = evaluateSignalAutoExecution({
                     status: item.status,
                     side: item.side,
@@ -1064,11 +1207,12 @@ function StandardSignals({
                     entryZoneHigh: entryZone?.high,
                     isExpired: item.status === 'STALE' || (signal ? Date.parse(signal.expiresAt) <= signalNow : false),
                     environment: 'DEMO',
-                    workerActive: true,
-                    autoTradingEnabled: true,
-                    exchangeEnabled: true,
+                    workerActive: workerIsActive,
+                    autoTradingEnabled: autoIsEnabled,
+                    exchangeEnabled: exchangeIsEnabled,
                     hasCredentials: hasDemoCredentials,
-                    emergencyStop: false,
+                    emergencyStop: emergencyStopped,
+                    existingExecution: hasExistingExec,
                   });
 
                   const diagBadgeClass = autoDiag.category === 'ARMED' || autoDiag.category === 'EXECUTED'

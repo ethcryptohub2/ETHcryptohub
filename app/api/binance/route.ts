@@ -1,6 +1,10 @@
 import { z } from 'zod';
 import { NextRequest, NextResponse } from 'next/server';
 import { AuthError, requireUser } from '../../../lib/auth';
+import {
+  isBinanceCredentialStorageAllowed,
+  isBinanceSignedReadAllowed,
+} from '../../../lib/binance-demo-access';
 import { BinanceFuturesError, isTradingEnvironment, testBinanceEnvironment } from '../../../lib/binance-futures';
 import { encryptCredential, isCredentialEncryptionConfigured } from '../../../lib/binance-credentials';
 import { query } from '../../../lib/db';
@@ -8,22 +12,6 @@ import { validCsrf } from '../../../lib/http';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
-
-function isCredentialStorageAllowed() {
-  if (process.env.SMARTEXIT_BINANCE_CREDENTIAL_STORAGE_ENABLED === 'true') return true;
-  if (process.env.VERCEL_ENV === 'preview' && process.env.NEXT_PUBLIC_SUPABASE_URL?.includes('ghecpkpaxbrvehquhzkr')) {
-    return true;
-  }
-  return false;
-}
-
-function isSignedReadAllowed() {
-  if (process.env.SMARTEXIT_BINANCE_CREDENTIAL_TESTS_ENABLED === 'true') return true;
-  if (process.env.VERCEL_ENV === 'preview' && process.env.NEXT_PUBLIC_SUPABASE_URL?.includes('ghecpkpaxbrvehquhzkr')) {
-    return true;
-  }
-  return false;
-}
 
 const noStore = { 'Cache-Control': 'no-store' };
 const blocked = {
@@ -47,7 +35,7 @@ const requestSchema = z.discriminatedUnion('action', [
   z.object({ action: z.literal('test'), environment: environmentSchema }).strict(),
 ]);
 
-async function storageBlock(): Promise<BlockedCode | undefined> {
+async function storageBlock(environment: string): Promise<BlockedCode | undefined> {
   const readiness = await query<{ ready: boolean }>(
     `SELECT EXISTS (
        SELECT 1 FROM information_schema.columns
@@ -57,7 +45,7 @@ async function storageBlock(): Promise<BlockedCode | undefined> {
   );
   if (!readiness.rows[0]?.ready) return 'SCHEMA_BLOCKED';
   if (!isCredentialEncryptionConfigured()) return 'ENCRYPTION_BLOCKED';
-  if (!isCredentialStorageAllowed()) {
+  if (!isBinanceCredentialStorageAllowed(environment)) {
     return 'ADMIN_APPROVAL_REQUIRED';
   }
 }
@@ -88,19 +76,38 @@ export async function GET(request: NextRequest) {
     const user = await requireUser();
     const requested = request.nextUrl.searchParams.get('environment') ?? 'DEMO';
     if (!isTradingEnvironment(requested)) return NextResponse.json({ error: 'Invalid Binance environment.' }, { status: 422 });
-    const reason = await storageBlock();
+    if ('headers' in request && process.env.SMARTEXIT_BACKEND_URL?.trim()) {
+      const { forwardRequestToBackend, shouldForwardToBackend } = await import('../../../lib/backend-proxy');
+      if (shouldForwardToBackend()) {
+        const forwarded = await forwardRequestToBackend(
+          request,
+          `${request.nextUrl.pathname}${request.nextUrl.search}`,
+        );
+        if (forwarded) return forwarded;
+      }
+    }
+    const reason = await storageBlock(requested);
     if (reason) return blockedResponse(reason);
     const result = await query<{ environment_confirmed: boolean; updated_at: string }>(
       'SELECT environment_confirmed, updated_at FROM public.binance_api_credentials WHERE user_id = $1 AND environment = $2',
       [user.id, requested],
     );
+    let lastVerifiedAt: string | null = null;
+    if (result.rows[0]?.environment_confirmed) {
+      const verified = await query<{ last_verified_at: string | null }>(
+        `SELECT last_verified_at FROM public.exchange_api_credentials WHERE user_id = $1 AND exchange = 'BINANCE' AND environment = $2`,
+        [user.id, requested],
+      ).catch(() => ({ rows: [] as Array<{ last_verified_at: string | null }> }));
+      lastVerifiedAt = verified.rows[0]?.last_verified_at ?? null;
+    }
     return NextResponse.json({
       data: {
         environment: requested,
         configured: result.rows[0]?.environment_confirmed === true,
         environmentConfirmationRequired: Boolean(result.rows[0] && !result.rows[0].environment_confirmed),
         updatedAt: result.rows[0]?.updated_at ?? null,
-        signedReadEnabled: isSignedReadAllowed(),
+        lastVerifiedAt,
+        signedReadEnabled: isBinanceSignedReadAllowed(requested),
       },
     }, { headers: { 'Cache-Control': 'no-store' } });
   } catch (error) {
@@ -112,6 +119,17 @@ export async function POST(request: NextRequest) {
   if (!validCsrf(request)) return NextResponse.json({ error: 'Refresh and retry.' }, { status: 403 });
   try {
     const user = await requireUser();
+    if ('headers' in request && process.env.SMARTEXIT_BACKEND_URL?.trim()) {
+      const { forwardRequestToBackend, shouldForwardToBackend } = await import('../../../lib/backend-proxy');
+      if (shouldForwardToBackend()) {
+        const rawBody = await request.text();
+        const forwarded = await forwardRequestToBackend(request, '/api/binance', {
+          method: 'POST',
+          bodyText: rawBody,
+        });
+        if (forwarded) return forwarded;
+      }
+    }
     const body: unknown = await request.json().catch(() => null);
     const parsed = requestSchema.safeParse(body);
     if (!parsed.success) {
@@ -120,9 +138,9 @@ export async function POST(request: NextRequest) {
       });
     }
     const { action, environment } = parsed.data;
-    const reason = await storageBlock();
+    const reason = await storageBlock(environment);
     if (reason) return blockedResponse(reason);
-    if (action === 'test' && !isSignedReadAllowed()) {
+    if (action === 'test' && !isBinanceSignedReadAllowed(environment)) {
       return blockedResponse('SIGNED_READ_BLOCKED');
     }
 
@@ -171,7 +189,16 @@ export async function POST(request: NextRequest) {
     }
 
     const result = await testBinanceEnvironment(user.id, environment);
-    return NextResponse.json({ data: result }, { headers: { 'Cache-Control': 'no-store' } });
+    const verifiedAt = new Date().toISOString();
+    try {
+      await query(
+        `UPDATE public.exchange_api_credentials
+            SET last_verified_at = NOW(), updated_at = NOW()
+          WHERE user_id = $1 AND exchange = 'BINANCE' AND environment = $2`,
+        [user.id, environment],
+      );
+    } catch {}
+    return NextResponse.json({ data: { ...result, lastVerifiedAt: verifiedAt } }, { headers: { 'Cache-Control': 'no-store' } });
   } catch (error) {
     return errorResponse(error);
   }

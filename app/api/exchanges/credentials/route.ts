@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { NextRequest } from 'next/server';
 import { AuthError, requireUser } from '../../../../lib/auth';
+import { forwardRequestToBackend, shouldForwardToBackend } from '../../../../lib/backend-proxy';
 import { validCsrf } from '../../../../lib/http';
 import {
   getExchangeCredentialStatus,
@@ -63,6 +64,14 @@ export async function POST(request: NextRequest) {
   if (!validCsrf(request)) return Response.json({ error: 'Refresh and retry.' }, { status: 403 });
   try {
     const user = await requireUser();
+    if (shouldForwardToBackend()) {
+      const rawBody = await request.text();
+      const forwarded = await forwardRequestToBackend(request, '/api/exchanges/credentials', {
+        method: 'POST',
+        bodyText: rawBody,
+      });
+      if (forwarded) return forwarded;
+    }
     const body: unknown = await request.json().catch(() => null);
     const parsed = requestSchema.safeParse(body);
     if (!parsed.success) return Response.json({ error: 'Invalid exchange credential request.' }, { status: 422 });

@@ -1,5 +1,6 @@
 import { NextRequest } from 'next/server';
 import { AuthError, requireUser } from '../../../../../lib/auth';
+import { isBinanceBalanceReadAllowed } from '../../../../../lib/binance-demo-access';
 import { BinanceFuturesError, getFuturesBalance, isTradingEnvironment } from '../../../../../lib/binance-futures';
 import { isCredentialEncryptionConfigured } from '../../../../../lib/binance-credentials';
 import { assertExchangeFoundationReady, ExchangeFoundationBlockedError } from '../../../../../lib/exchanges/schema';
@@ -13,9 +14,18 @@ export async function GET(request?: NextRequest) {
   try {
     const user = await requireUser();
     const requested = request && 'nextUrl' in request ? request.nextUrl.searchParams.get('environment') : null;
-    const isDemoStagingAllowed = (requested === 'DEMO' || !requested) &&
-      (process.env.VERCEL_ENV === 'preview' || process.env.SMARTEXIT_DEPLOYMENT_ENV === 'staging' || process.env.NEXT_PUBLIC_SUPABASE_URL?.includes('ghecpkpaxbrvehquhzkr'));
-    if ((process.env.SMARTEXIT_BINANCE_BALANCE_READ_ENABLED !== 'true' && !isDemoStagingAllowed) || !isCredentialEncryptionConfigured()) {
+    if (request && 'headers' in request && process.env.SMARTEXIT_BACKEND_URL?.trim()) {
+      const { forwardRequestToBackend, shouldForwardToBackend } = await import('../../../../../lib/backend-proxy');
+      if (shouldForwardToBackend()) {
+        const forwarded = await forwardRequestToBackend(
+          request,
+          `${request.nextUrl.pathname}${request.nextUrl.search}`,
+        );
+        if (forwarded) return forwarded;
+      }
+    }
+    const requestedEnv = requested && isTradingEnvironment(requested) ? requested : 'DEMO';
+    if (!isBinanceBalanceReadAllowed(requestedEnv) || !isCredentialEncryptionConfigured()) {
       return Response.json({ code: 'SIGNED_READ_BLOCKED', error: 'Binance balance checks require separate approval.' }, {
         status: 503, headers: noStore,
       });
@@ -31,6 +41,11 @@ export async function GET(request?: NextRequest) {
     if (!isTradingEnvironment(environment)) {
       return Response.json({ error: 'Select an approved trading environment before requesting an account balance.' }, {
         status: 422, headers: noStore,
+      });
+    }
+    if (!isBinanceBalanceReadAllowed(environment)) {
+      return Response.json({ code: 'SIGNED_READ_BLOCKED', error: 'Binance balance checks require separate approval.' }, {
+        status: 503, headers: noStore,
       });
     }
     const data = await getFuturesBalance(user.id, environment);

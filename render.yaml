@@ -29,6 +29,12 @@ services:
         value: "true"
       - key: DEMO_ORDER_DISPATCH_ENABLED
         value: "false"
+      - key: DISABLE_BACKGROUND_SCANNER
+        value: "true"
+      - key: SMARTEXIT_FORCE_BACKEND_PROXY
+        value: "true"
+      - key: SMARTEXIT_BACKEND_URL
+        value: https://site--smartexit-staging--bg8tkg2xcxv8.code.run
       - key: BINANCE_FUTURES_LIVE_TRADING_APPROVED
         value: "false"
       - key: BINANCE_FUTURES_LIVE_TRADING_ENABLED

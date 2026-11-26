@@ -1,5 +1,7 @@
+import { NextRequest } from 'next/server';
 import { z } from 'zod';
 import { AuthError, requireUser } from '../../../../lib/auth';
+import { forwardRequestToBackend, shouldForwardToBackend } from '../../../../lib/backend-proxy';
 import { BinanceFuturesError, createBinanceEnvironmentAdapter } from '../../../../lib/binance-futures';
 import { getTradingSettings } from '../../../../lib/trading-settings';
 
@@ -16,9 +18,13 @@ const positionSchema = z.array(z.object({
   positionSide: z.string(),
 }));
 
-export async function GET() {
+export async function GET(request?: NextRequest) {
   try {
     const user = await requireUser();
+    if (request && 'headers' in request && shouldForwardToBackend()) {
+      const forwarded = await forwardRequestToBackend(request, '/api/trading/positions');
+      if (forwarded) return forwarded;
+    }
     const settings = await getTradingSettings(user.id);
     const adapter = await createBinanceEnvironmentAdapter(user.id, settings.active_environment);
     const raw: unknown = await adapter.request('GET', '/fapi/v3/positionRisk');

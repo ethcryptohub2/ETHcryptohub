@@ -10,6 +10,7 @@ type DemoBalance = {
   unrealizedPnl: string;
   asset: string;
   lastUpdatedAt: string | null;
+  synchronizedAt?: string;
 };
 
 export function BinanceForm({ onCredentialChange }: { onCredentialChange?: () => void } = {}) {
@@ -39,6 +40,7 @@ export function BinanceForm({ onCredentialChange }: { onCredentialChange?: () =>
             environmentConfirmationRequired?: boolean;
             signedReadEnabled?: boolean;
             updatedAt?: string | null;
+            lastVerifiedAt?: string | null;
           };
           error?: string;
         };
@@ -48,9 +50,7 @@ export function BinanceForm({ onCredentialChange }: { onCredentialChange?: () =>
           setEnvironmentConfirmationRequired(body.data.environmentConfirmationRequired ?? false);
           setSignedReadEnabled(body.data.signedReadEnabled === true);
           setStorageReady(true);
-          if (body.data.updatedAt) {
-            setLastVerifiedAt(body.data.updatedAt);
-          }
+          setLastVerifiedAt(body.data.lastVerifiedAt ?? null);
         }
       })
       .catch((reason: unknown) => {
@@ -77,6 +77,7 @@ export function BinanceForm({ onCredentialChange }: { onCredentialChange?: () =>
         if (!controller.signal.aborted && data) {
           setDemoBalance(data);
           setBalanceError('');
+          setLastVerifiedAt((prev) => prev ?? data.synchronizedAt ?? new Date().toISOString());
         }
       })
       .catch((err) => {
@@ -164,13 +165,20 @@ export function BinanceForm({ onCredentialChange }: { onCredentialChange?: () =>
         setApiKey('');
         setApiSecret('');
         setConfirmed(false);
-        setLastVerifiedAt(new Date().toISOString());
+        setLastVerifiedAt(null);
       }
       const label = environment === 'DEMO' ? 'Demo' : 'Live';
       if (action === 'test') {
         if (body.data?.connected !== true) throw new Error('Binance returned no account verification result.');
         setLastVerifiedAt(new Date().toISOString());
+        setBalanceError('');
         setMessage(`✓ ${label} Binance account-read permission verified. Virtual balance accessible. No orders were placed.`);
+        fetch('/api/binance/futures/balance?environment=DEMO', { cache: 'no-store' })
+          .then(async (res) => {
+            const bal = (await res.json()) as { data?: DemoBalance };
+            if (res.ok && bal.data) setDemoBalance(bal.data);
+          })
+          .catch(() => {});
       } else if (action === 'remove') {
         setMessage(`${label} credentials removed.`);
       } else {

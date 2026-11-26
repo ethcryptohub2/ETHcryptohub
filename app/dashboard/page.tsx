@@ -6,6 +6,7 @@ import { getSubscriptionEntitlement } from '../../lib/subscriptions';
 import { SubscriptionPanel } from '../subscription-panel';
 import { FuturesBalanceCard } from './futures-balance-card';
 import { isCredentialEncryptionConfigured } from '../../lib/binance-credentials';
+import { isBinanceBalanceReadAllowed, isStagingDemoTarget } from '../../lib/binance-demo-access';
 
 export const dynamic = 'force-dynamic';
 
@@ -90,9 +91,13 @@ export default async function DashboardPage() {
 
         <article className="card">
           <p className="mono">INFRASTRUCTURE REGION</p>
-          <h2 style={{ margin: '8px 0', fontSize: 20 }}>Mumbai (ap-south-1)</h2>
+          <h2 style={{ margin: '8px 0', fontSize: 20 }}>
+            {isStagingDemoTarget() ? 'Staging · Sydney (ap-southeast-2)' : 'Primary Cloud Region'}
+          </h2>
           <p className="muted" style={{ margin: 0, fontSize: 13 }}>
-            Vercel bom1 edge network connected directly to primary Supabase cluster.
+            {isStagingDemoTarget()
+              ? 'Render web frontend integrated with persistent Northflank London market scanner & Demo engine, backed by isolated Staging Supabase.'
+              : 'Connected directly to isolated primary Supabase cluster and market-data engine.'}
           </p>
         </article>
       </section>
@@ -118,7 +123,7 @@ export default async function DashboardPage() {
 
       {/* Balance Card */}
       <FuturesBalanceCard
-        signedReadEnabled={process.env.SMARTEXIT_BINANCE_BALANCE_READ_ENABLED === 'true' && isCredentialEncryptionConfigured()}
+        signedReadEnabled={isBinanceBalanceReadAllowed('DEMO') && isCredentialEncryptionConfigured()}
       />
 
       {/* Subscription Panel */}

@@ -49,6 +49,17 @@ export async function GET(request: NextRequest) {
     );
   }
 
+  if (process.env.SMARTEXIT_BACKEND_URL?.trim()) {
+    const { forwardRequestToBackend, shouldForwardToBackend } = await import('../../../lib/backend-proxy');
+    if (shouldForwardToBackend()) {
+      const forwarded = await forwardRequestToBackend(
+        request,
+        `${request.nextUrl.pathname}${request.nextUrl.search}`,
+      );
+      if (forwarded) return forwarded;
+    }
+  }
+
   const parsed = querySchema.safeParse(Object.fromEntries(request.nextUrl.searchParams));
   if (!parsed.success || (parsed.data.coverage !== 'saved' && parsed.data.rank)) {
     return NextResponse.json({ error: 'Choose a supported timeframe, coverage and symbol prefix.' }, { status: 422, headers: noStore });

@@ -9,6 +9,10 @@ type EnvironmentOption = {
   supported: boolean;
   available: boolean;
   customerTradingReady: boolean;
+  configured?: boolean;
+  configuredAccounts?: number;
+  lastVerifiedAt?: string | null;
+  userAutoTradeEnabled?: boolean;
 };
 type ExchangeOption = { exchange: string; name: string; environments: EnvironmentOption[] };
 type CredentialStatus = {
@@ -363,17 +367,47 @@ export function ExchangeConnections() {
   });
 
   const toggleExchangeSwitch = (exchangeId: string) => {
+    const nextValue = !exchangeSwitches[exchangeId];
+    const targetEnv = exchangeId === 'GATE' ? 'TESTNET' : 'DEMO';
     setExchangeSwitches((prev) => {
-      const next = { ...prev, [exchangeId]: !prev[exchangeId] };
+      const next = { ...prev, [exchangeId]: nextValue };
       try {
         localStorage.setItem('smartexit_exchange_switches', JSON.stringify(next));
       } catch {}
       return next;
     });
+    void (async () => {
+      try {
+        const csrfToken = await getCsrfToken();
+        const res = await fetch('/api/exchanges', {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken },
+          body: JSON.stringify({ exchange: exchangeId, environment: targetEnv, enabled: nextValue }),
+        });
+        if (!res.ok) {
+          throw new Error('Could not persist exchange execution switch.');
+        }
+        setError('');
+      } catch (err) {
+        setError(err instanceof Error ? err.message : 'Could not update exchange switch.');
+      }
+    })();
   };
 
   useEffect(() => {
     let active = true;
+    const syncSwitchesFromProviders = (providerList: ExchangeOption[]) => {
+      setExchangeSwitches((prev) => {
+        const merged = { ...prev };
+        for (const p of providerList) {
+          const demoEnv = p.environments.find((e) => e.environment === 'DEMO' || e.environment === 'TESTNET');
+          if (demoEnv && typeof demoEnv.userAutoTradeEnabled === 'boolean') {
+            merged[p.exchange] = demoEnv.userAutoTradeEnabled;
+          }
+        }
+        return merged;
+      });
+    };
     void fetch('/api/exchanges', { cache: 'no-store' })
       .then(async (response) => {
         const body = (await response.json()) as { data?: ExchangeOption[]; error?: string };
@@ -381,6 +415,7 @@ export function ExchangeConnections() {
         if (!response.ok || !providerList) throw new Error(body.error ?? 'Exchange list unavailable.');
         if (active) {
           setExchanges(providerList);
+          syncSwitchesFromProviders(providerList);
           setSelected((previous) =>
             providerList.some((item) => item.exchange === previous) ? previous : 'BINANCE',
           );
@@ -394,7 +429,10 @@ export function ExchangeConnections() {
       void fetch('/api/exchanges', { cache: 'no-store' })
         .then(async (response) => {
           const body = (await response.json()) as { data?: ExchangeOption[] };
-          if (body.data) setExchanges(body.data);
+          if (body.data) {
+            setExchanges(body.data);
+            syncSwitchesFromProviders(body.data);
+          }
         })
         .catch(() => {});
     };
@@ -641,6 +679,7 @@ export function ExchangeConnections() {
                 exchange: exchange.exchange,
                 environment: exchange.exchange === 'GATE' ? 'TESTNET' : 'DEMO',
                 configured: isConfigured,
+                lastVerifiedAt: envOption?.lastVerifiedAt ?? null,
                 switchEnabled: isEnabled,
                 adapterComplete: exchange.exchange === 'BINANCE' || exchange.exchange === 'BYBIT',
               });
