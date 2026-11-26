@@ -45,6 +45,7 @@ export function useLiveMarketFeed(filterSymbols?: string[]) {
 
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectTimeoutRef = useRef<number | null>(null);
+  const connectTimeoutRef = useRef<number | null>(null);
   const restIntervalRef = useRef<number | null>(null);
   const prevPricesRef = useRef<Record<string, number>>({});
   const isTabVisibleRef = useRef<boolean>(true);
@@ -190,6 +191,14 @@ export function useLiveMarketFeed(filterSymbols?: string[]) {
       const ws = new WebSocket(WS_URL);
       wsRef.current = ws;
 
+      if (connectTimeoutRef.current) window.clearTimeout(connectTimeoutRef.current);
+      connectTimeoutRef.current = window.setTimeout(() => {
+        if (!lastPingRef.current || Date.now() - lastPingRef.current > 8_000) {
+          startRestFallback();
+          setFeedState((prev) => (prev.status === 'CONNECTING' ? { ...prev, status: 'DISCONNECTED', error: 'WebSocket connection timed out.' } : prev));
+        }
+      }, 8_000);
+
       ws.onopen = () => {
         reconnectAttemptRef.current = 0;
         // Stay CONNECTING until first genuine ticker payload arrives
@@ -197,6 +206,10 @@ export function useLiveMarketFeed(filterSymbols?: string[]) {
       };
 
       ws.onmessage = (event) => {
+        if (connectTimeoutRef.current) {
+          window.clearTimeout(connectTimeoutRef.current);
+          connectTimeoutRef.current = null;
+        }
         try {
           const parsed = JSON.parse(event.data);
           if (Array.isArray(parsed)) {
@@ -269,6 +282,9 @@ export function useLiveMarketFeed(filterSymbols?: string[]) {
       }
       if (reconnectTimeoutRef.current) {
         window.clearTimeout(reconnectTimeoutRef.current);
+      }
+      if (connectTimeoutRef.current) {
+        window.clearTimeout(connectTimeoutRef.current);
       }
       stopRestFallback();
     };

@@ -151,7 +151,16 @@ class BinanceRateLimitCoordinator {
 
   trip(statusCode: number, retryAfterHeader: string | null, reason?: string, now = Date.now()): BinanceCooldownError {
     this.consecutiveTrips += 1;
-    const retryAfterMs = parseRetryAfterMs(retryAfterHeader, now);
+    let retryAfterMs = parseRetryAfterMs(retryAfterHeader, now);
+    if (retryAfterMs === null && reason) {
+      const match = /banned until (\d{13})/i.exec(reason);
+      if (match) {
+        const banUntil = Number(match[1]);
+        if (Number.isFinite(banUntil) && banUntil > now) {
+          retryAfterMs = banUntil - now;
+        }
+      }
+    }
     const isBan = statusCode === 418;
     const baseMs = isBan ? 180_000 : 60_000; // 3m for 418 IP ban, 1m for 429 rate limit
     const maxMs = 15 * 60_000; // cap at 15m

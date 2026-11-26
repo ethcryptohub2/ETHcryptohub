@@ -306,7 +306,7 @@ function StandardSignals({
   const triggerScan = useCallback(async () => {
     if (isScanning) return;
     if (circuitCooldownUntil && Date.now() < circuitCooldownUntil) {
-      const resumeTime = new Date(circuitCooldownUntil).toLocaleTimeString('en-US');
+      const resumeTime = new Date(circuitCooldownUntil).toLocaleString('en-US');
       setError(`Binance API cooldown active. Resuming at ${resumeTime}.`);
       return;
     }
@@ -674,7 +674,7 @@ function StandardSignals({
         {circuitCooldownUntil && (
           <div style={{ padding: '10px 14px', background: 'rgba(245, 158, 11, 0.12)', border: '1px solid rgba(245, 158, 11, 0.4)', borderRadius: 8, fontSize: 12, color: '#d97706' }} suppressHydrationWarning>
             <strong>⏸ BINANCE COOLDOWN ACTIVE:</strong>{' '}
-            {circuitCooldownReason ?? `Rate-limit cooldown active until ${new Date(circuitCooldownUntil).toLocaleTimeString('en-US')}.`}
+            {circuitCooldownReason ?? `Rate-limit cooldown active until ${new Date(circuitCooldownUntil).toLocaleString('en-US')}.`}
           </div>
         )}
 
