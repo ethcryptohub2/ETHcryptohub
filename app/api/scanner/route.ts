@@ -57,40 +57,23 @@ export async function GET(request: NextRequest) {
   configuration.maxAgeSeconds = Math.min(configuration.maxAgeSeconds, recommendedMaxAgeSeconds(configuration.timeframe));
 
   try {
-    let universe = await getSavedScannerUniverse({
+    const universe = await getSavedScannerUniverse({
       timeframe: configuration.timeframe, coverage, symbol, rank, page, limit: configuration.limit,
       maxAgeSeconds: configuration.maxAgeSeconds,
     });
     const now = Date.now();
-    const forceRefresh = request.nextUrl.searchParams.get('refresh') === 'true';
-    const isStale = !universe.saved_count || !universe.recent_until.some(expiry => expiry >= now);
-    let scanDurationMs: number | null = null;
+    const scanDurationMs: number | null = null;
 
-    let cbStatus: { state: string; cooldownUntil: number | null; reason: string | null } = { state: 'CLOSED', cooldownUntil: null, reason: null };
+    let cbStatus: { state: string; cooldownUntil: number | null; reason: string | null; usedWeight1m?: number; weightLimit1m?: number } = { state: 'CLOSED', cooldownUntil: null, reason: null };
+    let v2State: Record<string, unknown> | null = null;
     try {
-      const { binanceRateLimiter } = await import('../../../lib/binance-rate-limit');
-      cbStatus = binanceRateLimiter.getStatus(now);
+      const { ensureBinanceCooldownHydrated } = await import('../../../lib/binance-rate-limit-db');
+      cbStatus = await ensureBinanceCooldownHydrated(now);
+      const { getScannerV2State, startFiveMinuteScheduler } = await import('../../../lib/scanner-scheduler');
+      startFiveMinuteScheduler();
+      v2State = (await getScannerV2State()) as unknown as Record<string, unknown>;
     } catch {
       // Fallback when running under isolated unit-test stubs
-    }
-
-    if ((forceRefresh || (isStale && coverage === 'saved')) && cbStatus.state !== 'OPEN') {
-      const lastScanTime = Date.parse(universe.latest_saved_at ?? '');
-      const elapsedSinceLastScan = Number.isFinite(lastScanTime) ? now - lastScanTime : Infinity;
-      if (forceRefresh || elapsedSinceLastScan > 60_000) {
-        try {
-          const scanStart = Date.now();
-          const { runSignalScan } = await import('../../../lib/signal-scan');
-          await runSignalScan(configuration.timeframe, { executeAutomaticTrades: false, deliverNotifications: true });
-          scanDurationMs = Date.now() - scanStart;
-          universe = await getSavedScannerUniverse({
-            timeframe: configuration.timeframe, coverage, symbol, rank, page, limit: configuration.limit,
-            maxAgeSeconds: configuration.maxAgeSeconds,
-          });
-        } catch (scanErr) {
-          console.warn('Auto/on-demand signal scan notice:', scanErr instanceof Error ? scanErr.message : scanErr);
-        }
-      }
     }
 
     let rotationState: Record<string, unknown> | null = null;
@@ -187,6 +170,7 @@ export async function GET(request: NextRequest) {
         cycleId: typeof rotationState?.cycleId === 'string' ? rotationState.cycleId : 'CYCLE-1',
       },
       circuitBreaker: cbStatus,
+      v2State,
       signalMetadata: { signals: signalMap, serverNow: new Date(serverNow).toISOString() },
       ...(notificationWarning ? { notificationWarning } : {}),
     }, { headers: noStore });

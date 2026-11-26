@@ -20,9 +20,34 @@ import { useLiveMarketFeed } from '../../lib/live-market-feed';
 import { useAlarmPreferences } from '../use-alarm-preferences';
 
 const DEFAULT_LIVE_SYMBOLS = ['BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'BNBUSDT'];
-const AUTO_SCAN_INTERVAL_SECONDS = 60;
+const AUTO_SCAN_INTERVAL_SECONDS = 300;
 const SCANNER_REFRESH_STORAGE_KEY = 'smartexit-scanner-refresh-minutes';
 const SCANNER_AUTOSCAN_STORAGE_KEY = 'smartexit-scanner-autoscan';
+
+type ScannerV2StateView = {
+  version: string;
+  state: string;
+  cycleId: string;
+  concurrency: number;
+  totalEligible: number;
+  totalBatches: number;
+  completedBatches: number;
+  activeWorkers: number;
+  successfulCount: number;
+  failedCount: number;
+  skippedCount: number;
+  coveragePercent: number;
+  startedAt: string | null;
+  lastSuccessfulScanAt: string | null;
+  durationMs: number | null;
+  nextScanAt: string | null;
+  usedWeight1m: number;
+  weightLimit1m: number;
+  cooldownUntil: number | null;
+  standardStatus: string;
+  highRiskStatus: string;
+  cacheEntries: number;
+};
 
 type SignalMetadata = {
   signals: Record<string, {
@@ -136,6 +161,7 @@ function StandardSignals({
   const [symbolInput, setSymbolInput] = useState('');
   const [filterError, setFilterError] = useState('');
   const [isScanning, setIsScanning] = useState(false);
+  const [v2State, setV2State] = useState<ScannerV2StateView | null>(null);
   const [circuitCooldownUntil, setCircuitCooldownUntil] = useState<number | null>(null);
   const [circuitCooldownReason, setCircuitCooldownReason] = useState<string | null>(null);
   const [scanDiagnostics, setScanDiagnostics] = useState<{
@@ -253,6 +279,7 @@ function StandardSignals({
           cooldownUntil: number | null;
           reason: string | null;
         };
+        v2State?: ScannerV2StateView | null;
       } | null = null;
       try {
         body = JSON.parse(rawText);
@@ -277,6 +304,9 @@ function StandardSignals({
       setNotificationWarning(body.notificationWarning ?? '');
       if (body.diagnostics) {
         setScanDiagnostics(body.diagnostics);
+      }
+      if (body.v2State) {
+        setV2State(body.v2State);
       }
       if (body.circuitBreaker) {
         if (body.circuitBreaker.state === 'OPEN' && body.circuitBreaker.cooldownUntil) {
@@ -334,6 +364,7 @@ function StandardSignals({
         cooldown?: boolean;
         cooldownUntil?: number;
         circuitBreaker?: { state: string; cooldownUntil: number | null; reason: string | null };
+        v2State?: ScannerV2StateView | null;
         data?: {
           scannedCount: number;
           successfulCount?: number;
@@ -349,6 +380,7 @@ function StandardSignals({
           rejections: Record<string, number>;
           durationMs: number;
           scannedAt: string;
+          v2State?: ScannerV2StateView | null;
         };
       } | null = null;
       try {
@@ -362,12 +394,18 @@ function StandardSignals({
               : `Scan request failed (HTTP ${response.status}): ${rawText.slice(0, 100)}`
         );
       }
+      if (body?.v2State) {
+        setV2State(body.v2State);
+      }
       if (body?.cooldownUntil) {
         setCircuitCooldownUntil(body.cooldownUntil);
         setCircuitCooldownReason(body.error ?? null);
       }
       if (!response.ok || !body?.ok || !body?.data) {
         throw new Error(body?.error ?? `Scan failed (${response.status})`);
+      }
+      if (body.data.v2State) {
+        setV2State(body.data.v2State);
       }
       setCircuitCooldownUntil(null);
       setCircuitCooldownReason(null);
@@ -666,17 +704,98 @@ function StandardSignals({
         </div>
 
         {alarmSaveError && (
-          <div style={{ padding: '8px 12px', background: 'rgba(239, 68, 68, 0.1)', border: '1px solid rgba(239, 68, 68, 0.3)', color: '#ef4444', borderRadius: 8, fontSize: 12 }}>
+          <div style={{ padding: '8px 12px', background: 'rgba(239, 68, 68, 0.1)', border: '1px solid rgba(239, 68, 68, 0.3)', color: '#ef4444', borderRadius: 8, fontSize: 12, overflowWrap: 'anywhere' }}>
             ⚠ {alarmSaveError}
           </div>
         )}
 
         {circuitCooldownUntil && (
-          <div style={{ padding: '10px 14px', background: 'rgba(245, 158, 11, 0.12)', border: '1px solid rgba(245, 158, 11, 0.4)', borderRadius: 8, fontSize: 12, color: '#d97706' }} suppressHydrationWarning>
+          <div style={{ padding: '10px 14px', background: 'rgba(245, 158, 11, 0.12)', border: '1px solid rgba(245, 158, 11, 0.4)', borderRadius: 8, fontSize: 12, color: '#d97706', overflowWrap: 'anywhere', maxWidth: '100%', boxSizing: 'border-box' }} suppressHydrationWarning>
             <strong>⏸ BINANCE COOLDOWN ACTIVE:</strong>{' '}
             {circuitCooldownReason ?? `Rate-limit cooldown active until ${new Date(circuitCooldownUntil).toLocaleString('en-US')}.`}
           </div>
         )}
+
+        {/* Hybrid Parallel V2 Diagnostics Panel */}
+        <div
+          style={{
+            padding: '12px 14px',
+            background: 'var(--surface-subtle)',
+            border: '1px solid var(--surface-border)',
+            borderRadius: 8,
+            display: 'flex',
+            flexDirection: 'column',
+            gap: 10,
+            maxWidth: '100%',
+            boxSizing: 'border-box',
+          }}
+        >
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 8 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+              <span className="mono" style={{ fontSize: 11, fontWeight: 700, padding: '2px 7px', borderRadius: 4, background: 'rgba(99, 102, 241, 0.15)', color: '#6366f1' }}>
+                {v2State?.version ?? 'Hybrid Parallel V2'}
+              </span>
+              <span
+                className="mono"
+                style={{
+                  fontSize: 11,
+                  fontWeight: 700,
+                  padding: '2px 7px',
+                  borderRadius: 4,
+                  background:
+                    v2State?.state === 'RATE_LIMIT_COOLDOWN' || circuitCooldownUntil
+                      ? 'rgba(245, 158, 11, 0.18)'
+                      : v2State?.state === 'SCANNING'
+                        ? 'rgba(59, 130, 246, 0.18)'
+                        : v2State?.state === 'ERROR'
+                          ? 'rgba(239, 68, 68, 0.18)'
+                          : 'rgba(16, 185, 129, 0.15)',
+                  color:
+                    v2State?.state === 'RATE_LIMIT_COOLDOWN' || circuitCooldownUntil
+                      ? '#d97706'
+                      : v2State?.state === 'SCANNING'
+                        ? '#3b82f6'
+                        : v2State?.state === 'ERROR'
+                          ? '#ef4444'
+                          : '#10b981',
+                }}
+              >
+                {circuitCooldownUntil ? 'RATE_LIMIT_COOLDOWN' : v2State?.state ?? (isScanning ? 'SCANNING' : 'WAITING_FOR_NEXT_CYCLE')}
+              </span>
+            </div>
+            <span className="muted mono" style={{ fontSize: 11 }} suppressHydrationWarning>
+              Workers: {v2State?.activeWorkers ?? 0}/{v2State?.concurrency ?? 4} · Weight: {v2State?.usedWeight1m ?? 0}/{v2State?.weightLimit1m ?? 1200} · Cache: {v2State?.cacheEntries ?? 0}
+            </span>
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(135px, 1fr))', gap: 8, fontSize: 11 }}>
+            <div>
+              <span className="muted">Batches:</span>{' '}
+              <strong className="mono">{v2State?.completedBatches ?? activeBatchIndex}/{v2State?.totalBatches ?? activeTotalBatches}</strong>
+            </div>
+            <div>
+              <span className="muted">OK / Fail / Skip:</span>{' '}
+              <strong className="mono">
+                {v2State?.successfulCount ?? activeScannedCount} / {v2State?.failedCount ?? 0} / {v2State?.skippedCount ?? 0}
+              </strong>
+            </div>
+            <div>
+              <span className="muted">Coverage:</span>{' '}
+              <strong className="mono">{v2State?.coveragePercent ?? 0}%</strong>
+            </div>
+            <div>
+              <span className="muted">Strategies:</span>{' '}
+              <strong className="mono">Std:{v2State?.standardStatus ?? 'IDLE'} · HR:{v2State?.highRiskStatus ?? 'IDLE'}</strong>
+            </div>
+            <div suppressHydrationWarning>
+              <span className="muted">Last OK Scan:</span>{' '}
+              <strong className="mono">{v2State?.lastSuccessfulScanAt ? new Date(v2State.lastSuccessfulScanAt).toLocaleTimeString('en-US') : '—'}</strong>
+            </div>
+            <div suppressHydrationWarning>
+              <span className="muted">Next Cycle (5m):</span>{' '}
+              <strong className="mono">{v2State?.nextScanAt ? new Date(v2State.nextScanAt).toLocaleTimeString('en-US') : `${autoScanCountdown}s`}</strong>
+            </div>
+          </div>
+        </div>
 
         {scanNotice && (
           <div style={{

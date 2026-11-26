@@ -1,9 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { AuthError } from '../../../../lib/auth';
 import { requirePremiumUser, SubscriptionError } from '../../../../lib/subscriptions';
-import { runSignalScan, getScannerConfiguration, SignalScanError } from '../../../../lib/signal-scan';
+import { getScannerConfiguration, SignalScanError } from '../../../../lib/signal-scan';
 import { runHighRiskScalpingScan } from '../../../../lib/high-risk-scalping';
 import { binanceRateLimiter } from '../../../../lib/binance-rate-limit';
+import { ensureBinanceCooldownHydrated } from '../../../../lib/binance-rate-limit-db';
+import { getScannerV2State, triggerCoordinatedV2Scan } from '../../../../lib/scanner-scheduler';
 import { z } from 'zod';
 
 export const runtime = 'nodejs';
@@ -86,16 +88,18 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  const { timeframe, strategy, limit } = parsed.data;
+  const { timeframe, strategy } = parsed.data;
 
-  const cbStatus = binanceRateLimiter.getStatus();
+  const cbStatus = await ensureBinanceCooldownHydrated();
   if (cbStatus.state === 'OPEN' && cbStatus.cooldownUntil) {
+    const v2State = await getScannerV2State().catch(() => null);
     return NextResponse.json({
       ok: false,
       cooldown: true,
       cooldownUntil: cbStatus.cooldownUntil,
       circuitBreaker: cbStatus,
-      error: cbStatus.reason ?? `Binance API cooldown active until ${new Date(cbStatus.cooldownUntil).toLocaleTimeString('en-US')}.`,
+      v2State,
+      error: cbStatus.reason ?? `Binance API cooldown active until ${new Date(cbStatus.cooldownUntil).toLocaleString('en-US')}.`,
     }, { status: 429, headers: noStore });
   }
 
@@ -139,44 +143,56 @@ export async function POST(request: NextRequest) {
       }, { headers: noStore });
     }
 
-    // Standard Strategy Scan
-    const scanStart = Date.now();
-    const result = await runSignalScan(timeframe, {
-      executeAutomaticTrades: false,
+    // Hybrid Parallel V2 Coordinated Full-Market Scan
+    const { state: v2State, deduplicated } = await triggerCoordinatedV2Scan({
+      timeframe,
       deliverNotifications: true,
-      limit,
     });
-    const durationMs = Date.now() - scanStart;
+
+    if (v2State.state === 'RATE_LIMIT_COOLDOWN' && v2State.cooldownUntil) {
+      await releaseScanLock(v2State);
+      return NextResponse.json({
+        ok: false,
+        cooldown: true,
+        cooldownUntil: v2State.cooldownUntil,
+        circuitBreaker: binanceRateLimiter.getStatus(),
+        v2State,
+        error: v2State.cooldownReason ?? `Binance API cooldown active until ${new Date(v2State.cooldownUntil).toLocaleString('en-US')}.`,
+      }, { status: 429, headers: noStore });
+    }
 
     const responseData = {
       strategy: 'STANDARD' as const,
-      timeframe: result.timeframe,
-      scannerStatus: result.scannerStatus,
-      scannedCount: result.candidates,
-      successfulCount: result.successfulCount,
-      failedCount: result.failedCount,
-      skippedCount: result.skippedCount,
-      qualifiedCount: result.qualifiedCount,
-      newSignals: result.newSignals,
-      deduplicatedSignals: result.deduplicatedSignals,
-      enabledCoins: result.enabledCoins,
-      batchSize: result.batchSize,
-      cycleId: result.cycleId,
-      totalBatches: result.totalBatches,
-      batchIndex: result.batchIndex,
-      cycleCount: result.cycleCount,
-      rejections: result.rejections,
-      scannedAt: result.scannedAt,
-      startedAt: result.startedAt,
-      completedAt: result.completedAt,
-      durationMs,
+      version: v2State.version,
+      timeframe: v2State.timeframe,
+      scannerStatus: v2State.state,
+      scannedCount: v2State.successfulCount + v2State.failedCount,
+      successfulCount: v2State.successfulCount,
+      failedCount: v2State.failedCount,
+      skippedCount: v2State.skippedCount,
+      qualifiedCount: v2State.qualifiedCount,
+      newSignals: v2State.newSignals,
+      deduplicatedSignals: v2State.deduplicatedSignals,
+      enabledCoins: v2State.totalEligible,
+      batchSize: 32,
+      cycleId: v2State.cycleId,
+      totalBatches: v2State.totalBatches,
+      batchIndex: v2State.completedBatches,
+      completedBatches: v2State.completedBatches,
+      activeWorkers: v2State.activeWorkers,
+      coveragePercent: v2State.coveragePercent,
+      scannedAt: v2State.completedAt ?? new Date().toISOString(),
+      startedAt: v2State.startedAt,
+      completedAt: v2State.completedAt,
+      durationMs: v2State.durationMs ?? 0,
       circuitBreaker: binanceRateLimiter.getStatus(),
-      rows: result.rows,
+      v2State,
     };
     await releaseScanLock(responseData);
 
     return NextResponse.json({
       ok: true,
+      deduplicated,
       data: responseData,
     }, { headers: noStore });
   } catch (error) {

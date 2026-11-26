@@ -63,6 +63,38 @@ class BinanceRateLimitCoordinator {
 
   private inFlight = new Map<string, Promise<unknown>>();
   private cache = new Map<string, { expiresAt: number; value: unknown }>();
+  private persistence: {
+    load: () => Promise<Partial<CircuitBreakerStatus> | null>;
+    save: (status: CircuitBreakerStatus) => Promise<void>;
+  } | null = null;
+  private hydrated = false;
+
+  registerPersistence(handlers: {
+    load: () => Promise<Partial<CircuitBreakerStatus> | null>;
+    save: (status: CircuitBreakerStatus) => Promise<void>;
+  }): void {
+    this.persistence = handlers;
+  }
+
+  async hydrate(now = Date.now()): Promise<CircuitBreakerStatus> {
+    if (!this.hydrated && this.persistence) {
+      this.hydrated = true;
+      try {
+        const stored = await this.persistence.load();
+        if (stored && stored.state === 'OPEN' && typeof stored.cooldownUntil === 'number' && stored.cooldownUntil > now) {
+          this.state = 'OPEN';
+          this.statusCode = stored.statusCode ?? 418;
+          this.reason = stored.reason ?? `Binance API cooldown active until ${new Date(stored.cooldownUntil).toISOString()}.`;
+          this.trippedAt = stored.trippedAt ?? now;
+          this.cooldownUntil = stored.cooldownUntil;
+          this.consecutiveTrips = stored.consecutiveTrips ?? 1;
+        }
+      } catch {
+        // Non-fatal: continue with in-memory state
+      }
+    }
+    return this.getStatus(now);
+  }
 
   getStatus(now = Date.now()): CircuitBreakerStatus {
     if (this.state === 'OPEN' && this.cooldownUntil !== null && now >= this.cooldownUntil) {
@@ -145,6 +177,9 @@ class BinanceRateLimitCoordinator {
       this.trippedAt = null;
       this.cooldownUntil = null;
       this.consecutiveTrips = 0;
+      if (this.persistence) {
+        void this.persistence.save(this.getStatus(now)).catch(() => {});
+      }
     }
     this.remoteWeightUpdatedAt = Math.max(this.remoteWeightUpdatedAt, now - 59_000);
   }
@@ -176,6 +211,10 @@ class BinanceRateLimitCoordinator {
     this.reason = reason ?? (isBan
       ? `Binance IP rate-limit ban (HTTP 418). Cooldown until ${new Date(this.cooldownUntil).toISOString()}.`
       : `Binance rate limit exceeded (HTTP 429). Cooldown until ${new Date(this.cooldownUntil).toISOString()}.`);
+
+    if (this.persistence) {
+      void this.persistence.save(this.getStatus(now)).catch(() => {});
+    }
 
     return new BinanceCooldownError(this.reason, statusCode, this.cooldownUntil, now);
   }

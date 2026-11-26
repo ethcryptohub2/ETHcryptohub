@@ -5,6 +5,7 @@ import {
   type MarketResearchSummary,
 } from './market-research.js';
 import { binanceRateLimiter, BinanceCooldownError, fetchBinanceRest } from '../../../../../lib/binance-rate-limit';
+import { sharedCandleCache } from '../../../../../lib/candle-cache';
 
 const BINANCE_FUTURES_BASE_URL = 'https://fapi.binance.com';
 const BYBIT_BASE_URL = 'https://api.bybit.com';
@@ -766,6 +767,12 @@ export class BinanceMarketScannerService implements MarketScannerProvider {
     if (localCached && localCached.expiresAt > this.now()) return localCached.candles;
     const useSharedCache = this.request === globalThis.fetch;
     if (useSharedCache) {
+      const cbOpen = binanceRateLimiter.getStatus(this.now()).state === 'OPEN';
+      const rolling = sharedCandleCache.assess(preferredExchange, symbol, timeframe, this.now(), cbOpen);
+      if (rolling.status === 'FRESH_LIVE' && !rolling.hasGaps) {
+        this.candleCache.set(key, { expiresAt: this.now() + CANDLE_CACHE_MS, candles: rolling.candles });
+        return rolling.candles;
+      }
       const sharedCached = binanceRateLimiter.getCached<MarketCandle[]>(key, this.now());
       if (sharedCached) {
         this.candleCache.set(key, { expiresAt: this.now() + CANDLE_CACHE_MS, candles: sharedCached });
@@ -817,6 +824,7 @@ export class BinanceMarketScannerService implements MarketScannerProvider {
           this.candleCache.set(key, { expiresAt: this.now() + CANDLE_CACHE_MS, candles });
           if (useSharedCache) {
             binanceRateLimiter.setCached(key, candles, CANDLE_CACHE_MS, this.now());
+            sharedCandleCache.setHistory(provider, symbol, timeframe, candles, this.now());
           }
           return candles;
         } catch (error) {

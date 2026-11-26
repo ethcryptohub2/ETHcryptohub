@@ -13,7 +13,7 @@ const intervals = { '5m': 5 * minute, '15m': 15 * minute };
 const allowedModules = new Set([
   'lib/backtesting-engine.ts', 'lib/backtesting-accounting.ts', 'lib/backtesting-qualification.ts',
   'lib/high-risk-scalping.ts', 'lib/high-risk-scalping-types.ts', 'lib/high-risk-scalping-status.ts',
-  'lib/binance-rate-limit.ts',
+  'lib/binance-rate-limit.ts', 'lib/candle-cache.ts',
   'smartexit/apps/api/src/services/market-scanner.ts', 'smartexit/apps/api/src/services/binance-futures-markets.ts',
 ]);
 const disabledImports = new Set(['lib/db', 'lib/notifications', 'lib/signal-lifecycle', 'lib/scanner-coins']);
