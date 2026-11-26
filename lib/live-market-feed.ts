@@ -29,7 +29,7 @@ export interface LiveMarketFeedState {
   error: string | null;
 }
 
-const WS_URL = 'wss://fstream.binance.com/ws/!miniTicker@arr';
+const WS_URL = 'wss://fstream.binance.com/market/ws/!miniTicker@arr';
 const REST_URL = 'https://fapi.binance.com/fapi/v1/ticker/24hr';
 const REST_FALLBACK_INTERVAL_MS = 30_000;
 const STALE_THRESHOLD_MS = 15_000;

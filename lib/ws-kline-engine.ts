@@ -141,7 +141,7 @@ export class BinanceWsKlineEngine {
     this.error = null;
 
     for (const chunk of partitions) {
-      const url = `wss://fstream.binance.com/stream?streams=${chunk.join('/')}`;
+      const url = `wss://fstream.binance.com/market/stream?streams=${chunk.join('/')}`;
       try {
         const ws = new WebSocket(url);
         this.sockets.push(ws);

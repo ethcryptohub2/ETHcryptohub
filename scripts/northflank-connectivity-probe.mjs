@@ -193,16 +193,31 @@ async function probeSupabaseStaging() {
     const pool = new Pool(
       dbUrl
         ? { connectionString: dbUrl, ssl: { rejectUnauthorized: false }, max: 1, connectionTimeoutMillis: 8000 }
-        : { host: dbHost, port: dbPort, database: dbName, user: dbUser, password: dbPassword, ssl: { rejectUnauthorized: false }, max: 1, connectionTimeoutMillis: 8000 },
+        : {
+            host: dbHost,
+            port: dbPort,
+            database: dbName,
+            user: dbUser,
+            password: dbPassword,
+            ssl: process.env.SUPABASE_DB_CA_CERT
+              ? { ca: process.env.SUPABASE_DB_CA_CERT, rejectUnauthorized: true }
+              : { rejectUnauthorized: false },
+            max: 1,
+            connectionTimeoutMillis: 8000,
+          },
     );
     try {
       const r = await pool.query('SELECT current_database() AS db, NOW() AS server_now');
+      const mig = await pool.query('SELECT count(*)::int AS applied_migrations FROM supabase_migrations.schema_migrations').catch(() => ({ rows: [{ applied_migrations: null }] }));
+      const usr = await pool.query('SELECT count(*)::int AS users_count FROM public.users').catch(() => ({ rows: [{ users_count: null }] }));
       return {
         configured: true,
         ok: true,
         latencyMs: Date.now() - start,
         database: r.rows[0]?.db ?? null,
         serverNow: r.rows[0]?.server_now ?? null,
+        appliedMigrations: mig.rows[0]?.applied_migrations ?? null,
+        usersCount: usr.rows[0]?.users_count ?? null,
       };
     } catch (err) {
       return { configured: true, ok: false, latencyMs: Date.now() - start, error: sanitizeText(err instanceof Error ? err.message : String(err)) };
@@ -221,7 +236,7 @@ async function probeSupabaseStaging() {
 }
 
 const wsState = {
-  url: 'wss://fstream.binance.com/stream?streams=btcusdt@kline_1m/ethusdt@kline_1m',
+  url: 'wss://fstream.binance.com/market/stream?streams=btcusdt@kline_1m/ethusdt@kline_1m',
   state: 'INIT',
   connectAttempts: 0,
   openCount: 0,
@@ -342,6 +357,11 @@ const server = http.createServer(async (req, res) => {
   }
 
   if (reqUrl.pathname === '/probe' || reqUrl.pathname === '/status' || reqUrl.pathname === '/') {
+    if (reqUrl.searchParams.get('reconnect_ws') === '1' && wsSocket) {
+      try {
+        wsSocket.close(1000, 'Probe reconnect check');
+      } catch {}
+    }
     const forceRefresh = reqUrl.searchParams.get('refresh') === '1';
     const report = (!latestRestReport || forceRefresh) ? await runFullProbe() : latestRestReport;
     const mem = process.memoryUsage();
