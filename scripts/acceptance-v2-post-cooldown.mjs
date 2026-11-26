@@ -44,18 +44,20 @@ async function runOfflineAcceptance() {
   assert.equal(summary.coveragePercent, 100);
   console.log(`  ✔ V2 4-worker pool: 528/528 symbols, 17/17 batches, ${summary.durationMs}ms`);
 
-  // 2. Shared rolling candle cache & incremental WS update
+  // 2. Shared rolling candle cache & incremental WS update (420-candle production capacity)
   const cache = new RollingCandleCache();
   const intervalMs = timeframeToMs('15m');
   const now = Date.now();
   const aligned = Math.floor(now / intervalMs) * intervalMs - intervalMs;
-  const candles = Array.from({ length: 240 }, (_, i) => {
-    const t = aligned - (239 - i) * intervalMs;
+  const candles = Array.from({ length: 420 }, (_, i) => {
+    const t = aligned - (419 - i) * intervalMs;
     return { openTime: t, high: 102, low: 98, close: 100, volume: 1000, closeTime: t + intervalMs - 1 };
   });
   cache.setHistory('BINANCE', 'BTCUSDT', '15m', candles, now);
-  assert.equal(cache.assess('BINANCE', 'BTCUSDT', '15m', now, false).status, 'FRESH_LIVE');
-  console.log('  ✔ Shared rolling candle cache: 240-candle warm-up & freshness validated');
+  const assessed = cache.assess('BINANCE', 'BTCUSDT', '15m', now, false);
+  assert.equal(assessed.status, 'FRESH_LIVE');
+  assert.equal(assessed.candles.length, 420);
+  console.log('  ✔ Shared rolling candle cache: 420-candle warm-up & freshness validated');
 
   // 3. Fail-closed LIVE trading & Demo readiness
   assert.equal(

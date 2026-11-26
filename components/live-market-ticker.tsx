@@ -21,7 +21,7 @@ export function LiveMarketTickerBar({ className = '' }: { className?: string }) 
   const statusColor = isConnected ? '#10b981' : isWarning ? '#f59e0b' : isDisconnected ? '#ef4444' : '#9ca3af';
   const statusLabel =
     status === 'CONNECTED_WS'
-      ? 'LIVE FEED: BINANCE USDⓈ-M WS'
+      ? 'LIVE FEED: USDⓈ-M FUTURES WS'
       : status === 'POLLING_REST'
         ? 'LIVE FEED: REST POLLING'
         : status === 'STALE'

@@ -333,8 +333,7 @@ function StandardSignals({
   const triggerScan = useCallback(async () => {
     if (isScanning) return;
     if (circuitCooldownUntil && Date.now() < circuitCooldownUntil) {
-      const resumeTime = new Date(circuitCooldownUntil).toLocaleString('en-US');
-      setError(`Binance API cooldown active. Resuming at ${resumeTime}.`);
+      setError('Market data temporarily unavailable. Automatic recovery in progress.');
       return;
     }
     setIsScanning(true);
@@ -608,7 +607,7 @@ function StandardSignals({
           <div style={{ minWidth: 0 }}>
             <h2 style={{ margin: 0, fontSize: 18 }}>Scanner Controls & Configuration</h2>
             <p className="muted" style={{ margin: '4px 0 0', fontSize: 13 }}>
-              Full-market V2 cycle: 5 min · Saved snapshot refresh: {refreshMinutes} min · Live ticker: Binance WS
+              Full-market V2 cycle: 5 min · Saved snapshot refresh: {refreshMinutes} min · Live ticker: Futures WS
             </p>
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', minWidth: 0, maxWidth: '100%' }}>
@@ -625,7 +624,7 @@ function StandardSignals({
                 gap: 6,
                 maxWidth: '100%',
               }}
-              title={inCooldown ? 'Paused due to active Binance rate-limit cooldown' : autoScanEnabled ? '5-minute V2 full-market cycle is ACTIVE. Click to pause.' : '5-minute V2 full-market cycle is PAUSED. Click to resume.'}
+              title={inCooldown ? 'Paused while market data recovers' : autoScanEnabled ? '5-minute V2 full-market cycle is ACTIVE. Click to pause.' : '5-minute V2 full-market cycle is PAUSED. Click to resume.'}
             >
               <span style={{
                 display: 'inline-block',
@@ -636,7 +635,7 @@ function StandardSignals({
                 boxShadow: !inCooldown && autoScanEnabled ? '0 0 8px #10b981' : 'none',
               }} />
               {inCooldown
-                ? 'PAUSED — BINANCE COOLDOWN'
+                ? 'PAUSED — MARKET COOLDOWN'
                 : autoScanEnabled
                   ? `Auto-Scan 5m (${autoScanCountdown}s)`
                   : 'Auto-Scan: PAUSED'}

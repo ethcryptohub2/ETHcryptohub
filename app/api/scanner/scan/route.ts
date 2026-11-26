@@ -99,7 +99,7 @@ export async function POST(request: NextRequest) {
       cooldownUntil: cbStatus.cooldownUntil,
       circuitBreaker: cbStatus,
       v2State,
-      error: cbStatus.reason ?? `Binance API cooldown active until ${new Date(cbStatus.cooldownUntil).toLocaleString('en-US')}.`,
+      error: 'Market data temporarily unavailable. Automatic recovery in progress.',
     }, { status: 429, headers: noStore });
   }
 
@@ -157,7 +157,7 @@ export async function POST(request: NextRequest) {
         cooldownUntil: v2State.cooldownUntil,
         circuitBreaker: binanceRateLimiter.getStatus(),
         v2State,
-        error: v2State.cooldownReason ?? `Binance API cooldown active until ${new Date(v2State.cooldownUntil).toLocaleString('en-US')}.`,
+        error: 'Market data temporarily unavailable. Automatic recovery in progress.',
       }, { status: 429, headers: noStore });
     }
 

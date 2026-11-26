@@ -124,7 +124,7 @@ export function useLiveMarketFeed(filterSymbols?: string[]) {
         setFeedState((prev) => ({
           ...prev,
           status: 'DISCONNECTED',
-          error: `Binance REST cooldown (${response.status}).`,
+          error: 'Market data temporarily unavailable.',
         }));
         return;
       }
