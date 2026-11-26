@@ -1,0 +1,11 @@
+FROM node:22-alpine
+
+WORKDIR /app
+
+COPY scripts/northflank-connectivity-probe.mjs ./scripts/northflank-connectivity-probe.mjs
+
+RUN npm init -y > /dev/null 2>&1 && npm install --no-audit --no-fund pg@^8.23.1
+
+EXPOSE 3000
+
+CMD ["node", "scripts/northflank-connectivity-probe.mjs"]
