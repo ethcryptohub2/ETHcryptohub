@@ -169,7 +169,11 @@ export async function GET(request: NextRequest) {
           : Math.max(1, Math.ceil(universe.eligible_count / 35)),
         cycleId: typeof rotationState?.cycleId === 'string' ? rotationState.cycleId : 'CYCLE-1',
       },
-      circuitBreaker: cbStatus,
+      circuitBreaker: {
+        state: cbStatus.state,
+        cooldownUntil: cbStatus.cooldownUntil,
+        reason: cbStatus.state === 'OPEN' ? 'Market data temporarily unavailable. Automatic recovery in progress.' : null,
+      },
       v2State,
       signalMetadata: { signals: signalMap, serverNow: new Date(serverNow).toISOString() },
       ...(notificationWarning ? { notificationWarning } : {}),

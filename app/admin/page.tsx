@@ -3,6 +3,7 @@ import { redirect } from 'next/navigation';
 import { currentUser } from '../../lib/auth';
 import { AdminUsers } from './users';
 import { AdminMarketResearch } from './market-research';
+import { AdminMarketData } from './market-data';
 import { AdminNotifications } from './notifications';
 import { AdminScannerManagement } from './scanner-management';
 import { AdminSubscriptions } from './subscriptions';
@@ -62,6 +63,9 @@ export default async function AdminPage() {
           <a href="#admin-news" className="button-secondary" style={{ padding: '6px 12px', fontSize: 12 }}>
             News Settings
           </a>
+          <a href="#admin-market-data" className="button-secondary" style={{ padding: '6px 12px', fontSize: 12 }}>
+            Market Data Failover
+          </a>
           <a href="#admin-worker-dashboard" className="button-secondary" style={{ padding: '6px 12px', fontSize: 12, border: '1px solid var(--accent)' }}>
             24×7 Worker
           </a>
@@ -79,6 +83,7 @@ export default async function AdminPage() {
         <AdminScalping />
         <AdminSignalManagement />
         <AdminMarketResearch />
+        <AdminMarketData />
         <AdminUsers />
       </div>
     </main>

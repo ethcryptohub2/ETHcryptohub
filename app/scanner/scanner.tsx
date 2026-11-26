@@ -163,7 +163,6 @@ function StandardSignals({
   const [isScanning, setIsScanning] = useState(false);
   const [v2State, setV2State] = useState<ScannerV2StateView | null>(null);
   const [circuitCooldownUntil, setCircuitCooldownUntil] = useState<number | null>(null);
-  const [circuitCooldownReason, setCircuitCooldownReason] = useState<string | null>(null);
   const [scanDiagnostics, setScanDiagnostics] = useState<{
     scannedCount: number;
     successfulCount: number;
@@ -311,10 +310,8 @@ function StandardSignals({
       if (body.circuitBreaker) {
         if (body.circuitBreaker.state === 'OPEN' && body.circuitBreaker.cooldownUntil) {
           setCircuitCooldownUntil(body.circuitBreaker.cooldownUntil);
-          setCircuitCooldownReason(body.circuitBreaker.reason);
         } else {
           setCircuitCooldownUntil(null);
-          setCircuitCooldownReason(null);
         }
       }
       setLastCheckedAt(Date.now());
@@ -399,7 +396,6 @@ function StandardSignals({
       }
       if (body?.cooldownUntil) {
         setCircuitCooldownUntil(body.cooldownUntil);
-        setCircuitCooldownReason(body.error ?? null);
       }
       if (!response.ok || !body?.ok || !body?.data) {
         throw new Error(body?.error ?? `Scan failed (${response.status})`);
@@ -408,7 +404,6 @@ function StandardSignals({
         setV2State(body.data.v2State);
       }
       setCircuitCooldownUntil(null);
-      setCircuitCooldownReason(null);
       setScanResult(body.data);
       const dedupSuffix = (body.data.deduplicatedSignals ?? 0) > 0
         ? ` (${body.data.newSignals} new + ${body.data.deduplicatedSignals} deduplicated)`
@@ -721,8 +716,8 @@ function StandardSignals({
 
         {circuitCooldownUntil && (
           <div style={{ padding: '10px 12px', background: 'rgba(245, 158, 11, 0.12)', border: '1px solid rgba(245, 158, 11, 0.4)', borderRadius: 8, fontSize: 12, color: '#d97706', overflowWrap: 'anywhere', wordBreak: 'break-word', width: '100%', maxWidth: '100%', boxSizing: 'border-box' }} suppressHydrationWarning>
-            <strong>⏸ BINANCE COOLDOWN ACTIVE:</strong>{' '}
-            {circuitCooldownReason ?? `Rate-limit cooldown active until ${new Date(circuitCooldownUntil).toLocaleString('en-US')}.`}
+            <strong>⏸ MARKET DATA COOLDOWN:</strong>{' '}
+            Market data temporarily unavailable. Automatic recovery in progress. (Next check: {new Date(circuitCooldownUntil).toLocaleString('en-US')})
           </div>
         )}
 
@@ -777,30 +772,30 @@ function StandardSignals({
               Workers: {v2State?.activeWorkers ?? 0}/{v2State?.concurrency ?? 4} · Weight: {v2State?.usedWeight1m ?? 0}/{v2State?.weightLimit1m ?? 1200} · Cache: {v2State?.cacheEntries ?? 0}
             </span>
           </div>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(135px, 1fr))', gap: 8, fontSize: 11 }}>
-            <div>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(165px, 1fr))', gap: 8, fontSize: 11, minWidth: 0, maxWidth: '100%' }}>
+            <div style={{ minWidth: 0, overflowWrap: 'anywhere' }}>
               <span className="muted">Batches:</span>{' '}
               <strong className="mono">{v2State?.completedBatches ?? activeBatchIndex}/{v2State?.totalBatches ?? activeTotalBatches}</strong>
             </div>
-            <div>
+            <div style={{ minWidth: 0, overflowWrap: 'anywhere' }}>
               <span className="muted">OK / Fail / Skip:</span>{' '}
               <strong className="mono">
                 {v2State?.successfulCount ?? activeScannedCount} / {v2State?.failedCount ?? 0} / {v2State?.skippedCount ?? 0}
               </strong>
             </div>
-            <div>
+            <div style={{ minWidth: 0, overflowWrap: 'anywhere' }}>
               <span className="muted">Coverage:</span>{' '}
               <strong className="mono">{v2State?.coveragePercent ?? 0}%</strong>
             </div>
-            <div>
+            <div style={{ minWidth: 0, overflowWrap: 'anywhere' }}>
               <span className="muted">Strategies:</span>{' '}
               <strong className="mono">Std:{v2State?.standardStatus ?? 'IDLE'} · HR:{v2State?.highRiskStatus ?? 'IDLE'}</strong>
             </div>
-            <div suppressHydrationWarning>
+            <div style={{ minWidth: 0, overflowWrap: 'anywhere' }} suppressHydrationWarning>
               <span className="muted">Last OK Scan:</span>{' '}
               <strong className="mono">{v2State?.lastSuccessfulScanAt ? new Date(v2State.lastSuccessfulScanAt).toLocaleTimeString('en-US') : '—'}</strong>
             </div>
-            <div suppressHydrationWarning>
+            <div style={{ minWidth: 0, overflowWrap: 'anywhere' }} suppressHydrationWarning>
               <span className="muted">{inCooldown ? 'Cooldown Expiry:' : 'Next Cycle (5m):'}</span>{' '}
               <strong className="mono">
                 {inCooldown

@@ -9,6 +9,9 @@ import {
   insertHighRiskSignal,
 } from './high-risk-scalping';
 import { pool } from './db';
+import { getStoredMarketDataSettings, resolveCoinApiKey } from './market-data/settings';
+import { syncProviderTrackersWithConfig } from './market-data/provider-manager';
+import { coinapiTracker } from './market-data/provider-registry';
 import { runHybridParallelWorkPool, type ScannerV2LifecycleState } from './hybrid-scanner-v2';
 import { loadMarketResearchProvider } from './market-research-settings';
 import {
@@ -223,8 +226,26 @@ async function executeCoordinatedV2Cycle(options: {
 
   const cb = await ensureBinanceCooldownHydrated(startedMs);
   const existing = await getScannerV2State();
+  const mdSettings = await getStoredMarketDataSettings();
+  const coinapiKey = resolveCoinApiKey(mdSettings);
+  syncProviderTrackersWithConfig(
+    {
+      autoFailoverEnabled: mdSettings.autoFailoverEnabled,
+      binanceEnabled: mdSettings.binanceEnabled,
+      coinapiEnabled: mdSettings.coinapiEnabled,
+      coinapiApiKey: coinapiKey,
+      alternativeEnabled: mdSettings.alternativeEnabled,
+      historicalCacheEnabled: mdSettings.historicalCacheEnabled,
+    },
+    startedMs,
+  );
+  const hasBackupLiveProvider =
+    mdSettings.autoFailoverEnabled &&
+    mdSettings.coinapiEnabled &&
+    Boolean(coinapiKey) &&
+    coinapiTracker.isEligible(startedMs);
 
-  if (cb.state === 'OPEN') {
+  if (cb.state === 'OPEN' && !hasBackupLiveProvider) {
     const cooldownState: ScannerV2PersistedState = {
       ...existing,
       version: 'Hybrid Parallel V2',
@@ -233,7 +254,7 @@ async function executeCoordinatedV2Cycle(options: {
       usedWeight1m: cb.usedWeight1m,
       weightLimit1m: cb.weightLimit1m,
       cooldownUntil: cb.cooldownUntil,
-      cooldownReason: cb.reason,
+      cooldownReason: 'Market data temporarily unavailable. Automatic recovery in progress.',
       standardStatus: 'COOLDOWN',
       highRiskStatus: 'COOLDOWN',
       activeWorkers: 0,
@@ -443,7 +464,7 @@ async function executeCoordinatedV2Cycle(options: {
       usedWeight1m: cbEnd.usedWeight1m,
       weightLimit1m: cbEnd.weightLimit1m,
       cooldownUntil: cbEnd.cooldownUntil,
-      cooldownReason: cbEnd.reason,
+      cooldownReason: cbEnd.state === 'OPEN' ? 'Market data temporarily unavailable. Automatic recovery in progress.' : null,
       standardStatus: cbEnd.state === 'OPEN' ? 'COOLDOWN' : 'ACTIVE',
       highRiskStatus: cbEnd.state === 'OPEN' ? 'COOLDOWN' : 'ACTIVE',
       cacheEntries: sharedCandleCache.size(),
@@ -468,7 +489,7 @@ async function executeCoordinatedV2Cycle(options: {
       usedWeight1m: cbErr.usedWeight1m,
       weightLimit1m: cbErr.weightLimit1m,
       cooldownUntil: cbErr.cooldownUntil,
-      cooldownReason: err instanceof Error ? err.message : cbErr.reason,
+      cooldownReason: 'Market data temporarily unavailable. Automatic recovery in progress.',
       standardStatus: isCooldown ? 'COOLDOWN' : 'ERROR',
       highRiskStatus: isCooldown ? 'COOLDOWN' : 'IDLE',
       cacheEntries: sharedCandleCache.size(),
