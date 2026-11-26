@@ -90,19 +90,7 @@ export async function POST(request: NextRequest) {
 
   const { timeframe, strategy } = parsed.data;
 
-  const cbStatus = await ensureBinanceCooldownHydrated();
-  if (cbStatus.state === 'OPEN' && cbStatus.cooldownUntil) {
-    const v2State = await getScannerV2State().catch(() => null);
-    return NextResponse.json({
-      ok: false,
-      cooldown: true,
-      cooldownUntil: cbStatus.cooldownUntil,
-      circuitBreaker: cbStatus,
-      v2State,
-      error: 'Market data temporarily unavailable. Automatic recovery in progress.',
-    }, { status: 429, headers: noStore });
-  }
-
+  await ensureBinanceCooldownHydrated();
   const lockStatus = await checkAndAcquireScanLock();
   if (!lockStatus.acquired) {
     if (lockStatus.lastResult) {

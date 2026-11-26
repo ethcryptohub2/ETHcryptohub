@@ -150,6 +150,7 @@ export async function GET(request: NextRequest) {
         ({ symbol, baseAsset, eligible, watchlist, savedScanAt })),
       candidates: displayedCandidates,
     };
+    const isGlobalCooldown = v2State ? v2State.state === 'RATE_LIMIT_COOLDOWN' : cbStatus.state === 'OPEN';
     return NextResponse.json({
       data: result,
       diagnostics: {
@@ -170,9 +171,9 @@ export async function GET(request: NextRequest) {
         cycleId: typeof rotationState?.cycleId === 'string' ? rotationState.cycleId : 'CYCLE-1',
       },
       circuitBreaker: {
-        state: cbStatus.state,
-        cooldownUntil: cbStatus.cooldownUntil,
-        reason: cbStatus.state === 'OPEN' ? 'Market data temporarily unavailable. Automatic recovery in progress.' : null,
+        state: isGlobalCooldown ? 'OPEN' : 'CLOSED',
+        cooldownUntil: isGlobalCooldown ? (typeof v2State?.cooldownUntil === 'number' ? v2State.cooldownUntil : cbStatus.cooldownUntil) : null,
+        reason: isGlobalCooldown ? 'Market data temporarily unavailable. Automatic recovery in progress.' : null,
       },
       v2State,
       signalMetadata: { signals: signalMap, serverNow: new Date(serverNow).toISOString() },

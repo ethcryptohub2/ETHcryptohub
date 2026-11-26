@@ -641,6 +641,7 @@ export class BinanceMarketScannerService implements MarketScannerProvider {
     private readonly request: typeof fetch = globalThis.fetch,
     private readonly now: () => number = Date.now,
     private readonly research: MarketResearchProvider | null = null,
+    private readonly candleFetcher?: (symbol: string, timeframe: ScannerConfiguration['timeframe']) => Promise<MarketCandle[]>,
   ) {}
 
   async scan(config: ScannerConfiguration): Promise<MarketScannerResponse> {
@@ -762,6 +763,9 @@ export class BinanceMarketScannerService implements MarketScannerProvider {
     timeframe: ScannerConfiguration['timeframe'],
     preferredExchange: FuturesMarketSnapshot['exchange'],
   ): Promise<MarketCandle[]> {
+    if (this.candleFetcher) {
+      return this.candleFetcher(symbol, timeframe);
+    }
     const key = `candles:${preferredExchange}:${symbol}:${timeframe}`;
     const localCached = this.candleCache.get(key);
     if (localCached && localCached.expiresAt > this.now()) return localCached.candles;

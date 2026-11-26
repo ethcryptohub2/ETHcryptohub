@@ -10,8 +10,9 @@ import {
 } from './high-risk-scalping';
 import { pool } from './db';
 import { getStoredMarketDataSettings, resolveCoinApiKey } from './market-data/settings';
-import { syncProviderTrackersWithConfig } from './market-data/provider-manager';
+import { syncProviderTrackersWithConfig, fetchCandlesWithFailover } from './market-data/provider-manager';
 import { coinapiTracker } from './market-data/provider-registry';
+import type { FuturesMarketSnapshot, FuturesMarketsProvider } from '../smartexit/apps/api/src/services/binance-futures-markets';
 import { runHybridParallelWorkPool, type ScannerV2LifecycleState } from './hybrid-scanner-v2';
 import { loadMarketResearchProvider } from './market-research-settings';
 import {
@@ -160,7 +161,27 @@ export async function saveScannerV2State(state: ScannerV2PersistedState): Promis
 }
 
 export async function getScannerV2State(): Promise<ScannerV2PersistedState> {
-  const cb = await ensureBinanceCooldownHydrated();
+  const now = Date.now();
+  const cb = await ensureBinanceCooldownHydrated(now);
+  const mdSettings = await getStoredMarketDataSettings();
+  const coinapiKey = resolveCoinApiKey(mdSettings);
+  syncProviderTrackersWithConfig(
+    {
+      autoFailoverEnabled: mdSettings.autoFailoverEnabled,
+      binanceEnabled: mdSettings.binanceEnabled,
+      coinapiEnabled: mdSettings.coinapiEnabled,
+      coinapiApiKey: coinapiKey,
+      alternativeEnabled: mdSettings.alternativeEnabled,
+      historicalCacheEnabled: mdSettings.historicalCacheEnabled,
+    },
+    now,
+  );
+  const hasBackupLiveProvider =
+    mdSettings.autoFailoverEnabled &&
+    mdSettings.coinapiEnabled &&
+    Boolean(coinapiKey) &&
+    coinapiTracker.isEligible(now);
+
   const res = await safeDbQuery<{ value_json: Partial<ScannerV2PersistedState> }>(
     `SELECT value_json FROM public.app_settings WHERE key = $1`,
     [SCANNER_V2_STATE_KEY],
@@ -172,16 +193,24 @@ export async function getScannerV2State(): Promise<ScannerV2PersistedState> {
   // Always reflect live circuit-breaker and cache status
   merged.usedWeight1m = cb.usedWeight1m;
   merged.weightLimit1m = cb.weightLimit1m;
-  merged.cooldownUntil = cb.cooldownUntil;
-  merged.cooldownReason = cb.reason;
   merged.cacheEntries = sharedCandleCache.size();
 
-  if (cb.state === 'OPEN') {
+  if (cb.state === 'OPEN' && !hasBackupLiveProvider) {
     merged.state = 'RATE_LIMIT_COOLDOWN';
+    merged.cooldownUntil = cb.cooldownUntil;
+    merged.cooldownReason = 'Market data temporarily unavailable. Automatic recovery in progress.';
     merged.standardStatus = 'COOLDOWN';
     merged.highRiskStatus = 'COOLDOWN';
-  } else if (merged.state === 'COMPLETED' && merged.nextScanAt && Date.parse(merged.nextScanAt) > Date.now()) {
-    merged.state = 'WAITING_FOR_NEXT_CYCLE';
+  } else {
+    merged.cooldownUntil = null;
+    merged.cooldownReason = null;
+    if (merged.state === 'RATE_LIMIT_COOLDOWN') {
+      merged.state = 'INITIALIZING';
+      merged.standardStatus = 'IDLE';
+      merged.highRiskStatus = 'IDLE';
+    } else if (merged.state === 'COMPLETED' && merged.nextScanAt && Date.parse(merged.nextScanAt) > now) {
+      merged.state = 'WAITING_FOR_NEXT_CYCLE';
+    }
   }
 
   return merged;
@@ -268,13 +297,26 @@ async function executeCoordinatedV2Cycle(options: {
     return existing;
   }
 
+  const failoverConfig = {
+    autoFailoverEnabled: mdSettings.autoFailoverEnabled,
+    binanceEnabled: mdSettings.binanceEnabled,
+    coinapiEnabled: mdSettings.coinapiEnabled,
+    coinapiApiKey: coinapiKey,
+    alternativeEnabled: mdSettings.alternativeEnabled,
+    historicalCacheEnabled: mdSettings.historicalCacheEnabled,
+  };
+
   try {
-    const syncState = await getScannerSyncState();
-    const lastAttempt = syncState?.last_attempt_at ? Date.parse(syncState.last_attempt_at) : 0;
-    if (!lastAttempt || Date.now() - lastAttempt >= 15 * 60_000) {
-      await syncBinanceScannerUniverse(null).catch((err) => {
-        if (err instanceof BinanceCooldownError) throw err;
-      });
+    const useFailoverMode = cb.state === 'OPEN' && hasBackupLiveProvider;
+
+    if (!useFailoverMode) {
+      const syncState = await getScannerSyncState();
+      const lastAttempt = syncState?.last_attempt_at ? Date.parse(syncState.last_attempt_at) : 0;
+      if (!lastAttempt || Date.now() - lastAttempt >= 15 * 60_000) {
+        await syncBinanceScannerUniverse(null).catch((err) => {
+          if (err instanceof BinanceCooldownError) throw err;
+        });
+      }
     }
 
     const enabledSymbols = await getEnabledScannerSymbols();
@@ -282,18 +324,39 @@ async function executeCoordinatedV2Cycle(options: {
     const highRiskSettings = await getHighRiskScalpingSettings().catch(() => null);
     const researchProvider = await loadMarketResearchProvider();
 
-    // Ensure WebSocket kline stream is tracking top universe pairs if permitted
-    if (binanceRateLimiter.getStatus().state !== 'OPEN') {
+    if (!useFailoverMode && binanceRateLimiter.getStatus().state !== 'OPEN') {
       binanceWsKlineEngine.start(enabledSymbols.slice(0, 180), timeframe);
     }
 
-    const marketSnapshot = await markets.list().catch((err: unknown) => {
-      if (err instanceof BinanceCooldownError) throw err;
-      if (err instanceof BinanceMarketDataError) {
-        throw new Error('Binance market metadata acquisition failed.');
-      }
-      throw err;
-    });
+    let marketSnapshot: FuturesMarketSnapshot;
+    if (!useFailoverMode) {
+      marketSnapshot = await markets.list().catch((err: unknown) => {
+        if (err instanceof BinanceCooldownError) throw err;
+        if (err instanceof BinanceMarketDataError) {
+          throw new Error('Market data acquisition failed.');
+        }
+        throw err;
+      });
+    } else {
+      // Backup live provider mode (CoinAPI): build snapshot from fetched candles without hitting Binance
+      marketSnapshot = {
+        exchange: 'BINANCE',
+        market: 'USDⓈ-M FUTURES',
+        source: 'COINAPI_BINANCEFTS_FAILOVER',
+        updatedAt: new Date().toISOString(),
+        symbols: [],
+      };
+    }
+
+    const PRIORITY_CORE = ['BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'BNBUSDT', 'XRPUSDT', 'DOGEUSDT', 'ADAUSDT', 'AVAXUSDT', 'LINKUSDT', 'DOTUSDT', 'SUIUSDT', 'APTUSDT', 'NEARUSDT', 'ARBUSDT', 'OPUSDT', 'LTCUSDT'];
+    const orderedSymbols = useFailoverMode
+      ? [
+          ...PRIORITY_CORE.filter((s) => enabledSymbols.includes(s)),
+          ...enabledSymbols.filter((s) => !PRIORITY_CORE.includes(s)),
+        ]
+      : enabledSymbols;
+    const maxSymbolsThisCycle = useFailoverMode ? 16 : orderedSymbols.length;
+    let failoverUsedCount = 0;
 
     const btcMarket = marketSnapshot.symbols.find((m) => m.symbol === 'BTCUSDT');
     const btcDirection = !btcMarket?.priceChangePercent24h
@@ -304,7 +367,6 @@ async function executeCoordinatedV2Cycle(options: {
           ? ('BEARISH' as const)
           : ('NEUTRAL' as const);
 
-    const scannerService = new BinanceMarketScannerService(markets, globalThis.fetch, Date.now, researchProvider);
     const maxAgeSeconds = recommendedMaxAgeSeconds(timeframe);
 
     const runningState: ScannerV2PersistedState = {
@@ -322,6 +384,8 @@ async function executeCoordinatedV2Cycle(options: {
       failedCount: 0,
       skippedCount: 0,
       startedAt,
+      cooldownUntil: null,
+      cooldownReason: null,
       standardStatus: 'ACTIVE',
       highRiskStatus: highRiskSettings?.enabled ? 'ACTIVE' : 'DISABLED',
     };
@@ -329,17 +393,85 @@ async function executeCoordinatedV2Cycle(options: {
 
     const summary = await runHybridParallelWorkPool({
       cycleId,
-      symbols: enabledSymbols,
+      symbols: orderedSymbols,
       batchSize: options.batchSize ?? DEFAULT_V2_BATCH_SIZE,
       concurrency: options.concurrency ?? DEFAULT_V2_CONCURRENCY,
+      allowFailoverMode: useFailoverMode,
       signal: options.signal,
       processBatch: async (batchSymbols) => {
-        const result = await scannerService.scan({
+        let activeBatchSymbols = batchSymbols;
+        let preSkipped = 0;
+        if (useFailoverMode) {
+          const remainingBudget = Math.max(0, maxSymbolsThisCycle - failoverUsedCount);
+          if (remainingBudget === 0 || !coinapiTracker.isEligible()) {
+            return {
+              successfulCount: 0,
+              failedCount: 0,
+              skippedCount: batchSymbols.length,
+              qualifiedCount: 0,
+              newSignals: 0,
+              deduplicatedSignals: 0,
+            };
+          }
+          activeBatchSymbols = batchSymbols.slice(0, remainingBudget);
+          preSkipped = batchSymbols.length - activeBatchSymbols.length;
+          failoverUsedCount += activeBatchSymbols.length;
+
+          // Fetch CoinAPI candles for activeBatchSymbols and build snapshot entries
+          for (const sym of activeBatchSymbols) {
+            try {
+              const res = await fetchCandlesWithFailover({
+                symbol: sym,
+                timeframe,
+                limit: 250,
+                config: failoverConfig,
+              });
+              const latest = res.candles.at(-1);
+              if (latest) {
+                const bars24h = res.candles.slice(-96);
+                const first24h = bars24h[0];
+                const quoteVol = bars24h.reduce((sum, c) => sum + c.volume * c.close, 0);
+                const pct = first24h && first24h.open > 0 ? ((latest.close - first24h.open) / first24h.open) * 100 : 0;
+                marketSnapshot.symbols.push({
+                  symbol: sym,
+                  contractType: 'PERPETUAL',
+                  baseAsset: sym.replace(/USDT$/, ''),
+                  quoteAsset: 'USDT',
+                  lastPrice: latest.close,
+                  priceChangePercent24h: pct,
+                  quoteVolume24h: quoteVol,
+                  tradeCount24h: bars24h.length,
+                });
+              }
+            } catch {
+              // Individual symbol error handled by scannerService as DATA_UNAVAILABLE
+            }
+          }
+        }
+
+        const batchMarketsProvider: FuturesMarketsProvider = useFailoverMode
+          ? { list: async () => marketSnapshot }
+          : markets;
+        const batchScanner = new BinanceMarketScannerService(
+          batchMarketsProvider,
+          globalThis.fetch,
+          Date.now,
+          researchProvider,
+          useFailoverMode
+            ? async (sym, tf) => {
+                const assessed = sharedCandleCache.assess('BINANCE', sym, tf, Date.now(), false);
+                if (assessed.candles.length > 0) return assessed.candles;
+                throw new Error('Market candle unavailable from failover provider.');
+              }
+            : undefined,
+        );
+
+        const result = await batchScanner.scan({
           quoteAsset: 'USDT',
           timeframe,
-          symbols: batchSymbols,
+          symbols: activeBatchSymbols,
           minimumVolume: 5_000_000,
-          limit: batchSymbols.length,
+          limit: activeBatchSymbols.length,
           atrPeriod: 10,
           multiplier: 3,
           maxAgeSeconds,
@@ -404,11 +536,11 @@ async function executeCoordinatedV2Cycle(options: {
         return {
           successfulCount: successful,
           failedCount: failed,
-          skippedCount: skipped,
+          skippedCount: skipped + preSkipped,
           qualifiedCount: qualified + hrCreated,
           newSignals: persisted.created + hrCreated,
           deduplicatedSignals: Math.max(0, qualified - persisted.created),
-          cooldownTripped: binanceRateLimiter.getStatus().state === 'OPEN',
+          cooldownTripped: !useFailoverMode && binanceRateLimiter.getStatus().state === 'OPEN',
         };
       },
       onProgress: async (progress) => {
@@ -438,6 +570,7 @@ async function executeCoordinatedV2Cycle(options: {
     }
 
     const cbEnd = binanceRateLimiter.getStatus();
+    const globalCooldown = !useFailoverMode && cbEnd.state === 'OPEN';
     const nextScanAt = new Date(Date.now() + FULL_SCAN_INTERVAL_MS).toISOString();
     const finalState: ScannerV2PersistedState = {
       version: 'Hybrid Parallel V2',
@@ -463,10 +596,10 @@ async function executeCoordinatedV2Cycle(options: {
       nextScanAt,
       usedWeight1m: cbEnd.usedWeight1m,
       weightLimit1m: cbEnd.weightLimit1m,
-      cooldownUntil: cbEnd.cooldownUntil,
-      cooldownReason: cbEnd.state === 'OPEN' ? 'Market data temporarily unavailable. Automatic recovery in progress.' : null,
-      standardStatus: cbEnd.state === 'OPEN' ? 'COOLDOWN' : 'ACTIVE',
-      highRiskStatus: cbEnd.state === 'OPEN' ? 'COOLDOWN' : 'ACTIVE',
+      cooldownUntil: globalCooldown ? cbEnd.cooldownUntil : null,
+      cooldownReason: globalCooldown ? 'Market data temporarily unavailable. Automatic recovery in progress.' : null,
+      standardStatus: globalCooldown ? 'COOLDOWN' : 'ACTIVE',
+      highRiskStatus: globalCooldown ? 'COOLDOWN' : (highRiskSettings?.enabled ? 'ACTIVE' : 'DISABLED'),
       cacheEntries: sharedCandleCache.size(),
     };
 

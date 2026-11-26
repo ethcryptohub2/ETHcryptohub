@@ -62,6 +62,7 @@ export async function runHybridParallelWorkPool(options: {
   symbols: readonly string[];
   batchSize?: number;
   concurrency?: number;
+  allowFailoverMode?: boolean;
   signal?: AbortSignal;
   processBatch: (
     batchSymbols: string[],
@@ -100,7 +101,7 @@ export async function runHybridParallelWorkPool(options: {
   let cancelled = false;
 
   const cbInitial = binanceRateLimiter.getStatus(startedMs);
-  if (cbInitial.state === 'OPEN') {
+  if (!options.allowFailoverMode && cbInitial.state === 'OPEN') {
     cooldownTripped = true;
     cooldownUntil = cbInitial.cooldownUntil;
     skippedCount = options.symbols.length;
@@ -203,7 +204,7 @@ export async function runHybridParallelWorkPool(options: {
     : 0;
 
   let finalState: ScannerV2LifecycleState = 'COMPLETED';
-  if (cooldownTripped || cbFinal.state === 'OPEN') {
+  if (cooldownTripped || (!options.allowFailoverMode && cbFinal.state === 'OPEN')) {
     finalState = 'RATE_LIMIT_COOLDOWN';
     cooldownUntil = cbFinal.cooldownUntil ?? cooldownUntil;
   } else if (cancelled || failedCount > 0 || skippedCount > 0) {
