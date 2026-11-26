@@ -9,6 +9,7 @@
     "prebuild": "node scripts/validate-deployment-env.mjs",
     "build": "next build",
     "start": "next start",
+    "start:render": "node scripts/start-render-combined.mjs",
     "worker:demo": "node --import tsx scripts/demo-trading-worker.mjs",
     "worker:demo:safe": "node --import tsx scripts/demo-trading-worker.mjs --safe-mode",
     "typecheck": "tsc --noEmit",

@@ -1,0 +1,139 @@
+# SmartExit / ETHcryptohub — Render Blueprint Specification (Infrastructure as Code)
+# Documentation: https://render.com/docs/blueprint-spec
+version: "1"
+
+services:
+  # ---------------------------------------------------------------------------
+  # 1. SmartExit Web Service (Next.js Application)
+  # ---------------------------------------------------------------------------
+  - type: web
+    name: smartexit-web
+    runtime: node
+    plan: starter
+    region: singapore # Closest Render region to ap-southeast-2 (Sydney Supabase)
+    branch: functional-staging
+    buildCommand: npm install && npm run build
+    startCommand: npx next start -H 0.0.0.0 -p $PORT
+    autoDeploy: true
+    healthCheckPath: /
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: SMARTEXIT_DEPLOYMENT_ENV
+        value: staging
+      - key: TRADING_ENVIRONMENT
+        value: DEMO
+      - key: SMARTEXIT_TRADING_ENVIRONMENT
+        value: DEMO
+      - key: WORKER_SAFE_MODE
+        value: "true"
+      - key: DEMO_ORDER_DISPATCH_ENABLED
+        value: "false"
+      - key: BINANCE_FUTURES_LIVE_TRADING_APPROVED
+        value: "false"
+      - key: BINANCE_FUTURES_LIVE_TRADING_ENABLED
+        value: "false"
+      - key: SMARTEXIT_CRON_RECONCILIATION_ENABLED
+        value: "false"
+      - key: NEXT_PUBLIC_SUPABASE_URL
+        value: https://ghecpkpaxbrvehquhzkr.supabase.co
+      - key: SMARTEXIT_STAGING_SUPABASE_PROJECT_REF
+        value: ghecpkpaxbrvehquhzkr
+      - key: SMARTEXIT_PRODUCTION_SUPABASE_PROJECT_REF
+        value: kafsdnzzjawikoavkhvm
+      - key: SUPABASE_DB_HOST
+        value: aws-0-ap-southeast-2.pooler.supabase.com
+      - key: SUPABASE_DB_PORT
+        value: "6543"
+      - key: SUPABASE_DB_NAME
+        value: postgres
+      - key: SUPABASE_DB_USER
+        value: postgres.ghecpkpaxbrvehquhzkr
+      - key: SUPABASE_DB_SSLMODE
+        value: verify-full
+      # Sensitive secrets prompted securely by Render UI on setup (sync: false)
+      - key: NEXT_PUBLIC_SUPABASE_ANON_KEY
+        sync: false
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false
+      - key: SUPABASE_DB_PASSWORD
+        sync: false
+      - key: AUTH_SECRET
+        sync: false
+      - key: BINANCE_CREDENTIALS_KEY
+        sync: false
+      - key: CRON_SECRET
+        sync: false
+      - key: WORKER_SECRET
+        sync: false
+
+  # ---------------------------------------------------------------------------
+  # 2. SmartExit 24/7 Demo Trading Worker (Continuous Background Worker)
+  # ---------------------------------------------------------------------------
+  - type: worker
+    name: smartexit-demo-worker
+    runtime: node
+    plan: starter # $7/mo (0.5 CPU / 512 MB RAM - worker runs lean at ~48 MB RSS)
+    region: singapore
+    branch: functional-staging
+    buildCommand: npm install
+    startCommand: node --import tsx scripts/demo-trading-worker.mjs
+    autoDeploy: true
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: SMARTEXIT_DEPLOYMENT_ENV
+        value: staging
+      - key: TRADING_ENVIRONMENT
+        value: DEMO
+      - key: SMARTEXIT_TRADING_ENVIRONMENT
+        value: DEMO
+      - key: WORKER_SAFE_MODE
+        value: "true"
+      - key: DEMO_ORDER_DISPATCH_ENABLED
+        value: "false"
+      - key: SMARTEXIT_EMERGENCY_STOP
+        value: "false"
+      - key: BINANCE_FUTURES_LIVE_TRADING_APPROVED
+        value: "false"
+      - key: BINANCE_FUTURES_LIVE_TRADING_ENABLED
+        value: "false"
+      - key: SMARTEXIT_CRON_RECONCILIATION_ENABLED
+        value: "false"
+      - key: NEXT_PUBLIC_SUPABASE_URL
+        value: https://ghecpkpaxbrvehquhzkr.supabase.co
+      - key: SMARTEXIT_STAGING_SUPABASE_PROJECT_REF
+        value: ghecpkpaxbrvehquhzkr
+      - key: SMARTEXIT_PRODUCTION_SUPABASE_PROJECT_REF
+        value: kafsdnzzjawikoavkhvm
+      - key: SUPABASE_DB_HOST
+        value: aws-0-ap-southeast-2.pooler.supabase.com
+      - key: SUPABASE_DB_PORT
+        value: "6543"
+      - key: SUPABASE_DB_NAME
+        value: postgres
+      - key: SUPABASE_DB_USER
+        value: postgres.ghecpkpaxbrvehquhzkr
+      - key: SUPABASE_DB_SSLMODE
+        value: verify-full
+      # Interlink with smartexit-web service
+      - key: APP_URL
+        fromService:
+          type: web
+          name: smartexit-web
+          property: host
+      # Sensitive secrets prompted securely by Render UI
+      - key: NEXT_PUBLIC_SUPABASE_ANON_KEY
+        sync: false
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false
+      - key: SUPABASE_DB_PASSWORD
+        sync: false
+      - key: AUTH_SECRET
+        sync: false
+      - key: BINANCE_CREDENTIALS_KEY
+        sync: false
+      - key: CRON_SECRET
+        sync: false
+      - key: WORKER_SECRET
+        sync: false

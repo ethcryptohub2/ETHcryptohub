@@ -34,7 +34,7 @@ function isDisabled(value) {
 }
 
 function classifyEnvironment(env) {
-  if (env.VERCEL_ENV === 'production') return 'production';
+  if (env.VERCEL_ENV === 'production' || env.SMARTEXIT_DEPLOYMENT_ENV === 'production') return 'production';
   if (env.VERCEL_ENV === 'preview') return 'preview';
   if (env.SMARTEXIT_DEPLOYMENT_ENV === 'staging') return 'staging';
   return 'local';
