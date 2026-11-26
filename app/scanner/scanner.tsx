@@ -521,14 +521,19 @@ function StandardSignals({
 
   const hiddenCount = Math.max(0, candidates.length - visibleCandidates.length);
   const pageCount = data ? Math.max(1, Math.ceil(data.matchingCount / data.selection.limit)) : 1;
-  const activeBatchIndex = scanResult?.batchIndex ?? scanDiagnostics?.batchIndex ?? 1;
-  const activeTotalBatches = scanResult?.totalBatches ?? scanDiagnostics?.totalBatches ?? (data?.eligibleCount ? Math.max(1, Math.ceil(data.eligibleCount / 35)) : 1);
-  const batchDisplay = `Batch ${activeBatchIndex}/${activeTotalBatches}`;
-  const activeDurationMs = scanResult?.durationMs ?? scanDiagnostics?.scanDurationMs ?? null;
+  const inCooldown = Boolean(circuitCooldownUntil || v2State?.state === 'RATE_LIMIT_COOLDOWN');
+  const activeBatchIndex = v2State ? v2State.completedBatches : (scanResult?.batchIndex ?? scanDiagnostics?.batchIndex ?? 0);
+  const activeTotalBatches = v2State && v2State.totalBatches > 0
+    ? v2State.totalBatches
+    : (scanResult?.totalBatches ?? scanDiagnostics?.totalBatches ?? (data?.eligibleCount ? Math.max(1, Math.ceil(data.eligibleCount / 32)) : 0));
+  const batchDisplay = activeTotalBatches > 0 ? `Batch ${activeBatchIndex}/${activeTotalBatches}` : 'Awaiting V2';
+  const activeDurationMs = v2State?.durationMs ?? scanResult?.durationMs ?? scanDiagnostics?.scanDurationMs ?? null;
   const latencyDisplay = activeDurationMs !== null
     ? `${activeDurationMs}ms`
-    : loading ? 'Refreshing…' : 'Cached';
-  const activeScannedCount = scanResult?.scannedCount ?? scanDiagnostics?.scannedCount ?? candidates.length;
+    : loading ? 'Refreshing…' : 'Saved Snapshot';
+  const activeScannedCount = v2State
+    ? (v2State.successfulCount + v2State.failedCount)
+    : (scanResult?.scannedCount ?? scanDiagnostics?.scannedCount ?? 0);
 
   return (
     <main className="shell">
@@ -603,38 +608,43 @@ function StandardSignals({
         </div>
       </section>
 
-      <section className="card stack">
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 14 }}>
-          <div>
+      <section className="card stack" style={{ overflowX: 'hidden', maxWidth: '100%', boxSizing: 'border-box' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 14, minWidth: 0, maxWidth: '100%' }}>
+          <div style={{ minWidth: 0 }}>
             <h2 style={{ margin: 0, fontSize: 18 }}>Scanner Controls & Configuration</h2>
             <p className="muted" style={{ margin: '4px 0 0', fontSize: 13 }}>
-              Algorithmic scanning parameters, background auto-scan, and asset filters.
+              Full-market V2 cycle: 5 min · Saved snapshot refresh: {refreshMinutes} min · Live ticker: Binance WS
             </p>
           </div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', minWidth: 0, maxWidth: '100%' }}>
             <button
               type="button"
               className="button-secondary"
               onClick={() => setAutoScanEnabled(!autoScanEnabled)}
               style={{
-                borderColor: autoScanEnabled ? 'rgba(16, 185, 129, 0.5)' : undefined,
-                color: autoScanEnabled ? '#10b981' : undefined,
+                borderColor: inCooldown ? 'rgba(245, 158, 11, 0.5)' : autoScanEnabled ? 'rgba(16, 185, 129, 0.5)' : undefined,
+                color: inCooldown ? '#d97706' : autoScanEnabled ? '#10b981' : undefined,
                 fontWeight: 600,
                 display: 'inline-flex',
                 alignItems: 'center',
                 gap: 6,
+                maxWidth: '100%',
               }}
-              title={autoScanEnabled ? 'Continuous background scanning is ACTIVE. Click to pause.' : 'Continuous background scanning is PAUSED. Click to resume.'}
+              title={inCooldown ? 'Paused due to active Binance rate-limit cooldown' : autoScanEnabled ? '5-minute V2 full-market cycle is ACTIVE. Click to pause.' : '5-minute V2 full-market cycle is PAUSED. Click to resume.'}
             >
               <span style={{
                 display: 'inline-block',
                 width: 8,
                 height: 8,
                 borderRadius: '50%',
-                background: autoScanEnabled ? '#10b981' : '#6b7280',
-                boxShadow: autoScanEnabled ? '0 0 8px #10b981' : 'none',
+                background: inCooldown ? '#f59e0b' : autoScanEnabled ? '#10b981' : '#6b7280',
+                boxShadow: !inCooldown && autoScanEnabled ? '0 0 8px #10b981' : 'none',
               }} />
-              {autoScanEnabled ? `Auto-Scan (${autoScanCountdown}s)` : 'Auto-Scan: PAUSED'}
+              {inCooldown
+                ? 'PAUSED — BINANCE COOLDOWN'
+                : autoScanEnabled
+                  ? `Auto-Scan 5m (${autoScanCountdown}s)`
+                  : 'Auto-Scan: PAUSED'}
             </button>
             <button
               type="button"
@@ -710,7 +720,7 @@ function StandardSignals({
         )}
 
         {circuitCooldownUntil && (
-          <div style={{ padding: '10px 14px', background: 'rgba(245, 158, 11, 0.12)', border: '1px solid rgba(245, 158, 11, 0.4)', borderRadius: 8, fontSize: 12, color: '#d97706', overflowWrap: 'anywhere', maxWidth: '100%', boxSizing: 'border-box' }} suppressHydrationWarning>
+          <div style={{ padding: '10px 12px', background: 'rgba(245, 158, 11, 0.12)', border: '1px solid rgba(245, 158, 11, 0.4)', borderRadius: 8, fontSize: 12, color: '#d97706', overflowWrap: 'anywhere', wordBreak: 'break-word', width: '100%', maxWidth: '100%', boxSizing: 'border-box' }} suppressHydrationWarning>
             <strong>⏸ BINANCE COOLDOWN ACTIVE:</strong>{' '}
             {circuitCooldownReason ?? `Rate-limit cooldown active until ${new Date(circuitCooldownUntil).toLocaleString('en-US')}.`}
           </div>
@@ -791,8 +801,14 @@ function StandardSignals({
               <strong className="mono">{v2State?.lastSuccessfulScanAt ? new Date(v2State.lastSuccessfulScanAt).toLocaleTimeString('en-US') : '—'}</strong>
             </div>
             <div suppressHydrationWarning>
-              <span className="muted">Next Cycle (5m):</span>{' '}
-              <strong className="mono">{v2State?.nextScanAt ? new Date(v2State.nextScanAt).toLocaleTimeString('en-US') : `${autoScanCountdown}s`}</strong>
+              <span className="muted">{inCooldown ? 'Cooldown Expiry:' : 'Next Cycle (5m):'}</span>{' '}
+              <strong className="mono">
+                {inCooldown
+                  ? (circuitCooldownUntil ? new Date(circuitCooldownUntil).toLocaleString('en-US') : 'PAUSED')
+                  : v2State?.nextScanAt
+                    ? new Date(v2State.nextScanAt).toLocaleTimeString('en-US')
+                    : `${autoScanCountdown}s`}
+              </strong>
             </div>
           </div>
         </div>

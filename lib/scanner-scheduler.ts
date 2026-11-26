@@ -1,7 +1,14 @@
+import { randomUUID } from 'node:crypto';
 import type { QueryResultRow } from 'pg';
 import { binanceRateLimiter, BinanceCooldownError } from './binance-rate-limit';
 import { ensureBinanceCooldownHydrated } from './binance-rate-limit-db';
 import { sharedCandleCache } from './candle-cache';
+import {
+  analyzeHighRiskScalpingSetup,
+  getHighRiskScalpingSettings,
+  insertHighRiskSignal,
+} from './high-risk-scalping';
+import { pool } from './db';
 import { runHybridParallelWorkPool, type ScannerV2LifecycleState } from './hybrid-scanner-v2';
 import { loadMarketResearchProvider } from './market-research-settings';
 import {
@@ -24,6 +31,40 @@ export const FULL_SCAN_INTERVAL_MS = 300_000; // 5 minutes
 export const DEFAULT_V2_BATCH_SIZE = 32;
 export const DEFAULT_V2_CONCURRENCY = 4; // Selected from 2/4/6 worker pool benchmark
 const SCANNER_V2_STATE_KEY = 'scanner_v2_state';
+const SCANNER_V2_LOCK_KEY = 'scanner_v2_lock';
+const LOCK_TTL_MS = 270_000; // 4.5m lease
+const INSTANCE_OWNER_ID = randomUUID();
+
+async function acquireGlobalV2Lock(now = Date.now()): Promise<boolean> {
+  try {
+    const res = await safeDbQuery<{ value_json: { ownerId: string; leaseUntil: number } }>(
+      `INSERT INTO public.app_settings (key, value_json, updated_at)
+       VALUES ($1, $2::jsonb, NOW())
+       ON CONFLICT (key) DO UPDATE
+         SET value_json = EXCLUDED.value_json, updated_at = NOW()
+       WHERE (public.app_settings.value_json->>'leaseUntil')::bigint < $3
+          OR public.app_settings.value_json->>'ownerId' = $4
+       RETURNING value_json`,
+      [
+        SCANNER_V2_LOCK_KEY,
+        JSON.stringify({ ownerId: INSTANCE_OWNER_ID, leaseUntil: now + LOCK_TTL_MS }),
+        now,
+        INSTANCE_OWNER_ID,
+      ],
+    );
+    return res.rows.length > 0;
+  } catch {
+    return true;
+  }
+}
+
+async function releaseGlobalV2Lock(): Promise<void> {
+  await safeDbQuery(
+    `DELETE FROM public.app_settings
+      WHERE key = $1 AND value_json->>'ownerId' = $2`,
+    [SCANNER_V2_LOCK_KEY, INSTANCE_OWNER_ID],
+  );
+}
 
 export interface ScannerV2PersistedState {
   version: 'Hybrid Parallel V2';
@@ -201,6 +242,11 @@ async function executeCoordinatedV2Cycle(options: {
     return cooldownState;
   }
 
+  const lockAcquired = await acquireGlobalV2Lock(startedMs);
+  if (!lockAcquired) {
+    return existing;
+  }
+
   try {
     const syncState = await getScannerSyncState();
     const lastAttempt = syncState?.last_attempt_at ? Date.parse(syncState.last_attempt_at) : 0;
@@ -212,6 +258,7 @@ async function executeCoordinatedV2Cycle(options: {
 
     const enabledSymbols = await getEnabledScannerSymbols();
     const settings = await getNotificationSystemSettings();
+    const highRiskSettings = await getHighRiskScalpingSettings().catch(() => null);
     const researchProvider = await loadMarketResearchProvider();
 
     // Ensure WebSocket kline stream is tracking top universe pairs if permitted
@@ -226,6 +273,15 @@ async function executeCoordinatedV2Cycle(options: {
       }
       throw err;
     });
+
+    const btcMarket = marketSnapshot.symbols.find((m) => m.symbol === 'BTCUSDT');
+    const btcDirection = !btcMarket?.priceChangePercent24h
+      ? ('NEUTRAL' as const)
+      : btcMarket.priceChangePercent24h > 0.2
+        ? ('BULLISH' as const)
+        : btcMarket.priceChangePercent24h < -0.2
+          ? ('BEARISH' as const)
+          : ('NEUTRAL' as const);
 
     const scannerService = new BinanceMarketScannerService(markets, globalThis.fetch, Date.now, researchProvider);
     const maxAgeSeconds = recommendedMaxAgeSeconds(timeframe);
@@ -246,7 +302,7 @@ async function executeCoordinatedV2Cycle(options: {
       skippedCount: 0,
       startedAt,
       standardStatus: 'ACTIVE',
-      highRiskStatus: 'ACTIVE',
+      highRiskStatus: highRiskSettings?.enabled ? 'ACTIVE' : 'DISABLED',
     };
     await saveScannerV2State(runningState);
 
@@ -277,6 +333,44 @@ async function executeCoordinatedV2Cycle(options: {
           await flushSignalNotifications();
         }
 
+        // Shared-cache High-Risk Strategy evaluation (zero extra REST candle requests)
+        let hrCreated = 0;
+        if (
+          highRiskSettings?.enabled &&
+          (timeframe === '5m' || timeframe === '15m') &&
+          highRiskSettings.enabledTimeframes.includes(timeframe)
+        ) {
+          const client = await pool().connect().catch(() => null);
+          if (client) {
+            try {
+              for (const sym of batchSymbols) {
+                const mkt = marketSnapshot.symbols.find((m) => m.symbol === sym);
+                if (!mkt?.lastPrice || mkt.quoteVolume24h < highRiskSettings.minimumQuoteVolume) continue;
+                const assessed = sharedCandleCache.assess('BINANCE', sym, timeframe, Date.now(), false);
+                if (assessed.status !== 'FRESH_LIVE' && assessed.status !== 'VALID_CACHED') continue;
+                const setup = analyzeHighRiskScalpingSetup({
+                  symbol: sym,
+                  timeframe,
+                  candles: assessed.candles,
+                  price: mkt.lastPrice,
+                  btcDirection,
+                  settings: highRiskSettings,
+                  now: Date.now(),
+                });
+                if (!setup) continue;
+                await client.query('BEGIN');
+                const hrRes = await insertHighRiskSignal(client, setup, highRiskSettings);
+                await client.query('COMMIT');
+                if (hrRes) hrCreated += 1;
+              }
+            } catch {
+              await client.query('ROLLBACK').catch(() => {});
+            } finally {
+              client.release();
+            }
+          }
+        }
+
         const skipped = result.candidates.filter((c) =>
           c.warnings.some((w) => w.includes('Skipped due to Binance cooldown')),
         ).length;
@@ -290,8 +384,8 @@ async function executeCoordinatedV2Cycle(options: {
           successfulCount: successful,
           failedCount: failed,
           skippedCount: skipped,
-          qualifiedCount: qualified,
-          newSignals: persisted.created,
+          qualifiedCount: qualified + hrCreated,
+          newSignals: persisted.created + hrCreated,
           deduplicatedSignals: Math.max(0, qualified - persisted.created),
           cooldownTripped: binanceRateLimiter.getStatus().state === 'OPEN',
         };
@@ -381,6 +475,8 @@ async function executeCoordinatedV2Cycle(options: {
     };
     await saveScannerV2State(errorState);
     return errorState;
+  } finally {
+    await releaseGlobalV2Lock();
   }
 }
 
