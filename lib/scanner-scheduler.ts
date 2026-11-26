@@ -469,7 +469,6 @@ async function executeCoordinatedV2Cycle(options: {
       highRiskStatus: highRiskSettings?.enabled ? 'ACTIVE' : 'DISABLED',
     };
     await saveScannerV2State(runningState);
-    const createdSignalIds: string[] = [];
 
     const summary = await runHybridParallelWorkPool({
       cycleId,
@@ -562,9 +561,7 @@ async function executeCoordinatedV2Cycle(options: {
         const persisted = await persistSignalScan(result.candidates, settings, {
           dispatchNotifications: options.deliverNotifications ?? true,
         });
-        for (const id of persisted.createdSignalIds) {
-          createdSignalIds.push(id);
-        }
+        const batchCreatedIds: string[] = [...persisted.createdSignalIds];
         if ((options.deliverNotifications ?? true) && persisted.created > 0) {
           await flushSignalNotifications();
         }
@@ -599,7 +596,7 @@ async function executeCoordinatedV2Cycle(options: {
                 await client.query('COMMIT');
                 if (hrRes) {
                   hrCreated += 1;
-                  createdSignalIds.push(hrRes.centralId);
+                  batchCreatedIds.push(hrRes.centralId);
                 }
               }
             } catch {
@@ -607,6 +604,21 @@ async function executeCoordinatedV2Cycle(options: {
             } finally {
               client.release();
             }
+          }
+        }
+
+        if (
+          batchCreatedIds.length > 0 &&
+          isBackgroundScannerEnabled() &&
+          process.env.WORKER_SAFE_MODE !== 'true' &&
+          process.env.DEMO_ORDER_DISPATCH_ENABLED === 'true' &&
+          tradingExecutionGate('DEMO')
+        ) {
+          try {
+            const { processNewAutomaticTrades } = await import('./trading-execution');
+            await processNewAutomaticTrades(batchCreatedIds);
+          } catch (err) {
+            console.warn('[V2 Batch Auto-Execution] Dispatch warning:', err instanceof Error ? err.message : err);
           }
         }
 
@@ -659,22 +671,6 @@ async function executeCoordinatedV2Cycle(options: {
       await processSignalLifecycle(marketSnapshot).catch((err) => {
         console.warn('V2 lifecycle reconciliation notice:', err instanceof Error ? err.message : err);
       });
-    }
-
-    // Immediate automatic Demo order dispatch for newly generated signals when enabled on backend
-    if (
-      isBackgroundScannerEnabled() &&
-      process.env.WORKER_SAFE_MODE !== 'true' &&
-      process.env.DEMO_ORDER_DISPATCH_ENABLED === 'true' &&
-      createdSignalIds.length > 0 &&
-      tradingExecutionGate('DEMO')
-    ) {
-      try {
-        const { processNewAutomaticTrades } = await import('./trading-execution');
-        await processNewAutomaticTrades(createdSignalIds);
-      } catch (err) {
-        console.warn('[V2 Auto-Execution] Post-scan Demo dispatch warning:', err instanceof Error ? err.message : err);
-      }
     }
 
     const cbEnd = binanceRateLimiter.getStatus();

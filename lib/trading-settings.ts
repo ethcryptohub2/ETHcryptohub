@@ -123,16 +123,16 @@ export async function setAutoTradeEnabled(userId: number, environment: TradingEn
        user_id, demo_auto_trade_enabled, demo_kill_switch_enabled,
        live_auto_trade_enabled, live_kill_switch_enabled, live_trading_acknowledged_at
      ) VALUES (
-       $1, CASE WHEN $2 = 'DEMO' THEN $3 ELSE FALSE END, FALSE,
-       CASE WHEN $2 = 'LIVE' THEN $3 ELSE FALSE END, FALSE,
-       CASE WHEN $2 = 'LIVE' AND $3 THEN NOW() ELSE NULL END
+       $1, CASE WHEN $2::TEXT = 'DEMO' THEN $3::BOOLEAN ELSE FALSE END, FALSE,
+       CASE WHEN $2::TEXT = 'LIVE' THEN $3::BOOLEAN ELSE FALSE END, FALSE,
+       CASE WHEN $2::TEXT = 'LIVE' AND $3::BOOLEAN THEN NOW() ELSE NULL END
      )
      ON CONFLICT (user_id) DO UPDATE SET
-       demo_auto_trade_enabled = CASE WHEN $2 = 'DEMO' THEN $3 ELSE user_trading_settings.demo_auto_trade_enabled END,
-       demo_kill_switch_enabled = CASE WHEN $2 = 'DEMO' AND $3 THEN FALSE ELSE user_trading_settings.demo_kill_switch_enabled END,
-       live_auto_trade_enabled = CASE WHEN $2 = 'LIVE' THEN $3 ELSE user_trading_settings.live_auto_trade_enabled END,
-       live_kill_switch_enabled = CASE WHEN $2 = 'LIVE' AND $3 THEN FALSE ELSE user_trading_settings.live_kill_switch_enabled END,
-       live_trading_acknowledged_at = CASE WHEN $2 = 'LIVE' AND $3 THEN NOW() ELSE user_trading_settings.live_trading_acknowledged_at END,
+       demo_auto_trade_enabled = CASE WHEN $2::TEXT = 'DEMO' THEN $3::BOOLEAN ELSE user_trading_settings.demo_auto_trade_enabled END,
+       demo_kill_switch_enabled = CASE WHEN $2::TEXT = 'DEMO' AND $3::BOOLEAN THEN FALSE ELSE user_trading_settings.demo_kill_switch_enabled END,
+       live_auto_trade_enabled = CASE WHEN $2::TEXT = 'LIVE' THEN $3::BOOLEAN ELSE user_trading_settings.live_auto_trade_enabled END,
+       live_kill_switch_enabled = CASE WHEN $2::TEXT = 'LIVE' AND $3::BOOLEAN THEN FALSE ELSE user_trading_settings.live_kill_switch_enabled END,
+       live_trading_acknowledged_at = CASE WHEN $2::TEXT = 'LIVE' AND $3::BOOLEAN THEN NOW() ELSE user_trading_settings.live_trading_acknowledged_at END,
        updated_at = NOW()`,
     [userId, environment, enabled],
   );
@@ -146,13 +146,13 @@ export async function activateKillSwitch(userId: number, environment: TradingEnv
          user_id, demo_auto_trade_enabled, demo_kill_switch_enabled,
          live_auto_trade_enabled, live_kill_switch_enabled
        ) VALUES (
-         $1, FALSE, $2 = 'DEMO', FALSE, $2 = 'LIVE'
+         $1, FALSE, $2::TEXT = 'DEMO', FALSE, $2::TEXT = 'LIVE'
        )
        ON CONFLICT (user_id) DO UPDATE SET
-         demo_auto_trade_enabled = CASE WHEN $2 = 'DEMO' THEN FALSE ELSE user_trading_settings.demo_auto_trade_enabled END,
-         demo_kill_switch_enabled = CASE WHEN $2 = 'DEMO' THEN TRUE ELSE user_trading_settings.demo_kill_switch_enabled END,
-         live_auto_trade_enabled = CASE WHEN $2 = 'LIVE' THEN FALSE ELSE user_trading_settings.live_auto_trade_enabled END,
-         live_kill_switch_enabled = CASE WHEN $2 = 'LIVE' THEN TRUE ELSE user_trading_settings.live_kill_switch_enabled END,
+         demo_auto_trade_enabled = CASE WHEN $2::TEXT = 'DEMO' THEN FALSE ELSE user_trading_settings.demo_auto_trade_enabled END,
+         demo_kill_switch_enabled = CASE WHEN $2::TEXT = 'DEMO' THEN TRUE ELSE user_trading_settings.demo_kill_switch_enabled END,
+         live_auto_trade_enabled = CASE WHEN $2::TEXT = 'LIVE' THEN FALSE ELSE user_trading_settings.live_auto_trade_enabled END,
+         live_kill_switch_enabled = CASE WHEN $2::TEXT = 'LIVE' THEN TRUE ELSE user_trading_settings.live_kill_switch_enabled END,
          updated_at = NOW()
        RETURNING user_id
      )

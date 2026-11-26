@@ -665,19 +665,19 @@ async function updateExecution(
 ) {
   const result = await query<{ id: string }>(
     `UPDATE public.trade_executions
-        SET execution_status = $2,
+        SET execution_status = $2::TEXT,
             actual_fill_price = COALESCE($3::NUMERIC, actual_fill_price),
             binance_order_id = COALESCE($4, binance_order_id),
             tp_order_id = COALESCE($5, tp_order_id),
             sl_order_id = COALESCE($6, sl_order_id),
             trailing_order_id = COALESCE($7, trailing_order_id),
             protection_status = CASE
-              WHEN $2 = 'PROTECTED' THEN 'PROTECTED'
-              WHEN $2 = 'PROTECTION_FAILED' THEN 'FAILED'
-              WHEN $2 = 'CLOSED' THEN 'CLOSED'
+              WHEN $2::TEXT = 'PROTECTED' THEN 'PROTECTED'
+              WHEN $2::TEXT = 'PROTECTION_FAILED' THEN 'FAILED'
+              WHEN $2::TEXT = 'CLOSED' THEN 'CLOSED'
               ELSE protection_status
             END,
-            closed_at = CASE WHEN $2 = 'CLOSED' THEN COALESCE(closed_at, NOW()) ELSE closed_at END,
+            closed_at = CASE WHEN $2::TEXT = 'CLOSED' THEN COALESCE(closed_at, NOW()) ELSE closed_at END,
             last_reconciled_at = CASE WHEN $12::UUID IS NOT NULL THEN NOW() ELSE last_reconciled_at END,
             error_message = $8, updated_at = NOW()
       WHERE id = $1 AND user_id = $9 AND strategy = $10 AND exchange = 'BINANCE' AND environment = $11
@@ -694,7 +694,7 @@ async function updateExecution(
 
 async function assertEmergencyStopClear(userId: number, environment: TradingEnvironment) {
   const result = await query<{ stopped: boolean }>(
-    `SELECT CASE WHEN $2 = 'DEMO' THEN demo_kill_switch_enabled ELSE live_kill_switch_enabled END AS stopped
+    `SELECT CASE WHEN $2::TEXT = 'DEMO' THEN demo_kill_switch_enabled ELSE live_kill_switch_enabled END AS stopped
        FROM public.user_trading_settings WHERE user_id = $1`,
     [userId, environment],
   );
@@ -794,8 +794,8 @@ export async function executeSignal(
        protection_status, client_order_id, sl_client_algo_id, tp_client_algo_id,
        trailing_client_algo_id, execution_status, execution_mode, user_confirmed_at
      ) VALUES ($1, $2, 'BINANCE', $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, 1,
-               'PENDING', $16, $17, $18, $19, 'EXECUTING', $20,
-               CASE WHEN $20 = 'CONFIRM' THEN NOW() ELSE NULL END)
+               'PENDING', $16, $17, $18, $19, 'EXECUTING', $20::TEXT,
+               CASE WHEN $20::TEXT = 'CONFIRM' THEN NOW() ELSE NULL END)
      ON CONFLICT (user_id, signal_id, exchange, environment) DO NOTHING
      RETURNING id::TEXT`,
     [
@@ -1162,8 +1162,8 @@ export async function reconcileBinanceDemoProtection(limit = 10) {
         const closedStatus = entryFullyFilled ? 'CLOSED' : 'FAILED';
         await query(
           `UPDATE public.trade_executions
-              SET execution_status = $3, protection_status = $4,
-                  closed_at = CASE WHEN $3 = 'CLOSED' THEN COALESCE(closed_at, NOW()) ELSE closed_at END,
+              SET execution_status = $3::TEXT, protection_status = $4::TEXT,
+                  closed_at = CASE WHEN $3::TEXT = 'CLOSED' THEN COALESCE(closed_at, NOW()) ELSE closed_at END,
                   last_reconciled_at = NOW(),
                   updated_at = NOW()
             WHERE id = $1 AND reconcile_lock_token = $2::UUID`,
@@ -1523,6 +1523,7 @@ export async function processNewAutomaticTrades(signalIds: string[]) {
          FROM public.market_signals s
         WHERE s.status = 'ACTIVE'
           AND (s.entry_status = 'OPEN' OR s.entry_status IS NULL)
+          AND s.generated_at > NOW() - INTERVAL '5 minutes'
           AND s.entry_expires_at > statement_timestamp()
           AND s.expires_at > statement_timestamp()
           AND NOT EXISTS (
