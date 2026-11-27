@@ -36,7 +36,7 @@ export type {
   StoredScalpingSignal,
 } from './high-risk-scalping-types';
 
-const DEFAULT_ENTRY_VALIDITY: Record<ScalpingTimeframe, number> = { '1m': 5, '3m': 8, '5m': 12, '15m': 20 };
+const DEFAULT_ENTRY_VALIDITY: Record<ScalpingTimeframe, number> = { '1m': 10, '3m': 15, '5m': 20, '15m': 30 };
 const DEFAULT_SIGNAL_VALIDITY: Record<ScalpingTimeframe, number> = { '1m': 15, '3m': 30, '5m': 60, '15m': 120 };
 const markets = new BinanceFuturesMarketsService();
 const DEFAULT_BATCH_SIZE = 10;
@@ -161,7 +161,8 @@ function scoreSetup(input: {
   const factors = [breakout, candleConfirmed, emaAligned, momentumAligned, valueAligned, trendAligned, btcAligned, volumeAligned, adxAligned];
   const score = Math.round(factors.filter(Boolean).length / factors.length * 100);
   if (!breakout || !candleConfirmed || !emaAligned || !momentumAligned || !valueAligned || !trendAligned || !volumeAligned) return null;
-  const risk = Math.max(atr * 1.2, input.price * 0.001);
+  const minRisk = input.price * 0.0075; // minimum 0.75% stop distance to prevent market noise stops
+  const risk = Math.max(atr * 1.5, minRisk);
   const stop = input.side === 'LONG' ? input.price - risk : input.price + risk;
   const tp1 = input.side === 'LONG' ? input.price + risk : input.price - risk;
   const tp2 = input.side === 'LONG' ? input.price + risk * 1.5 : input.price - risk * 1.5;
@@ -214,7 +215,7 @@ export function analyzeHighRiskScalpingSetup(input: {
       minimumRelativeVolume: input.settings.minimumRelativeVolume,
     });
     if (!analysis || analysis.score < input.settings.minimumSetupScore) continue;
-    const entryDelta = analysis.atr * 0.1;
+    const entryDelta = Math.max(analysis.atr * 0.35, input.price * 0.003);
     return {
       signalKey: hashKey(`${input.symbol}:${input.timeframe}:${side}:${latest.openTime}:${analysis.breakoutLevel}`),
       symbol: input.symbol,

@@ -147,12 +147,15 @@ export function verifyBinanceAlgoOrder(
   ) return null;
 
   if ('triggerPrice' in expected) {
+    const isProtective =
+      String(actual.closePosition).toLowerCase() === 'true' ||
+      String(actual.reduceOnly).toLowerCase() === 'true';
+    if (!isProtective) return null;
     if (
       actual.triggerPrice === undefined ||
       !sameDecimal(actual.triggerPrice, expected.triggerPrice) ||
       actual.workingType !== expected.workingType ||
-      String(actual.closePosition).toLowerCase() !== 'true' ||
-      (actual.quantity !== undefined && !sameDecimal(actual.quantity, '0'))
+      (actual.quantity !== undefined && actual.quantity !== '' && !sameDecimal(actual.quantity, '0'))
     ) return null;
   } else if (
     actual.activatePrice === undefined ||
@@ -244,7 +247,7 @@ export async function submitAndVerifyBinanceAlgoOrder(
     submitError = error;
   }
 
-  const maxRetries = options.maxQueryRetries ?? 3;
+  const maxRetries = options.maxQueryRetries ?? 4;
   const initialDelay = options.retryDelayMs ?? 250;
   let reconciled: unknown;
   let lastQueryError: unknown;
@@ -265,8 +268,10 @@ export async function submitAndVerifyBinanceAlgoOrder(
       const queryCode = typeof queryError === 'object' && queryError !== null && 'exchangeCode' in queryError
         ? queryError.exchangeCode
         : undefined;
-      // If order was submitted and returned -2013 or -1021, retry with backoff to handle indexing latency
-      if (attempt < maxRetries && (queryCode === -2013 || queryCode === -1021)) {
+      const isNotFound = queryCode === -2013 || queryCode === -1021 ||
+        (queryError instanceof Error && /order does not exist/i.test(queryError.message));
+      // If order was submitted and returned -2013, -1021, or "Order does not exist", retry with backoff to handle indexing latency
+      if (attempt < maxRetries && isNotFound) {
         await new Promise((resolve) => setTimeout(resolve, initialDelay * Math.pow(2, attempt)));
         continue;
       }

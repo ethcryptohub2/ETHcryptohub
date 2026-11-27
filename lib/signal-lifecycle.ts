@@ -235,22 +235,23 @@ async function persistCandleTransitions(
         const entryLow = Number(signal.entry_zone_low);
         const entryHigh = Number(signal.entry_zone_high);
         if (!crossedEntry(signal, candle)) {
-          const invalidated = signal.side === 'LONG' ? candle.high < entryLow : candle.low > entryHigh;
-          const gapMissed = signal.side === 'LONG' ? candle.low > entryHigh : candle.high < entryLow;
-          if (invalidated) {
+          const initialStop = Number(signal.initial_stop);
+          const tp1Price = Number(signal.tp1);
+          if (crossedStop(signal.side, candle, initialStop)) {
             await record('SIGNAL_INVALIDATED', 'ENTRY_INVALIDATED', null, candle.closeTime, {
               candleOpenAt: new Date(candle.openTime).toISOString(),
               open: candle.open, high: candle.high, low: candle.low, close: candle.close,
               entryZoneLow: entryLow, entryZoneHigh: entryHigh,
+              reason: 'Market crossed stop loss level before entering the reference entry zone.',
             }, 'INVALIDATED');
             break;
           }
-          if (gapMissed) {
+          if (crossed(signal.side, candle, tp1Price)) {
             await record('ENTRY_MISSED', 'MISSED', null, candle.closeTime, {
               candleOpenAt: new Date(candle.openTime).toISOString(),
               open: candle.open, high: candle.high, low: candle.low, close: candle.close,
               entryZoneLow: entryLow, entryZoneHigh: entryHigh,
-              reason: 'Price gapped beyond the reference entry zone without touching it.',
+              reason: 'Target 1 was reached before the market entered the reference entry zone.',
             }, 'MISSED');
             break;
           }
