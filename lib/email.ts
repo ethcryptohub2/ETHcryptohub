@@ -1,5 +1,18 @@
 import nodemailer from 'nodemailer';
 
+function resolveBackendBaseUrl(): string | null {
+  const raw = process.env.SMARTEXIT_BACKEND_URL?.trim();
+  if (!raw) return null;
+  try {
+    const parsed = new URL(raw);
+    if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') return null;
+    if (parsed.username || parsed.password) return null;
+    return parsed.origin;
+  } catch {
+    return null;
+  }
+}
+
 export class EmailDeliveryError extends Error {
   constructor(message: string) { super(message); this.name = 'EmailDeliveryError'; }
 }
@@ -57,7 +70,7 @@ export function verificationLink(email: string, code: string) {
   return url.toString();
 }
 
-async function sendEmail(email: string, subject: string, text: string, html: string) {
+export async function sendEmailDirectly(email: string, subject: string, text: string, html: string) {
   const gmailUser = process.env.GMAIL_USER?.trim();
   const gmailAppPassword = process.env.GMAIL_APP_PASSWORD?.replace(/\s/g, '');
   if (gmailUser || gmailAppPassword) {
@@ -65,7 +78,7 @@ async function sendEmail(email: string, subject: string, text: string, html: str
       throw new EmailDeliveryError('Gmail delivery requires both GMAIL_USER and GMAIL_APP_PASSWORD.');
     }
 
-    const portValue = process.env.GMAIL_SMTP_PORT?.trim() || '465';
+    const portValue = process.env.GMAIL_SMTP_PORT?.trim() || '587';
     if (portValue !== '465' && portValue !== '587') {
       throw new EmailDeliveryError('GMAIL_SMTP_PORT must be 465 (SSL) or 587 (STARTTLS).');
     }
@@ -139,6 +152,54 @@ async function sendEmail(email: string, subject: string, text: string, html: str
     if (error instanceof EmailDeliveryError) throw error;
     throw new EmailDeliveryError('Email delivery provider could not be reached.');
   }
+}
+
+async function sendEmail(email: string, subject: string, text: string, html: string) {
+  const isRender = process.env.RENDER === 'true';
+  const backendUrl = resolveBackendBaseUrl();
+  const isNorthflank = process.env.SCANNER_CIRCUIT_BREAKER_SCOPE?.trim().toLowerCase() === 'northflank';
+
+  // When running on Render with a backend URL configured, forward via the Northflank HTTPS email relay
+  if (isRender && backendUrl && !isNorthflank) {
+    const relaySecret = process.env.AUTH_SECRET?.trim() || process.env.CRON_SECRET?.trim();
+    if (relaySecret) {
+      try {
+        const response = await fetch(`${backendUrl}/api/internal/email-relay`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'x-relay-secret': relaySecret,
+          },
+          body: JSON.stringify({
+            to: email,
+            subject,
+            text,
+            html,
+            timestamp: Date.now(),
+          }),
+          signal: AbortSignal.timeout(18_000),
+        });
+
+        if (response.ok) {
+          const body = await response.json().catch(() => ({}));
+          if (body.ok || body.delivered) {
+            return;
+          }
+        }
+        const errData = await response.json().catch(() => null);
+        console.error('Northflank email relay rejected delivery:', response.status, errData);
+        if (response.status === 502 && errData?.error) {
+          throw new EmailDeliveryError(errData.error);
+        }
+      } catch (err) {
+        if (err instanceof EmailDeliveryError) throw err;
+        console.error('Northflank email relay attempt failed:', err instanceof Error ? err.message : 'Unknown error');
+      }
+    }
+  }
+
+  // Direct delivery (when running on Northflank itself, or local development, or fallback)
+  return sendEmailDirectly(email, subject, text, html);
 }
 
 export async function sendVerificationCode(email: string, code: string) {
