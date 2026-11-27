@@ -2,11 +2,14 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import {
+  getSelectedAlertRingtone,
   isAudioUnlocked,
   setAlarmDuration,
   setAlarmVolume,
+  setSelectedAlertRingtone,
   unlockAudio,
   type AlarmDuration,
+  type AlertRingtone,
 } from './notification-audio';
 
 export interface UnifiedAlarmPreferences {
@@ -23,6 +26,7 @@ export interface UnifiedAlarmPreferences {
   exchange_failure_enabled: boolean;
   volume: number;
   duration: AlarmDuration;
+  ringtone: AlertRingtone;
 }
 
 export const DEFAULT_UNIFIED_PREFERENCES: UnifiedAlarmPreferences = {
@@ -38,6 +42,7 @@ export const DEFAULT_UNIFIED_PREFERENCES: UnifiedAlarmPreferences = {
   exchange_failure_enabled: true,
   volume: 0.8,
   duration: 5,
+  ringtone: 'custom-mp3',
 };
 
 const PREFS_STORAGE_KEY = 'ethcryptohub-notification-preferences';
@@ -48,9 +53,10 @@ export function loadStoredAlarmPreferences(): UnifiedAlarmPreferences {
   if (typeof window === 'undefined') return DEFAULT_UNIFIED_PREFERENCES;
   try {
     const raw = window.localStorage.getItem(PREFS_STORAGE_KEY);
-    if (!raw) return DEFAULT_UNIFIED_PREFERENCES;
+    const ringtone = getSelectedAlertRingtone();
+    if (!raw) return { ...DEFAULT_UNIFIED_PREFERENCES, ringtone };
     const parsed = JSON.parse(raw) as Partial<UnifiedAlarmPreferences>;
-    return { ...DEFAULT_UNIFIED_PREFERENCES, ...parsed };
+    return { ...DEFAULT_UNIFIED_PREFERENCES, ringtone, ...parsed };
   } catch {
     return DEFAULT_UNIFIED_PREFERENCES;
   }
@@ -62,6 +68,7 @@ export function saveStoredAlarmPreferences(prefs: UnifiedAlarmPreferences) {
     window.localStorage.setItem(PREFS_STORAGE_KEY, JSON.stringify(prefs));
     setAlarmVolume(prefs.volume);
     setAlarmDuration(prefs.duration);
+    if (prefs.ringtone) setSelectedAlertRingtone(prefs.ringtone);
   } catch {
     // ignore storage quota errors
   }
@@ -97,6 +104,7 @@ type ServerPrefsPayload = {
   alarm_volume?: number;
   do_not_disturb?: boolean;
   duration?: AlarmDuration;
+  ringtone?: AlertRingtone;
   master_enabled?: boolean;
   standard_strategy_enabled?: boolean;
   high_risk_strategy_enabled?: boolean;
@@ -127,6 +135,10 @@ function mergeServerPayload(
       server.duration === 3 || server.duration === 5 || server.duration === 10 || server.duration === 'full'
         ? server.duration
         : current.duration,
+    ringtone:
+      server.ringtone && ['coin-drop', 'sharp-bell', 'digital-beep', 'high-conviction-siren', 'custom-mp3'].includes(server.ringtone)
+        ? server.ringtone
+        : current.ringtone,
     standard_strategy_enabled:
       typeof server.standard_strategy_enabled === 'boolean' ? server.standard_strategy_enabled : current.standard_strategy_enabled,
     high_risk_strategy_enabled:
@@ -208,68 +220,94 @@ export function useAlarmPreferences() {
     };
   }, []);
 
-  const updatePreferences = useCallback(async (patch: Partial<UnifiedAlarmPreferences>) => {
+  // Unlock audio automatically on first interaction anywhere on page
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const unlockOnGesture = () => {
+      void unlockAudio().then((unlocked) => {
+        if (unlocked) {
+          setAudioUnlocked(true);
+          window.removeEventListener('pointerdown', unlockOnGesture);
+          window.removeEventListener('keydown', unlockOnGesture);
+        }
+      });
+    };
+    window.addEventListener('pointerdown', unlockOnGesture, { passive: true });
+    window.addEventListener('keydown', unlockOnGesture, { passive: true });
+    return () => {
+      window.removeEventListener('pointerdown', unlockOnGesture);
+      window.removeEventListener('keydown', unlockOnGesture);
+    };
+  }, []);
+
+  const savePreferences = useCallback(async (targetPrefs?: Partial<UnifiedAlarmPreferences>) => {
     setSaveError('');
     setSaving(true);
     let previous = loadStoredAlarmPreferences();
     let nextPrefs = previous;
-    setPreferences((curr) => {
-      previous = curr;
-      nextPrefs = { ...curr, ...patch };
-      saveStoredAlarmPreferences(nextPrefs);
-      broadcastPrefs(nextPrefs);
-      return nextPrefs;
-    });
+
+    const snapshot = targetPrefs ? { ...preferences, ...targetPrefs } : preferences;
+    previous = preferences;
+    nextPrefs = snapshot;
 
     try {
       const csrf = await fetchCsrfToken();
-      const serverPatch: Record<string, unknown> = {};
-      if (patch.sound_enabled !== undefined) serverPatch.sound_enabled = patch.sound_enabled;
-      if (patch.push_enabled !== undefined) serverPatch.push_enabled = patch.push_enabled;
-      if (patch.take_profit_enabled !== undefined) {
-        serverPatch.tp1_enabled = patch.take_profit_enabled;
-        serverPatch.tp2_enabled = patch.take_profit_enabled;
-        serverPatch.tp3_enabled = patch.take_profit_enabled;
-      }
-      if (patch.stop_loss_enabled !== undefined) serverPatch.stop_loss_enabled = patch.stop_loss_enabled;
-      if (patch.volume !== undefined) serverPatch.alarm_volume = patch.volume;
-      if (patch.master_enabled !== undefined) {
-        serverPatch.master_enabled = patch.master_enabled;
-        serverPatch.do_not_disturb = !patch.master_enabled;
-      }
-      if (patch.duration !== undefined) serverPatch.duration = patch.duration;
-      if (patch.standard_strategy_enabled !== undefined) serverPatch.standard_strategy_enabled = patch.standard_strategy_enabled;
-      if (patch.high_risk_strategy_enabled !== undefined) serverPatch.high_risk_strategy_enabled = patch.high_risk_strategy_enabled;
-      if (patch.repeated_trade_enabled !== undefined) serverPatch.repeated_trade_enabled = patch.repeated_trade_enabled;
-      if (patch.trade_execution_enabled !== undefined) serverPatch.trade_execution_enabled = patch.trade_execution_enabled;
-      if (patch.exchange_failure_enabled !== undefined) serverPatch.exchange_failure_enabled = patch.exchange_failure_enabled;
+      const serverPatch: Record<string, unknown> = {
+        sound_enabled: nextPrefs.sound_enabled,
+        push_enabled: nextPrefs.push_enabled,
+        tp1_enabled: nextPrefs.take_profit_enabled,
+        tp2_enabled: nextPrefs.take_profit_enabled,
+        tp3_enabled: nextPrefs.take_profit_enabled,
+        stop_loss_enabled: nextPrefs.stop_loss_enabled,
+        alarm_volume: nextPrefs.volume,
+        master_enabled: nextPrefs.master_enabled,
+        do_not_disturb: !nextPrefs.master_enabled,
+        duration: nextPrefs.duration,
+        ringtone: nextPrefs.ringtone,
+        standard_strategy_enabled: nextPrefs.standard_strategy_enabled,
+        high_risk_strategy_enabled: nextPrefs.high_risk_strategy_enabled,
+        repeated_trade_enabled: nextPrefs.repeated_trade_enabled,
+        trade_execution_enabled: nextPrefs.trade_execution_enabled,
+        exchange_failure_enabled: nextPrefs.exchange_failure_enabled,
+      };
 
       const resp = await fetch('/api/notifications/preferences', {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrf },
         body: JSON.stringify(serverPatch),
       });
+
       if (!resp.ok) {
         const errBody = (await resp.json().catch(() => null)) as { error?: string } | null;
         throw new Error(errBody?.error ?? `Failed to save alarm settings (${resp.status}).`);
       }
+
       const json = (await resp.json().catch(() => null)) as { data?: ServerPrefsPayload } | null;
-      if (json?.data) {
-        const synced = mergeServerPayload(nextPrefs, json.data);
-        setPreferences(synced);
-        saveStoredAlarmPreferences(synced);
-        broadcastPrefs(synced);
+      if (!json?.data) {
+        throw new Error('Server returned empty preferences response.');
       }
+
+      const synced = mergeServerPayload(nextPrefs, json.data);
+      setPreferences(synced);
+      saveStoredAlarmPreferences(synced);
+      broadcastPrefs(synced);
+      return { ok: true, data: synced };
     } catch (err) {
-      setSaveError(err instanceof Error ? err.message : 'Unable to save alarm preference.');
-      // Revert only if server rejected
+      const msg = err instanceof Error ? err.message : 'Unable to save alarm preferences.';
+      setSaveError(msg);
+      // Revert if server rejected
       setPreferences(previous);
       saveStoredAlarmPreferences(previous);
       broadcastPrefs(previous);
+      throw new Error(msg);
     } finally {
       setSaving(false);
     }
-  }, []);
+  }, [preferences]);
+
+  const updatePreferences = useCallback(async (patch: Partial<UnifiedAlarmPreferences>) => {
+    return savePreferences(patch);
+  }, [savePreferences]);
 
   const handleUnlockAudio = useCallback(async () => {
     const ok = await unlockAudio();
@@ -279,10 +317,12 @@ export function useAlarmPreferences() {
 
   return {
     preferences,
+    setPreferences,
     audioUnlocked,
     saving,
     saveError,
     hydrated,
+    savePreferences,
     updatePreferences,
     unlockAudio: handleUnlockAudio,
   };

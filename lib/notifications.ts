@@ -197,6 +197,7 @@ export async function getNotificationPreferences(userId: number) {
 
 export interface ExtendedAlarmPreferences {
   duration: 3 | 5 | 10 | 'full';
+  ringtone?: 'coin-drop' | 'sharp-bell' | 'digital-beep' | 'high-conviction-siren' | 'custom-mp3';
   master_enabled: boolean;
   standard_strategy_enabled: boolean;
   high_risk_strategy_enabled: boolean;
@@ -208,6 +209,7 @@ export interface ExtendedAlarmPreferences {
 export function defaultExtendedAlarmPreferences(): ExtendedAlarmPreferences {
   return {
     duration: 5,
+    ringtone: 'custom-mp3',
     master_enabled: true,
     standard_strategy_enabled: true,
     high_risk_strategy_enabled: true,
@@ -228,6 +230,7 @@ export async function getExtendedAlarmPreferences(userId: number): Promise<Exten
     if (!stored) return defaults;
     return {
       duration: stored.duration === 3 || stored.duration === 5 || stored.duration === 10 || stored.duration === 'full' ? stored.duration : defaults.duration,
+      ringtone: stored.ringtone && ['coin-drop', 'sharp-bell', 'digital-beep', 'high-conviction-siren', 'custom-mp3'].includes(stored.ringtone) ? stored.ringtone : defaults.ringtone,
       master_enabled: typeof stored.master_enabled === 'boolean' ? stored.master_enabled : defaults.master_enabled,
       standard_strategy_enabled: typeof stored.standard_strategy_enabled === 'boolean' ? stored.standard_strategy_enabled : defaults.standard_strategy_enabled,
       high_risk_strategy_enabled: typeof stored.high_risk_strategy_enabled === 'boolean' ? stored.high_risk_strategy_enabled : defaults.high_risk_strategy_enabled,
@@ -247,6 +250,7 @@ export async function updateExtendedAlarmPreferences(
   const current = await getExtendedAlarmPreferences(userId);
   const next: ExtendedAlarmPreferences = {
     duration: partial.duration !== undefined ? partial.duration : current.duration,
+    ringtone: partial.ringtone !== undefined ? partial.ringtone : current.ringtone,
     master_enabled: partial.master_enabled !== undefined ? partial.master_enabled : current.master_enabled,
     standard_strategy_enabled: partial.standard_strategy_enabled !== undefined ? partial.standard_strategy_enabled : current.standard_strategy_enabled,
     high_risk_strategy_enabled: partial.high_risk_strategy_enabled !== undefined ? partial.high_risk_strategy_enabled : current.high_risk_strategy_enabled,
@@ -625,6 +629,31 @@ async function dispatchSignalEvents(settings: NotificationSystemSettings) {
   }
 }
 
+export async function getVapidKeys(): Promise<{ publicKey: string; privateKey: string; subject: string } | null> {
+  const envPublic = process.env.VAPID_PUBLIC_KEY;
+  const envPrivate = process.env.VAPID_PRIVATE_KEY;
+  const envSubject = process.env.VAPID_SUBJECT ?? 'mailto:security@ethcryptohub.com';
+  if (envPublic && envPrivate) {
+    return { publicKey: envPublic, privateKey: envPrivate, subject: envSubject };
+  }
+  try {
+    const res = await query<{ value_json: { publicKey: string; privateKey: string; subject?: string } }>(
+      `SELECT value_json FROM public.app_settings WHERE key = 'vapid_keys'`,
+    );
+    const row = res.rows[0]?.value_json;
+    if (row?.publicKey && row?.privateKey) {
+      return {
+        publicKey: row.publicKey,
+        privateKey: row.privateKey,
+        subject: row.subject ?? envSubject,
+      };
+    }
+  } catch {
+    // Database query error fallback
+  }
+  return null;
+}
+
 async function deliverPendingPushes() {
   const client = await pool().connect();
   let deliveries: Array<{
@@ -745,13 +774,11 @@ async function deliverPendingPushes() {
   }
 
   if (!deliveries.length) return;
-  const publicKey = process.env.VAPID_PUBLIC_KEY;
-  const privateKey = process.env.VAPID_PRIVATE_KEY;
-  const subject = process.env.VAPID_SUBJECT ?? 'mailto:security@ethcryptohub.com';
-  if (!publicKey || !privateKey) {
+  const vapidKeys = await getVapidKeys();
+  if (!vapidKeys) {
     await query(
       `UPDATE public.push_delivery_attempts SET status = 'FAILED',
-         last_error = 'VAPID_PUBLIC_KEY and VAPID_PRIVATE_KEY are not configured.', updated_at = NOW()
+         last_error = 'VAPID keys are not configured.', updated_at = NOW()
        WHERE status = 'SENDING' AND (notification_id, subscription_id) IN (
          SELECT item.notification_id, item.subscription_id
          FROM jsonb_to_recordset($1::JSONB) AS item(notification_id BIGINT, subscription_id BIGINT)
@@ -764,6 +791,7 @@ async function deliverPendingPushes() {
     console.error('Web Push delivery skipped because VAPID keys are not configured.');
     return;
   }
+  const { publicKey, privateKey, subject } = vapidKeys;
 
   try {
     setVapidDetails(subject, publicKey, privateKey);
@@ -1010,3 +1038,60 @@ export async function getNotificationAdminStats(page: number) {
 export function signalKeyForCandidate(candidate: MarketScannerCandidate) {
   return stableSignalKey(candidate);
 }
+
+export async function publishExecutionNotification(params: {
+  userId: number;
+  signalId: string | number;
+  eventType: 'CONFIRMED_DEMO_EXECUTION' | 'TRADE_FILLED' | 'EXCHANGE_FAILURE' | 'EXECUTION_REJECTED' | 'PROTECTION_FAILED';
+  symbol: string;
+  side: string;
+  price?: number | string | null;
+  message?: string;
+  metadata?: Record<string, unknown>;
+}) {
+  try {
+    const idempotencyKey = `exec:${params.userId}:${params.signalId}:${params.eventType}:${Date.now()}`;
+    const payload = {
+      symbol: params.symbol,
+      side: params.side,
+      price: params.price,
+      message: params.message,
+      ...(params.metadata || {}),
+    };
+
+    const eventRes = await query<{ id: string }>(
+      `INSERT INTO public.signal_events (
+         signal_id, idempotency_key, event_type, payload, event_price, event_timestamp, actor_user_id
+       ) VALUES ($1, $2, $3, $4::jsonb, $5, NOW(), $6)
+       ON CONFLICT (idempotency_key) DO NOTHING
+       RETURNING id`,
+      [params.signalId, idempotencyKey, params.eventType, JSON.stringify(payload), params.price ? Number(params.price) : null, params.userId],
+    );
+    const eventId = eventRes.rows[0]?.id;
+    if (!eventId) return;
+
+    const notifRes = await query<{ id: string }>(
+      `INSERT INTO public.user_signal_notifications (user_id, signal_id, event_id, created_at)
+       VALUES ($1, $2, $3, NOW())
+       ON CONFLICT (user_id, event_id) DO NOTHING
+       RETURNING id`,
+      [params.userId, params.signalId, eventId],
+    );
+    const notifId = notifRes.rows[0]?.id;
+
+    if (notifId) {
+      await query(
+        `INSERT INTO public.push_delivery_attempts (notification_id, subscription_id)
+         SELECT $1, p.id FROM public.push_subscriptions p
+          JOIN public.user_notification_preferences pref ON pref.user_id = p.user_id
+         WHERE p.user_id = $2 AND pref.push_enabled = TRUE AND pref.do_not_disturb = FALSE
+         ON CONFLICT (notification_id, subscription_id) DO NOTHING`,
+        [notifId, params.userId],
+      );
+      void deliverPendingPushes().catch(() => {});
+    }
+  } catch (err) {
+    console.error('Failed to publish execution notification:', err instanceof Error ? err.message : err);
+  }
+}
+

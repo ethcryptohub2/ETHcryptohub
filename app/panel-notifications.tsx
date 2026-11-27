@@ -3,9 +3,11 @@
 import Link from 'next/link';
 import { useEffect, useState, useRef } from 'react';
 import {
+  ALERT_RINGTONES,
   playAlarm,
   stopAlarm,
   type AlarmDuration,
+  type AlertRingtone,
 } from './notification-audio';
 import {
   loadStoredAlarmPreferences,
@@ -139,11 +141,19 @@ export function PanelNotifications({
   const {
     preferences,
     audioUnlocked,
-    saveError,
-    updatePreferences,
+    savePreferences,
     unlockAudio: handleUnlockAudio,
   } = useAlarmPreferences();
+  const [draftPatch, setDraftPatch] = useState<Partial<UnifiedAlarmPreferences> | null>(null);
+  const [savingSettings, setSavingSettings] = useState(false);
+  const [saveSuccessMessage, setSaveSuccessMessage] = useState('');
+  const [saveErrorMessage, setSaveErrorMessage] = useState('');
+  const playedNotificationIds = useRef(new Set<string | number>());
   const sseRef = useRef<EventSource | null>(null);
+
+  const draftPreferences: UnifiedAlarmPreferences = draftPatch
+    ? { ...preferences, ...draftPatch }
+    : preferences;
 
   useEffect(() => {
     let active = true;
@@ -183,20 +193,60 @@ export function PanelNotifications({
             return next;
           });
 
+          // Duplicate notification prevention for alarm audio playback
+          if (playedNotificationIds.current.has(item.id)) {
+            return;
+          }
+          playedNotificationIds.current.add(item.id);
+
           // Play alarm if enabled
           const currentPrefs = loadStoredAlarmPreferences();
           if (currentPrefs.master_enabled && currentPrefs.sound_enabled) {
-            const badge = eventBadge(item);
-            if (badge.isExecution && currentPrefs.trade_execution_enabled) {
-              void playAlarm('execution', { volume: currentPrefs.volume, duration: currentPrefs.duration });
-            } else if (badge.isSignal) {
+            const type = item.event_type || '';
+            let shouldPlaySignal = false;
+            let shouldPlayExecution = false;
+
+            if (type === 'NEW_SIGNAL' || type === 'SIGNAL_GENERATED') {
               const isHighRisk = item.scanner_type === 'HIGH_RISK';
-              if (
-                (isHighRisk && currentPrefs.high_risk_strategy_enabled) ||
-                (!isHighRisk && currentPrefs.standard_strategy_enabled)
-              ) {
-                void playAlarm('signal', { volume: currentPrefs.volume, duration: currentPrefs.duration });
+              if (isHighRisk && currentPrefs.high_risk_strategy_enabled) {
+                shouldPlaySignal = true;
+              } else if (!isHighRisk && currentPrefs.standard_strategy_enabled) {
+                shouldPlaySignal = true;
               }
+            } else if (type === 'SIGNAL_UPDATED') {
+              if (currentPrefs.repeated_trade_enabled) {
+                shouldPlaySignal = true;
+              }
+            } else if (type === 'CONFIRMED_DEMO_EXECUTION' || type === 'TRADE_FILLED' || type.includes('FILLED')) {
+              if (currentPrefs.trade_execution_enabled) {
+                shouldPlayExecution = true;
+              }
+            } else if (type.includes('TP1') || type.includes('TP2') || type.includes('TP3') || type === 'PARTIAL_TARGET_HIT') {
+              if (currentPrefs.take_profit_enabled) {
+                shouldPlayExecution = true;
+              }
+            } else if (type === 'STOP_LOSS_HIT' || type.includes('STOP_LOSS') || type.includes('INVALIDATED')) {
+              if (currentPrefs.stop_loss_enabled) {
+                shouldPlayExecution = true;
+              }
+            } else if (type.includes('FAILURE') || type.includes('REJECTED') || type.includes('EMERGENCY') || type === 'PROTECTION_FAILED') {
+              if (currentPrefs.exchange_failure_enabled) {
+                shouldPlayExecution = true;
+              }
+            }
+
+            if (shouldPlaySignal) {
+              void playAlarm('signal', {
+                volume: currentPrefs.volume,
+                duration: currentPrefs.duration,
+                ringtone: currentPrefs.ringtone,
+              });
+            } else if (shouldPlayExecution) {
+              void playAlarm('execution', {
+                volume: currentPrefs.volume,
+                duration: currentPrefs.duration,
+                ringtone: currentPrefs.ringtone,
+              });
             }
           }
         } catch {}
@@ -221,15 +271,25 @@ export function PanelNotifications({
   const handleTestSignalSound = async () => {
     await handleUnlockAudio();
     setSoundPlaying(true);
-    await playAlarm('signal', { volume: preferences.volume, duration: preferences.duration, force: true });
-    setTimeout(() => setSoundPlaying(false), (preferences.duration === 'full' ? 10 : preferences.duration) * 1000);
+    await playAlarm('signal', {
+      volume: draftPreferences.volume,
+      duration: draftPreferences.duration,
+      ringtone: draftPreferences.ringtone,
+      force: true,
+    });
+    setTimeout(() => setSoundPlaying(false), (draftPreferences.duration === 'full' ? 10 : draftPreferences.duration) * 1000);
   };
 
   const handleTestExecutionSound = async () => {
     await handleUnlockAudio();
     setSoundPlaying(true);
-    await playAlarm('execution', { volume: preferences.volume, duration: preferences.duration, force: true });
-    setTimeout(() => setSoundPlaying(false), (preferences.duration === 'full' ? 10 : preferences.duration) * 1000);
+    await playAlarm('execution', {
+      volume: draftPreferences.volume,
+      duration: draftPreferences.duration,
+      ringtone: draftPreferences.ringtone,
+      force: true,
+    });
+    setTimeout(() => setSoundPlaying(false), (draftPreferences.duration === 'full' ? 10 : draftPreferences.duration) * 1000);
   };
 
   const handleStopAlarm = () => {
@@ -293,17 +353,100 @@ export function PanelNotifications({
     }
   };
 
-  const updatePreference = <K extends keyof NotificationPreferences>(key: K, val: NotificationPreferences[K]) => {
-    void updatePreferences({ [key]: val });
+  async function syncWebPush(enable: boolean) {
+    if (typeof window === 'undefined') return;
+    if (!('serviceWorker' in navigator) || !('PushManager' in window) || !('Notification' in window)) {
+      if (enable) throw new Error('Web Push is not supported in this browser.');
+      return;
+    }
+    if (!enable) {
+      try {
+        const csrf = await getCsrfToken();
+        await fetch('/api/notifications/push', {
+          method: 'DELETE',
+          headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrf },
+          body: JSON.stringify({ disableAll: true }),
+        });
+        const reg = await navigator.serviceWorker.getRegistration('/service-worker.js');
+        const sub = await reg?.pushManager.getSubscription();
+        await sub?.unsubscribe();
+      } catch {}
+      return;
+    }
+    const permission = Notification.permission === 'default'
+      ? await Notification.requestPermission()
+      : Notification.permission;
+    if (permission !== 'granted') {
+      throw new Error('Browser notification permission is not granted.');
+    }
+    const reg = await navigator.serviceWorker.register('/service-worker.js');
+    await navigator.serviceWorker.ready;
+    const keyRes = await fetch('/api/notifications/push', { cache: 'no-store' });
+    const keyJson = (await keyRes.json()) as { data?: { publicKey: string }; error?: string };
+    if (!keyRes.ok || !keyJson.data?.publicKey) {
+      throw new Error(keyJson.error ?? 'Push notifications are not configured on server.');
+    }
+    const padded = `${keyJson.data.publicKey}${'='.repeat((4 - (keyJson.data.publicKey.length % 4)) % 4)}`;
+    const base64 = padded.replace(/-/g, '+').replace(/_/g, '/');
+    const raw = atob(base64);
+    const appServerKey = Uint8Array.from(raw, (c) => c.charCodeAt(0));
+    const sub = await reg.pushManager.getSubscription() ?? await reg.pushManager.subscribe({
+      userVisibleOnly: true,
+      applicationServerKey: appServerKey,
+    });
+    const subJson = sub.toJSON();
+    if (!subJson.endpoint || !subJson.keys?.p256dh || !subJson.keys?.auth) {
+      throw new Error('Incomplete push subscription returned by browser.');
+    }
+    const csrf = await getCsrfToken();
+    const saveRes = await fetch('/api/notifications/push', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrf },
+      body: JSON.stringify({
+        endpoint: subJson.endpoint,
+        keys: subJson.keys,
+        deviceType: window.matchMedia('(display-mode: standalone)').matches ? 'pwa' : 'browser',
+      }),
+    });
+    if (!saveRes.ok) {
+      const err = (await saveRes.json().catch(() => null)) as { error?: string } | null;
+      throw new Error(err?.error ?? 'Failed to save push subscription.');
+    }
+  }
+
+  const updatePreference = <K extends keyof UnifiedAlarmPreferences>(key: K, val: UnifiedAlarmPreferences[K]) => {
+    setDraftPatch((prev) => ({ ...(prev || {}), [key]: val }));
+    setSaveSuccessMessage('');
+    setSaveErrorMessage('');
+  };
+
+  const handleSaveAndApply = async () => {
+    setSavingSettings(true);
+    setSaveSuccessMessage('');
+    setSaveErrorMessage('');
+    try {
+      if (draftPreferences.push_enabled && !preferences.push_enabled) {
+        try {
+          await syncWebPush(true);
+        } catch (pushErr) {
+          console.warn('Web Push subscription notice:', pushErr);
+        }
+      } else if (!draftPreferences.push_enabled && preferences.push_enabled) {
+        await syncWebPush(false).catch(() => {});
+      }
+
+      await savePreferences(draftPreferences);
+      setDraftPatch(null);
+      setSaveSuccessMessage('Settings saved successfully');
+    } catch (err) {
+      setSaveErrorMessage(err instanceof Error ? err.message : 'Settings could not be saved.');
+    } finally {
+      setSavingSettings(false);
+    }
   };
 
   return (
     <div className="notification-center-dropdown" style={{ width: '100%', minWidth: 320, maxWidth: 440 }}>
-      {saveError && (
-        <div style={{ padding: '6px 10px', background: 'rgba(239, 68, 68, 0.12)', color: '#ef4444', borderRadius: 6, fontSize: 11, marginBottom: 8 }}>
-          {saveError}
-        </div>
-      )}
       {/* Header bar */}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12, paddingBottom: 8, borderBottom: '1px solid var(--surface-border)' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
@@ -584,18 +727,45 @@ export function PanelNotifications({
               </button>
             </div>
 
+            {/* Tone Selector */}
+            <div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4, fontSize: 12 }}>
+                <span>Alert Ringtone:</span>
+              </div>
+              <select
+                value={draftPreferences.ringtone || 'custom-mp3'}
+                onChange={(e) => updatePreference('ringtone', e.target.value as AlertRingtone)}
+                style={{
+                  width: '100%',
+                  padding: '6px 8px',
+                  borderRadius: 6,
+                  border: '1px solid var(--surface-border)',
+                  background: 'var(--surface)',
+                  color: 'var(--text-primary)',
+                  fontSize: 12,
+                  cursor: 'pointer',
+                }}
+              >
+                {ALERT_RINGTONES.map((rt) => (
+                  <option key={rt.value} value={rt.value}>
+                    {rt.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+
             {/* Volume Slider */}
             <div>
               <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4, fontSize: 12 }}>
                 <span>Alarm Volume:</span>
-                <strong>{Math.round(preferences.volume * 100)}%</strong>
+                <strong>{Math.round(draftPreferences.volume * 100)}%</strong>
               </div>
               <input
                 type="range"
                 min="0"
                 max="100"
                 step="5"
-                value={Math.round(preferences.volume * 100)}
+                value={Math.round(draftPreferences.volume * 100)}
                 onChange={(e) => updatePreference('volume', Number(e.target.value) / 100)}
                 style={{ width: '100%', cursor: 'pointer' }}
               />
@@ -605,7 +775,7 @@ export function PanelNotifications({
             <div>
               <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6, fontSize: 12 }}>
                 <span>Playback Duration:</span>
-                <strong>{preferences.duration === 'full' ? 'Full Audio' : `${preferences.duration} seconds`}</strong>
+                <strong>{draftPreferences.duration === 'full' ? 'Full Audio' : `${draftPreferences.duration} seconds`}</strong>
               </div>
               <div style={{ display: 'flex', gap: 6 }}>
                 {([3, 5, 10, 'full'] as AlarmDuration[]).map((dur) => (
@@ -615,10 +785,10 @@ export function PanelNotifications({
                     onClick={() => updatePreference('duration', dur)}
                     style={{
                       flex: 1,
-                      border: preferences.duration === dur ? '1px solid var(--color-primary, #6366f1)' : '1px solid var(--surface-border)',
-                      background: preferences.duration === dur ? 'rgba(99, 102, 241, 0.15)' : 'var(--surface)',
-                      color: preferences.duration === dur ? 'var(--color-primary, #6366f1)' : 'var(--text-secondary)',
-                      fontWeight: preferences.duration === dur ? 700 : 500,
+                      border: draftPreferences.duration === dur ? '1px solid var(--color-primary, #6366f1)' : '1px solid var(--surface-border)',
+                      background: draftPreferences.duration === dur ? 'rgba(99, 102, 241, 0.15)' : 'var(--surface)',
+                      color: draftPreferences.duration === dur ? 'var(--color-primary, #6366f1)' : 'var(--text-secondary)',
+                      fontWeight: draftPreferences.duration === dur ? 700 : 500,
                       borderRadius: 6,
                       padding: '4px 0',
                       fontSize: 11,
@@ -638,7 +808,7 @@ export function PanelNotifications({
               <span>Master Notifications</span>
               <input
                 type="checkbox"
-                checked={preferences.master_enabled}
+                checked={draftPreferences.master_enabled}
                 onChange={(e) => updatePreference('master_enabled', e.target.checked)}
               />
             </label>
@@ -646,7 +816,7 @@ export function PanelNotifications({
               <span>Audio Sound Alarms</span>
               <input
                 type="checkbox"
-                checked={preferences.sound_enabled}
+                checked={draftPreferences.sound_enabled}
                 onChange={(e) => updatePreference('sound_enabled', e.target.checked)}
               />
             </label>
@@ -654,7 +824,7 @@ export function PanelNotifications({
               <span>Desktop & Mobile Push</span>
               <input
                 type="checkbox"
-                checked={preferences.push_enabled}
+                checked={draftPreferences.push_enabled}
                 onChange={(e) => updatePreference('push_enabled', e.target.checked)}
               />
             </label>
@@ -671,7 +841,7 @@ export function PanelNotifications({
               <span>Standard Strategy Signals</span>
               <input
                 type="checkbox"
-                checked={preferences.standard_strategy_enabled}
+                checked={draftPreferences.standard_strategy_enabled}
                 onChange={(e) => updatePreference('standard_strategy_enabled', e.target.checked)}
               />
             </label>
@@ -679,7 +849,7 @@ export function PanelNotifications({
               <span>High-Risk Scalping Signals</span>
               <input
                 type="checkbox"
-                checked={preferences.high_risk_strategy_enabled}
+                checked={draftPreferences.high_risk_strategy_enabled}
                 onChange={(e) => updatePreference('high_risk_strategy_enabled', e.target.checked)}
               />
             </label>
@@ -687,7 +857,7 @@ export function PanelNotifications({
               <span>Repeated Trade Setups</span>
               <input
                 type="checkbox"
-                checked={preferences.repeated_trade_enabled}
+                checked={draftPreferences.repeated_trade_enabled}
                 onChange={(e) => updatePreference('repeated_trade_enabled', e.target.checked)}
               />
             </label>
@@ -695,7 +865,7 @@ export function PanelNotifications({
               <span>Trade Execution & Fills</span>
               <input
                 type="checkbox"
-                checked={preferences.trade_execution_enabled}
+                checked={draftPreferences.trade_execution_enabled}
                 onChange={(e) => updatePreference('trade_execution_enabled', e.target.checked)}
               />
             </label>
@@ -703,7 +873,7 @@ export function PanelNotifications({
               <span>Take Profit Targets (TP1/2/3)</span>
               <input
                 type="checkbox"
-                checked={preferences.take_profit_enabled}
+                checked={draftPreferences.take_profit_enabled}
                 onChange={(e) => updatePreference('take_profit_enabled', e.target.checked)}
               />
             </label>
@@ -711,7 +881,7 @@ export function PanelNotifications({
               <span>Stop Loss & Invalidation</span>
               <input
                 type="checkbox"
-                checked={preferences.stop_loss_enabled}
+                checked={draftPreferences.stop_loss_enabled}
                 onChange={(e) => updatePreference('stop_loss_enabled', e.target.checked)}
               />
             </label>
@@ -719,10 +889,95 @@ export function PanelNotifications({
               <span>Exchange Failure & Emergency</span>
               <input
                 type="checkbox"
-                checked={preferences.exchange_failure_enabled}
+                checked={draftPreferences.exchange_failure_enabled}
                 onChange={(e) => updatePreference('exchange_failure_enabled', e.target.checked)}
               />
             </label>
+          </div>
+
+          {/* Status Feedback Banners */}
+          {saveSuccessMessage && (
+            <div
+              style={{
+                padding: '8px 12px',
+                background: 'rgba(16, 185, 129, 0.12)',
+                border: '1px solid rgba(16, 185, 129, 0.3)',
+                color: '#10b981',
+                borderRadius: 8,
+                fontSize: 12,
+                fontWeight: 600,
+                display: 'flex',
+                alignItems: 'center',
+                gap: 6,
+              }}
+            >
+              <span>✓</span>
+              <span>{saveSuccessMessage}</span>
+            </div>
+          )}
+          {saveErrorMessage && (
+            <div
+              style={{
+                padding: '8px 12px',
+                background: 'rgba(239, 68, 68, 0.12)',
+                border: '1px solid rgba(239, 68, 68, 0.3)',
+                color: '#ef4444',
+                borderRadius: 8,
+                fontSize: 12,
+                display: 'flex',
+                alignItems: 'center',
+                gap: 6,
+              }}
+            >
+              <span>⚠</span>
+              <span>{saveErrorMessage}</span>
+            </div>
+          )}
+
+          {/* Sticky Save & Apply Settings Button */}
+          <div
+            style={{
+              position: 'sticky',
+              bottom: 0,
+              background: 'var(--surface)',
+              paddingTop: 8,
+              paddingBottom: 4,
+              borderTop: '1px solid var(--surface-border)',
+              zIndex: 10,
+            }}
+          >
+            <button
+              type="button"
+              onClick={handleSaveAndApply}
+              disabled={savingSettings}
+              className="button-primary"
+              style={{
+                width: '100%',
+                padding: '10px 14px',
+                fontSize: 13,
+                fontWeight: 700,
+                borderRadius: 8,
+                background: 'var(--color-primary, #6366f1)',
+                color: '#fff',
+                border: 'none',
+                cursor: savingSettings ? 'not-allowed' : 'pointer',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                gap: 8,
+                boxShadow: '0 2px 8px rgba(99, 102, 241, 0.35)',
+                opacity: savingSettings ? 0.75 : 1,
+              }}
+            >
+              {savingSettings ? (
+                <span>Saving & Applying...</span>
+              ) : (
+                <>
+                  <span>💾</span>
+                  <span>Save & Apply Settings</span>
+                </>
+              )}
+            </button>
           </div>
         </div>
       )}

@@ -14,6 +14,7 @@ export const dynamic = 'force-dynamic';
 
 const extendedFieldsSchema = {
   duration: z.union([z.literal(3), z.literal(5), z.literal(10), z.literal('full')]).optional(),
+  ringtone: z.enum(['coin-drop', 'sharp-bell', 'digital-beep', 'high-conviction-siren', 'custom-mp3']).optional(),
   master_enabled: z.boolean().optional(),
   standard_strategy_enabled: z.boolean().optional(),
   high_risk_strategy_enabled: z.boolean().optional(),
@@ -101,6 +102,7 @@ export async function PUT(request: NextRequest) {
     }
     const {
       duration,
+      ringtone,
       master_enabled,
       standard_strategy_enabled,
       high_risk_strategy_enabled,
@@ -112,6 +114,7 @@ export async function PUT(request: NextRequest) {
     await updateNotificationPreferences(user.id, corePrefs);
     await updateExtendedAlarmPreferences(user.id, {
       duration,
+      ringtone,
       master_enabled,
       standard_strategy_enabled,
       high_risk_strategy_enabled,
@@ -149,6 +152,7 @@ export async function PATCH(request: NextRequest) {
     const current = await getNotificationPreferences(user.id);
     const {
       duration,
+      ringtone,
       master_enabled,
       standard_strategy_enabled,
       high_risk_strategy_enabled,
@@ -163,6 +167,7 @@ export async function PATCH(request: NextRequest) {
     }
     if (
       duration !== undefined ||
+      ringtone !== undefined ||
       master_enabled !== undefined ||
       standard_strategy_enabled !== undefined ||
       high_risk_strategy_enabled !== undefined ||
@@ -172,6 +177,7 @@ export async function PATCH(request: NextRequest) {
     ) {
       await updateExtendedAlarmPreferences(user.id, {
         duration,
+        ringtone,
         master_enabled,
         standard_strategy_enabled,
         high_risk_strategy_enabled,

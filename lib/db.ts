@@ -92,8 +92,9 @@ export function databaseSslOptions(
 ) {
   validateSslMode(mode);
   const ca = certificateAuthority(caCertificate);
+  const rejectUnauthorized = process.env.SUPABASE_DB_REJECT_UNAUTHORIZED === 'false' ? false : true;
   return {
-    rejectUnauthorized: true,
+    rejectUnauthorized,
     servername: hostname,
     ...(ca ? { ca } : {}),
   };

@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { AuthError, requireUser } from '../../../../lib/auth';
 import {
   disablePushForUser,
+  getVapidKeys,
   isSupportedPushEndpoint,
   removePushSubscription,
   upsertPushSubscription,
@@ -30,11 +31,11 @@ const endpointSchema = z.object({
 export async function GET() {
   try {
     await requirePremiumUser({ reconcile: false });
-    const publicKey = process.env.VAPID_PUBLIC_KEY;
-    if (!publicKey || !process.env.VAPID_PRIVATE_KEY) {
+    const keys = await getVapidKeys();
+    if (!keys) {
       return NextResponse.json({ error: 'Push notifications are not configured on this deployment.' }, { status: 503 });
     }
-    return NextResponse.json({ data: { publicKey } }, { headers: { 'Cache-Control': 'no-store' } });
+    return NextResponse.json({ data: { publicKey: keys.publicKey } }, { headers: { 'Cache-Control': 'no-store' } });
   } catch (error) {
     return NextResponse.json(
       { error: error instanceof AuthError || error instanceof SubscriptionError ? error.message : 'Push configuration is unavailable.' },
@@ -47,7 +48,8 @@ export async function POST(request: NextRequest) {
   if (!validCsrf(request)) return NextResponse.json({ error: 'Refresh and retry.' }, { status: 403 });
   try {
     const { user } = await requirePremiumUser();
-    if (!process.env.VAPID_PUBLIC_KEY || !process.env.VAPID_PRIVATE_KEY) {
+    const keys = await getVapidKeys();
+    if (!keys) {
       return NextResponse.json({ error: 'Push notifications are not configured on this deployment.' }, { status: 503 });
     }
     let body: unknown;

@@ -375,4 +375,11 @@ export async function processPersistedSignalLifecycle(
     }
     await persistCandleTransitions(signal, candles, prices.get(signal.symbol) ?? null, now);
   }
+
+  try {
+    const { flushSignalNotifications } = await import('./notifications');
+    await flushSignalNotifications();
+  } catch (err) {
+    console.warn('Signal lifecycle notification flush warning:', err instanceof Error ? err.message : err);
+  }
 }

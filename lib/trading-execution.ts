@@ -33,6 +33,7 @@ import {
   validateSmartEntryFilters,
   type MarketCandle,
 } from './adaptive-protection';
+import { publishExecutionNotification } from './notifications';
 
 type Signal = {
   id: string;
@@ -1189,6 +1190,22 @@ export async function executeSignal(
     stopOrderId = protection.stopAlgoId;
     targetOrderId = protection.tp3AlgoId;
     trailingOrderId = protection.trailingAlgoId;
+    await publishExecutionNotification({
+      userId,
+      signalId: signal.id,
+      eventType: 'CONFIRMED_DEMO_EXECUTION',
+      symbol: signal.symbol,
+      side: signal.side,
+      price: fillPrice,
+      message: `Demo trade executed: ${signal.symbol} ${signal.side} filled at ${fillPrice}`,
+      metadata: {
+        quantity: numericString(orderDetails.executedQty),
+        orderId,
+        stopOrderId,
+        targetOrderId,
+        trailingOrderId,
+      },
+    });
     return { id: executionId, status: 'PROTECTED' as const };
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Trade execution failed.';
@@ -1233,6 +1250,15 @@ export async function executeSignal(
       return { id: executionId, status: recoveryStatus as 'CLOSED' | 'PROTECTION_FAILED' };
     }
     await updateExecution(executionId, userId, strategy, environment, 'FAILED', { orderId, error: message });
+    await publishExecutionNotification({
+      userId,
+      signalId: signal.id,
+      eventType: 'EXCHANGE_FAILURE',
+      symbol: signal.symbol,
+      side: signal.side,
+      message: `Trade execution failed: ${message}`,
+      metadata: { error: message },
+    });
     if (error instanceof BinanceFuturesError) throw error;
     throw new BinanceFuturesError(message);
   }
@@ -1659,6 +1685,20 @@ export async function executeMultiExchangeDemo(
       [executionId, signal.entry_price, order.exchangeOrderId || clientOrderId],
     );
 
+    await publishExecutionNotification({
+      userId,
+      signalId: signal.id,
+      eventType: 'CONFIRMED_DEMO_EXECUTION',
+      symbol: signal.symbol,
+      side: orderSide,
+      price: signal.entry_price,
+      message: `Demo trade executed on Binance: ${signal.symbol} ${orderSide} filled at ${signal.entry_price}`,
+      metadata: {
+        quantity,
+        orderId: order.exchangeOrderId || clientOrderId,
+      },
+    });
+
     return { id: executionId, status: 'PROTECTED' };
   } catch (err) {
     const errorMsg = err instanceof Error ? err.message : 'Exchange dispatch failed';
@@ -1668,6 +1708,15 @@ export async function executeMultiExchangeDemo(
         WHERE id = $1`,
       [executionId, errorMsg.slice(0, 400)],
     );
+    await publishExecutionNotification({
+      userId,
+      signalId: signal.id,
+      eventType: 'EXCHANGE_FAILURE',
+      symbol: signal.symbol,
+      side: signal.side,
+      message: `Exchange dispatch failed: ${errorMsg}`,
+      metadata: { error: errorMsg },
+    });
     return { id: executionId, status: 'FAILED', error: errorMsg };
   }
 }

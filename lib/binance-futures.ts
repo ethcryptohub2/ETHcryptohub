@@ -100,9 +100,9 @@ async function signedRequest<T>(
   transport: typeof fetch = fetch,
 ): Promise<T> {
   const params = new URLSearchParams({
+    recvWindow: '10000',
     ...parameters,
-    recvWindow: '5000',
-    timestamp: String(Date.now()),
+    timestamp: parameters.timestamp ?? String(Date.now() - 1500),
   });
   const signature = createHmac('sha256', apiSecret).update(params.toString()).digest('hex');
   let response: Response;
