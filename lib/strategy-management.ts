@@ -104,12 +104,17 @@ export async function saveStrategyProfile(userId: number, profile: StrategyProfi
   if (profile.enabled && (!profile.max_open_positions || !profile.max_daily_loss_percent)) {
     throw new StrategySettingsError('Set both maximum concurrent positions and maximum daily loss before enabling this strategy.', 422);
   }
-  const existing = await query<{ enabled: boolean; emergency_stop_enabled: boolean }>(
-    `SELECT enabled, emergency_stop_enabled FROM public.user_strategy_settings
+  const existing = await query<{
+    enabled: boolean;
+    emergency_stop_enabled: boolean;
+    auto_execution_enabled: boolean;
+  }>(
+    `SELECT enabled, emergency_stop_enabled, auto_execution_enabled FROM public.user_strategy_settings
       WHERE user_id = $1 AND strategy = $2`,
     [userId, profile.strategy],
   );
   const wasEnabled = existing.rows[0]?.enabled ?? false;
+  const wasAutoEnabled = existing.rows[0]?.auto_execution_enabled ?? false;
   if (profile.enabled && !wasEnabled && !confirmations.confirmEnable) {
     throw new StrategySettingsError('Explicit confirmation is required to enable this strategy.', 422);
   }
@@ -121,7 +126,8 @@ export async function saveStrategyProfile(userId: number, profile: StrategyProfi
   if (profile.environment === 'LIVE' && (profile.enabled || profile.auto_execution_enabled)) {
     throw new StrategySettingsError('Live strategy execution remains strictly locked.', 403);
   }
-  if (profile.auto_execution_enabled && !confirmations.confirmAutomatic) {
+  // Require explicit confirmation when newly enabling automatic Demo execution
+  if (profile.auto_execution_enabled && !wasAutoEnabled && !confirmations.confirmAutomatic) {
     throw new StrategySettingsError('Explicit confirmation is required to enable automatic Demo execution.', 422);
   }
   const result = await query<StrategyRow>(

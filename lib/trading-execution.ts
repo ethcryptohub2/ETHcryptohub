@@ -675,23 +675,27 @@ async function computeOrder(
   if (!brackets.success) throw new BinanceFuturesError('Binance returned invalid leverage limits.');
   const maxLeverage = Math.max(...(brackets.data.find((item) => item.symbol === signal.symbol)?.brackets.map((item) => item.initialLeverage) ?? []));
   
-  // Safe Demo test constraints: 1x leverage, max 100 USDT notional, max 0.5% risk
-  const effectiveLeverage = Math.min(profile.leverage || 1, 1);
-  if (!maxLeverage || effectiveLeverage > maxLeverage) {
-    throw new BinanceFuturesError(`Selected leverage exceeds this pair's Binance limit (${maxLeverage || 'unavailable'}x).`, 422);
+  // Enforce customer's authoritative saved strategy leverage against Binance symbol bracket limits
+  const requestedLeverage = profile.leverage || 1;
+  if (!maxLeverage || requestedLeverage > maxLeverage) {
+    throw new BinanceFuturesError(`Selected leverage (${requestedLeverage}x) exceeds this pair's Binance limit (${maxLeverage || 'unavailable'}x). Trade skipped.`, 422);
   }
+  const effectiveLeverage = requestedLeverage;
 
   const entry = Number(signal.entry_price);
   const stop = Number(signal.initial_stop);
   const equity = Number(balance.walletBalance);
   const available = Number(balance.availableBalance);
   
-  const maxNotionalCap = Math.min(Number(profile.max_notional_usdt ?? 100.00), 100.00);
-  const maxRiskPct = Math.min(Number(profile.risk_percentage || 0.5), 0.5);
-  const riskAmount = equity * maxRiskPct / 100;
+  // Authoritative risk sizing from customer strategy profile
+  const maxNotionalCap = Number(profile.max_notional_usdt ?? 500.00);
+  const maxRiskPct = Number(profile.risk_percentage || 1.0);
+  const riskAmount = (equity * maxRiskPct) / 100;
 
   let calculatedNotional: number;
   if (profile.order_size_mode === 'RISK_BASED') {
+    // Position sizing is based on dollar risk budget and stop-loss distance
+    // Leverage dictates margin requirement, not the base risk exposure
     const rawRiskNotional = (riskAmount / Math.abs(entry - stop)) * entry;
     calculatedNotional = Math.min(rawRiskNotional, maxNotionalCap);
   } else {
@@ -717,11 +721,13 @@ async function computeOrder(
       422,
     );
   }
-  if (!Number.isFinite(available) || orderNotionalAtEntry / effectiveLeverage > available) {
-    throw new BinanceFuturesError('Available Futures balance is insufficient for this order and leverage.', 422);
+  // Margin requirement is order notional divided by effective leverage
+  const requiredMargin = orderNotionalAtEntry / effectiveLeverage;
+  if (!Number.isFinite(available) || requiredMargin > available) {
+    throw new BinanceFuturesError(`Available Futures balance (${available.toFixed(2)} USDT) is insufficient for required margin (${requiredMargin.toFixed(2)} USDT) at ${effectiveLeverage}x leverage.`, 422);
   }
 
-  // Check total open positions limit across symbols (Max 1 open position for safe testing)
+  // Check total open positions limit across symbols using the customer's authoritative limit
   const openPositionsRaw: unknown = await adapter.request('GET', '/fapi/v3/positionRisk');
   const allPositions = z.array(z.object({
     symbol: z.string(),
@@ -729,7 +735,7 @@ async function computeOrder(
   })).safeParse(openPositionsRaw);
   if (allPositions.success) {
     const activeCount = allPositions.data.filter((p) => Number(p.positionAmt) !== 0).length;
-    const maxAllowedPositions = Math.min(profile.max_open_positions ?? 1, 1);
+    const maxAllowedPositions = profile.max_open_positions ?? 10;
     if (activeCount >= maxAllowedPositions) {
       throw new BinanceFuturesError(`Maximum open positions limit reached (${activeCount}/${maxAllowedPositions}). Trade skipped.`, 409);
     }
@@ -1608,7 +1614,7 @@ export async function executeMultiExchangeDemo(
   const entryPriceNum = Number(signal.entry_price);
   const stopLossNum = Number(signal.initial_stop);
   const stopDistance = Math.abs(entryPriceNum - stopLossNum);
-  const leverage = Math.min(Math.max(setting?.default_leverage ?? 1, 1), 5);
+  const leverage = Math.min(Math.max(setting?.default_leverage ?? 1, 1), 125);
 
   let rawQty: number;
   let notionalUsdt: string;
