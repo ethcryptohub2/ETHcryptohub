@@ -16,15 +16,23 @@ export function smtpAcceptedRecipient(accepted: readonly string[], email: string
 
 export function verificationLink(email: string, code: string) {
   const configuredOrigin = process.env.APP_URL?.trim();
+  const renderOrigin = process.env.RENDER_EXTERNAL_URL?.trim();
   const productionHost = process.env.VERCEL_PROJECT_PRODUCTION_URL?.trim();
   const deploymentHost = process.env.VERCEL_URL?.trim();
   const previewHost = process.env.VERCEL_BRANCH_URL?.trim() || deploymentHost;
   const vercelEnvironment = process.env.VERCEL_ENV;
-  if (vercelEnvironment === 'preview' && !configuredOrigin && !previewHost) {
+  const isRender = process.env.RENDER === 'true' || Boolean(renderOrigin);
+
+  let originCandidate = configuredOrigin;
+  if (isRender && (!originCandidate || originCandidate.includes('vercel.app'))) {
+    originCandidate = renderOrigin || 'https://smartexit-staging.onrender.com';
+  }
+
+  if (vercelEnvironment === 'preview' && !originCandidate && !previewHost) {
     throw new EmailDeliveryError('APP_URL, VERCEL_BRANCH_URL, or VERCEL_URL must identify the Preview origin.');
   }
   const vercelHost = vercelEnvironment === 'preview' ? previewHost : productionHost || deploymentHost;
-  const origin = configuredOrigin || (vercelHost ? `https://${vercelHost}` : 'http://localhost:3000');
+  const origin = originCandidate || (vercelHost ? `https://${vercelHost}` : 'http://localhost:3000');
   let url: URL;
   try {
     url = new URL('/verify-email', origin);
@@ -39,7 +47,8 @@ export function verificationLink(email: string, code: string) {
   }
   const isDeployed = vercelEnvironment === 'preview' ||
     vercelEnvironment === 'production' ||
-    process.env.NODE_ENV === 'production';
+    process.env.NODE_ENV === 'production' ||
+    isRender;
   if (url.protocol !== 'https:' && !(url.hostname === 'localhost' && !isDeployed)) {
     throw new EmailDeliveryError('APP_URL must use HTTPS in deployed environments.');
   }

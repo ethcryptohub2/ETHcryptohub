@@ -381,12 +381,14 @@ export async function authRoute(action: string, request: NextRequest) {
           data: { notice: passwordResetNotice },
         }, { headers: { 'Cache-Control': 'no-store' } });
       }
-      const signupFailed = action === 'signup';
+      console.error(`Email delivery failed during auth action (${action}):`, error.message);
+      const isSignup = action === 'signup';
+      const userMessage = isSignup
+        ? 'Your account was created, but the verification email could not be sent. Please use "Resend verification code" or contact support if the issue persists.'
+        : 'The verification email could not be sent at this time. Please try again in a few moments or contact support.';
       return NextResponse.json({
-        error: signupFailed
-          ? `Your account was created, but the verification email could not be sent. ${error.message}`
-          : error.message,
-        ...(signupFailed ? { code: 'EMAIL_DELIVERY_FAILED' } : {}),
+        error: userMessage,
+        code: 'EMAIL_DELIVERY_FAILED',
       }, { status: 503, headers: { 'Cache-Control': 'no-store' } });
     }
     if (error instanceof Error && error.message.includes('duplicate key')) return jsonError('An account with that email already exists.', 409);
