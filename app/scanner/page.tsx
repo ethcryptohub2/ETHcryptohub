@@ -20,6 +20,6 @@ export default async function ScannerPage({ searchParams }: { searchParams: Prom
       <SubscriptionPanel paywall />
     </main>;
   }
-  const initialTab: ScannerTab = tab === 'scalping' || tab === 'alpha' ? tab : 'standard';
+  const initialTab: ScannerTab = tab === 'scalping' || (tab === 'alpha' && user.role === 'admin') ? tab : 'standard';
   return <Scanner isAdmin={user.role === 'admin'} initialTab={initialTab} alphaSnapshot={disabledAlphaSnapshot()} />;
 }

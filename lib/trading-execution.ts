@@ -1512,7 +1512,9 @@ async function appendDemoAutoTelemetry(events: DemoAutoTelemetryEntry[]) {
 }
 
 export async function processNewAutomaticTrades(signalIds: string[]) {
-  if (process.env.WORKER_SAFE_MODE === 'true' || process.env.DEMO_ORDER_DISPATCH_ENABLED === 'false') {
+  if (process.env.WORKER_SAFE_MODE === 'true' ||
+      process.env.DEMO_ORDER_DISPATCH_ENABLED !== 'true' ||
+      process.env.SMARTEXIT_CUSTOMER_DEMO_AUTO_EXECUTION_ENABLED !== 'true') {
     return;
   }
   const adminOnly = process.env.SMARTEXIT_DEMO_AUTO_EXECUTION_ADMIN_ONLY === 'true';

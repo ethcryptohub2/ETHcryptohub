@@ -242,7 +242,7 @@ export function PositionsPanel() {
                           {exec.side}
                         </span>
                       </td>
-                      <td>{formatPrice(exec.actual_fill_price || exec.entry_price)}</td>
+                      <td>{exec.actual_fill_price ? formatPrice(exec.actual_fill_price) : 'Pending confirmation'}</td>
                       <td>
                         {formatPrice(exec.quantity)}
                         <small style={{ display: 'block', fontSize: 10, color: 'var(--text-muted)' }}>

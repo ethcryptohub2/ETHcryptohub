@@ -5,9 +5,11 @@ export type ScannerTab = 'standard' | 'scalping' | 'alpha';
 export function ScannerTabs({
   active,
   onChange,
+  showResearch = false,
 }: {
   active: ScannerTab;
   onChange: (tab: ScannerTab) => void;
+  showResearch?: boolean;
 }) {
   return (
     <div className="scanner-tabs" role="tablist" aria-label="Market scanner mode">
@@ -29,7 +31,7 @@ export function ScannerTabs({
       >
         <span>⚡ High-Risk Scalping</span>
       </button>
-      <button
+      {showResearch && <button
         type="button"
         role="tab"
         aria-selected={active === 'alpha'}
@@ -37,7 +39,7 @@ export function ScannerTabs({
         onClick={() => onChange('alpha')}
       >
         <span>✦ Alpha Intelligence</span>
-      </button>
+      </button>}
     </div>
   );
 }

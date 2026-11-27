@@ -211,6 +211,9 @@ export function PanelNavigation() {
     pathname.startsWith('/scanner') ||
     pathname.startsWith('/signals') ||
     pathname.startsWith('/positions') ||
+    pathname.startsWith('/trades') ||
+    pathname.startsWith('/notifications') ||
+    pathname.startsWith('/profile') ||
     pathname.startsWith('/news') ||
     pathname.startsWith('/settings') ||
     pathname.startsWith('/binance') ||
@@ -385,26 +388,16 @@ export function PanelNavigation() {
   const userSections: NavigationSection[] = [
     {
       id: 'intelligence',
-      title: 'Market Intelligence',
+      title: 'Trading',
       icon: 'scanner',
       items: [
-        { href: '/scanner', label: 'Live Signals', icon: 'scanner' },
-        { href: '/scanner?tab=scalping', label: 'High-Risk Scalping', icon: 'scalping' },
-        { href: '/scanner?tab=alpha', label: 'Alpha Intelligence', icon: 'activity' },
-        { href: '/scanner/history', label: 'Signal History', icon: 'history' },
-        { href: '/scanner/performance', label: 'Performance Analytics', icon: 'performance' },
-        { href: '/intelligence', label: 'Research Workspace', icon: 'activity' },
-        { href: '/news', label: 'Crypto News', icon: 'news', badge: newsUnread > 0 ? (newsUnread > 99 ? '99+' : newsUnread) : undefined },
-      ],
-    },
-    {
-      id: 'trading',
-      title: 'Trading & Execution',
-      icon: 'positions',
-      items: [
-        { href: '/dashboard', label: 'Dashboard Overview', icon: 'overview' },
-        { href: '/positions', label: 'Open Positions', icon: 'positions' },
-        { href: '/binance', label: 'Exchange API Setup', icon: 'exchange' },
+        { href: '/dashboard', label: 'Dashboard', icon: 'overview' },
+        { href: '/scanner', label: 'Market Scanner', icon: 'scanner' },
+        { href: '/positions', label: 'Active Trades', icon: 'positions' },
+        { href: '/trades', label: 'Trade History', icon: 'history' },
+        { href: '/binance', label: 'Exchange Connections', icon: 'exchange' },
+        { href: '/settings#trading-settings', label: 'Trading Settings', icon: 'settings' },
+        { href: '/notifications', label: 'Notifications', icon: 'news', badge: signalUnread > 0 ? (signalUnread > 99 ? '99+' : signalUnread) : undefined },
       ],
     },
     {
@@ -412,7 +405,7 @@ export function PanelNavigation() {
       title: 'Account',
       icon: 'settings',
       items: [
-        { href: '/settings', label: 'Account Settings', icon: 'settings' },
+        { href: '/profile', label: 'Profile', icon: 'settings' },
       ],
     },
   ];

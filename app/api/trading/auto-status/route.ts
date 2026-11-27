@@ -25,6 +25,7 @@ export async function GET(request: NextRequest) {
       process.env.WORKER_SAFE_MODE === 'true' ||
       process.env.DEMO_ORDER_DISPATCH_ENABLED !== 'true';
     const adminOnlyAutoTrade = process.env.SMARTEXIT_DEMO_AUTO_EXECUTION_ADMIN_ONLY === 'true';
+    const customerDemoAutoExecutionEnabled = process.env.SMARTEXIT_CUSTOMER_DEMO_AUTO_EXECUTION_ENABLED === 'true';
 
     const [
       workerHealth,
@@ -137,6 +138,10 @@ export async function GET(request: NextRequest) {
             adminOnlyAutoTrade,
             userRole: user.role,
             eligibleForUser: !adminOnlyAutoTrade || user.role === 'admin',
+            customerDemoAutoExecutionEnabled,
+            safetyGateMessage: customerDemoAutoExecutionEnabled
+              ? null
+              : 'Automatic Demo execution is paused pending completion of the execution safety audit.',
           },
         },
       },

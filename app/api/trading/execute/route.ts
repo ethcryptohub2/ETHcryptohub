@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { NextRequest } from 'next/server';
-import { AuthError, requireUser } from '../../../../lib/auth';
+import { AuthError } from '../../../../lib/auth';
+import { requirePremiumUser, SubscriptionError } from '../../../../lib/subscriptions';
 import { forwardRequestToBackend, shouldForwardToBackend } from '../../../../lib/backend-proxy';
 import { BinanceFuturesError } from '../../../../lib/binance-futures';
 import { executeSignal } from '../../../../lib/trading-execution';
@@ -28,7 +29,13 @@ const schema = z.object({
 export async function POST(request: NextRequest) {
   if (!validCsrf(request)) return Response.json({ error: 'Refresh and retry.' }, { status: 403 });
   try {
-    const user = await requireUser();
+    const { user } = await requirePremiumUser();
+    const body: unknown = await request.clone().json().catch(() => null);
+    const parsed = schema.safeParse(body);
+    if (!parsed.success) return Response.json({ error: 'Explicit trade confirmation is required.' }, { status: 422 });
+    if (parsed.data.environment === 'LIVE') {
+      return Response.json({ error: 'Live trading is disabled.' }, { status: 403 });
+    }
     if (shouldForwardToBackend()) {
       const rawBody = await request.text();
       const forwarded = await forwardRequestToBackend(request, '/api/trading/execute', {
@@ -37,16 +44,13 @@ export async function POST(request: NextRequest) {
       });
       if (forwarded) return forwarded;
     }
-    const body: unknown = await request.json().catch(() => null);
-    const parsed = schema.safeParse(body);
-    if (!parsed.success) return Response.json({ error: 'Explicit trade confirmation is required.' }, { status: 422 });
     if (parsed.data.environment !== parsed.data.expected.environment) {
       return Response.json({ error: 'The confirmed environment does not match the selected environment.' }, { status: 422 });
     }
     const data = await executeSignal(user.id, parsed.data.signalId, parsed.data.environment, 'CONFIRM', parsed.data.expected);
     return Response.json({ data }, { status: 201, headers: { 'Cache-Control': 'no-store' } });
   } catch (error) {
-    const status = error instanceof AuthError || error instanceof BinanceFuturesError ? error.status : 503;
+    const status = error instanceof AuthError || error instanceof SubscriptionError || error instanceof BinanceFuturesError ? error.status : 503;
     return Response.json({ error: error instanceof Error ? error.message : 'Trade execution failed.' }, { status });
   }
 }

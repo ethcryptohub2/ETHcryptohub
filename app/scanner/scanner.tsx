@@ -94,7 +94,7 @@ export function Scanner({ isAdmin, initialTab, alphaSnapshot }: { isAdmin: boole
   if (tab === 'alpha') {
     return (
       <main className="shell">
-        <ScannerTabs active={tab} onChange={changeTab} />
+        <ScannerTabs active={tab} onChange={changeTab} showResearch={isAdmin} />
         <AlphaIntelligence
           snapshot={savedAlpha}
           watchlist={watchlist}
@@ -217,7 +217,14 @@ function StandardSignals({
     exchanges?: Array<{ exchange: string; name: string; userAutoTradeEnabled: boolean; credentialsConfigured: boolean; lastVerifiedAt: string | null }>;
     executions?: Array<{ id: string; signal_id: string; symbol: string; side: string; execution_status: string; binance_order_id: string | null; created_at: string }>;
     telemetry?: Array<{ at: string; signalId: string; symbol: string; side: string; exchange: string; status: string; reasonMessage: string }>;
-    gate?: { demoDispatchEnabled: boolean; adminOnlyAutoTrade: boolean; eligibleForUser: boolean; liveLocked: boolean };
+    gate?: {
+      demoDispatchEnabled: boolean;
+      adminOnlyAutoTrade: boolean;
+      eligibleForUser: boolean;
+      liveLocked: boolean;
+      customerDemoAutoExecutionEnabled: boolean;
+      safetyGateMessage: string | null;
+    };
   } | null>(null);
   const [emergencyBusy, setEmergencyBusy] = useState(false);
 
@@ -571,7 +578,7 @@ function StandardSignals({
   const activeTotalBatches = v2State && v2State.totalBatches > 0
     ? v2State.totalBatches
     : (scanResult?.totalBatches ?? scanDiagnostics?.totalBatches ?? (data?.eligibleCount ? Math.max(1, Math.ceil(data.eligibleCount / 32)) : 0));
-  const batchDisplay = activeTotalBatches > 0 ? `Batch ${activeBatchIndex}/${activeTotalBatches}` : 'Awaiting V2';
+  const batchDisplay = activeTotalBatches > 0 ? `Batch ${activeBatchIndex}/${activeTotalBatches}` : 'Awaiting market update';
   const activeDurationMs = v2State?.durationMs ?? scanResult?.durationMs ?? scanDiagnostics?.scanDurationMs ?? null;
   const latencyDisplay = activeDurationMs !== null
     ? `${activeDurationMs}ms`
@@ -663,7 +670,7 @@ function StandardSignals({
           <div style={{ minWidth: 0 }}>
             <h2 style={{ margin: 0, fontSize: 18 }}>Scanner Controls & Configuration</h2>
             <p className="muted" style={{ margin: '4px 0 0', fontSize: 13 }}>
-              Full-market V2 cycle: 5 min · Saved snapshot refresh: {refreshMinutes} min · Live ticker: Futures WS
+              Full-market cycle: 5 min · Saved snapshot refresh: {refreshMinutes} min · Live ticker: Futures WS
             </p>
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', minWidth: 0, maxWidth: '100%' }}>
@@ -680,7 +687,7 @@ function StandardSignals({
                 gap: 6,
                 maxWidth: '100%',
               }}
-              title={inCooldown ? 'Paused while market data recovers' : autoScanEnabled ? '5-minute V2 full-market cycle is ACTIVE. Click to pause.' : '5-minute V2 full-market cycle is PAUSED. Click to resume.'}
+              title={inCooldown ? 'Paused while market data recovers' : autoScanEnabled ? '5-minute full-market cycle is active. Click to pause.' : '5-minute full-market cycle is paused. Click to resume.'}
             >
               <span style={{
                 display: 'inline-block',
@@ -776,7 +783,7 @@ function StandardSignals({
           </div>
         )}
 
-        {/* Hybrid Parallel V2 Diagnostics Panel */}
+        {/* Customer-safe scanner activity; detailed diagnostics remain admin-only. */}
         <div
           style={{
             padding: '12px 14px',
@@ -793,7 +800,7 @@ function StandardSignals({
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 8 }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
               <span className="mono" style={{ fontSize: 11, fontWeight: 700, padding: '2px 7px', borderRadius: 4, background: 'rgba(99, 102, 241, 0.15)', color: '#6366f1' }}>
-                {v2State?.version ?? 'Hybrid Parallel V2'}
+                Market Scanner
               </span>
               <span
                 className="mono"
@@ -823,12 +830,12 @@ function StandardSignals({
                 {circuitCooldownUntil ? 'RATE_LIMIT_COOLDOWN' : v2State?.state ?? (isScanning ? 'SCANNING' : 'WAITING_FOR_NEXT_CYCLE')}
               </span>
             </div>
-            <span className="muted mono" style={{ fontSize: 11 }} suppressHydrationWarning>
+            {isAdmin && <span className="muted mono" style={{ fontSize: 11 }} suppressHydrationWarning>
               Workers: {v2State?.activeWorkers ?? 0}/{v2State?.concurrency ?? 4} · Weight: {v2State?.usedWeight1m ?? 0}/{v2State?.weightLimit1m ?? 1200} · Cache: {v2State?.cacheEntries ?? 0}
-            </span>
+            </span>}
           </div>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(165px, 1fr))', gap: 8, fontSize: 11, minWidth: 0, maxWidth: '100%' }}>
-            <div style={{ minWidth: 0, overflowWrap: 'anywhere' }}>
+            {isAdmin && <><div style={{ minWidth: 0, overflowWrap: 'anywhere' }}>
               <span className="muted">Batches:</span>{' '}
               <strong className="mono">{v2State?.completedBatches ?? activeBatchIndex}/{v2State?.totalBatches ?? activeTotalBatches}</strong>
             </div>
@@ -837,15 +844,15 @@ function StandardSignals({
               <strong className="mono">
                 {v2State?.successfulCount ?? activeScannedCount} / {v2State?.failedCount ?? 0} / {v2State?.skippedCount ?? 0}
               </strong>
-            </div>
-            <div style={{ minWidth: 0, overflowWrap: 'anywhere' }}>
+            </div></>}
+            {isAdmin && <><div style={{ minWidth: 0, overflowWrap: 'anywhere' }}>
               <span className="muted">Coverage:</span>{' '}
               <strong className="mono">{v2State?.coveragePercent ?? 0}%</strong>
             </div>
             <div style={{ minWidth: 0, overflowWrap: 'anywhere' }}>
               <span className="muted">Strategies:</span>{' '}
               <strong className="mono">Std:{v2State?.standardStatus ?? 'IDLE'} · HR:{v2State?.highRiskStatus ?? 'IDLE'}</strong>
-            </div>
+            </div></>}
             <div style={{ minWidth: 0, overflowWrap: 'anywhere' }} suppressHydrationWarning>
               <span className="muted">Last OK Scan:</span>{' '}
               <strong className="mono">{v2State?.lastSuccessfulScanAt ? new Date(v2State.lastSuccessfulScanAt).toLocaleTimeString('en-US') : '—'}</strong>
@@ -879,20 +886,15 @@ function StandardSignals({
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 8 }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
                 <strong className="mono" style={{ fontSize: 11 }}>
-                  AUTO-DEMO ENGINE:{' '}
+                  AUTOMATIC DEMO EXECUTION:{' '}
                   <span style={{ color: autoStatus.workerHealth?.status === 'ONLINE' && autoStatus.gate?.demoDispatchEnabled ? '#10b981' : '#f59e0b' }}>
-                    {autoStatus.workerHealth?.status === 'ONLINE'
-                      ? autoStatus.gate?.demoDispatchEnabled
-                        ? '● ONLINE & ARMED'
-                        : '● ONLINE (SAFE MODE)'
-                      : `○ ${autoStatus.workerHealth?.status ?? 'STANDBY'}`}
+                    {autoStatus.gate?.customerDemoAutoExecutionEnabled && autoStatus.gate?.demoDispatchEnabled
+                      ? 'AVAILABLE'
+                      : 'PAUSED BY SAFETY GATE'}
                   </span>
                 </strong>
-                <span className="muted mono" style={{ fontSize: 11 }}>
-                  Auto-Trade: {autoStatus.trading?.demo_auto_trade_enabled ? 'ON' : 'OFF'} · Binance Switch:{' '}
-                  {autoStatus.exchanges?.find((e) => e.exchange === 'BINANCE')?.userAutoTradeEnabled ? 'ON' : 'OFF'} · Standard:{' '}
-                  {autoStatus.strategies?.find((s) => s.strategy === 'STANDARD')?.auto_execution_enabled ? 'AUTO' : 'OFF'}
-                  {autoStatus.gate?.adminOnlyAutoTrade ? ' · Admin Staging Mode' : ''}
+                <span className="muted" style={{ fontSize: 11 }}>
+                  {autoStatus.gate?.safetyGateMessage ?? 'Your enabled exchange connections and trading settings determine eligible Demo execution.'}
                 </span>
               </div>
               <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
@@ -913,7 +915,7 @@ function StandardSignals({
                 )}
               </div>
             </div>
-            {autoStatus.telemetry && autoStatus.telemetry.length > 0 && (
+            {isAdmin && autoStatus.telemetry && autoStatus.telemetry.length > 0 && (
               <div style={{ display: 'flex', flexDirection: 'column', gap: 4, borderTop: '1px solid var(--surface-border)', paddingTop: 6 }}>
                 <span className="muted mono" style={{ fontSize: 10 }}>RECENT AUTO-EXECUTION DECISIONS / SKIP REASONS:</span>
                 {autoStatus.telemetry.slice(0, 3).map((ev, idx) => (
@@ -949,7 +951,7 @@ function StandardSignals({
               </strong>{' '}
               <span>{scanNotice}</span>
             </div>
-            {scanResult && (
+            {isAdmin && scanResult && (
               <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', fontSize: 11 }}>
                 <span className="mono" style={{ background: 'var(--surface-subtle)', padding: '3px 8px', borderRadius: 4 }}>
                   Batch {scanResult.batchIndex}/{scanResult.totalBatches}

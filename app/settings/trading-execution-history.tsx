@@ -149,7 +149,7 @@ export function TradingExecutionHistory() {
           <div><span>Quantity</span><strong>{display(item.quantity)}</strong></div>
           <div><span>Notional</span><strong>{display(item.notional_usdt)} USDT</strong></div>
           <div><span>Leverage</span><strong>{item.leverage}x</strong></div>
-          <div><span>Entry</span><strong>{display(item.actual_fill_price ?? item.entry_price)}</strong></div>
+          <div><span>Confirmed entry</span><strong>{item.actual_fill_price ? display(item.actual_fill_price) : 'Pending confirmation'}</strong></div>
           <div><span>Initial risk at stop</span><strong>{display(riskAtStop(item))} USDT</strong></div>
           <div><span>Stop Loss</span><strong>{display(item.stop_loss)}</strong></div>
           <div><span>TP1 / TP2 / TP3</span><strong>{display(item.tp1_price)} / {display(item.tp2_price)} / {display(item.tp3_price)}</strong></div>
