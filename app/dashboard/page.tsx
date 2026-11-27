@@ -10,8 +10,6 @@ import { isBinanceBalanceReadAllowed, isStagingDemoTarget } from '../../lib/bina
 
 export const dynamic = 'force-dynamic';
 
-const DEFAULT_TRIAL_EXPIRY = '2026-12-31T23:59:59.000Z';
-
 export default async function DashboardPage() {
   let user;
   try {
@@ -25,12 +23,7 @@ export default async function DashboardPage() {
   try {
     subscription = await getSubscriptionEntitlement(user.id, { reconcile: false });
   } catch {
-    subscription = {
-      status: 'FREE_TRIAL' as const,
-      hasPremiumAccess: true,
-      trialExpiresAt: DEFAULT_TRIAL_EXPIRY,
-      premiumExpiresAt: null,
-    };
+    subscription = null;
   }
 
   return (
@@ -82,10 +75,14 @@ export default async function DashboardPage() {
         <article className="card">
           <p className="mono">MEMBERSHIP ACCESS</p>
           <h2 style={{ margin: '8px 0', fontSize: 20 }}>
-            {subscription.status === 'PREMIUM_ACTIVE' ? 'Premium Active' : 'Free Trial Active'}
+            {subscription?.status === 'PREMIUM_ACTIVE' ? 'Premium Active' :
+              subscription?.status === 'FREE_TRIAL' ? 'Free Trial Active' :
+              subscription?.status === 'TRIAL_EXPIRED' ? 'Free Trial Expired' :
+              subscription?.status === 'PREMIUM_EXPIRED' ? 'Premium Expired' : 'Membership Status Unavailable'}
           </h2>
           <p className="muted" style={{ margin: 0, fontSize: 13 }}>
-            Full access to real-time signals, high-risk scalping feeds, and automated notifications.
+            {subscription?.hasPremiumAccess ? 'Your membership includes market signals and trading alerts.' :
+              'An active trial or subscription is required for market signals.'}
           </p>
         </article>
 
@@ -130,7 +127,7 @@ export default async function DashboardPage() {
       <SubscriptionPanel />
 
       {/* Notifications */}
-      {subscription.hasPremiumAccess ? (
+      {subscription?.hasPremiumAccess ? (
         <NotificationsCenter />
       ) : (
         <section id="notifications" className="card stack">
