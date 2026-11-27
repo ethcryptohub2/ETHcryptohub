@@ -275,44 +275,35 @@ export async function playAlarm(
   // Determine MP3 path: signal uses alarm_tone.mp3, execution uses alarm.mp3
   const mp3Path = type === 'execution' ? EXECUTION_AUDIO_PATH : SIGNAL_AUDIO_PATH;
 
-  if (ringtone === 'custom-mp3') {
-    try {
-      const audio = new Audio(mp3Path);
-      audio.volume = Math.max(0, Math.min(1, volume));
-      activeAudioElement = audio;
-
-      await audio.play();
-
-      // If duration is numeric (3, 5, 10), schedule pause
-      if (typeof duration === 'number') {
-        activeStopTimer = setTimeout(() => {
-          internalStop();
-        }, duration * 1000);
-      }
-
-      audio.onended = () => {
-        internalStop();
-      };
-
-      return { success: true, mode: 'mp3' };
-    } catch (error) {
-      console.warn(`HTML5 Audio playback for ${mp3Path} failed, falling back to Web Audio oscillator:`, error);
-      // Fallback to Web Audio oscillator
-    }
-  }
-
-  // Fallback or explicit ringtone: play Web Audio oscillator notes
   try {
-    await playSynthesizedAlarm(volume, ringtone === 'custom-mp3' ? 'coin-drop' : ringtone);
-    return { success: true, mode: 'synthesizer' };
+    const audio = new Audio(mp3Path);
+    audio.volume = Math.max(0, Math.min(1, volume));
+    activeAudioElement = audio;
+
+    await audio.play();
+
+    // If duration is numeric (3, 5, 10), schedule pause
+    if (typeof duration === 'number') {
+      activeStopTimer = setTimeout(() => {
+        internalStop();
+      }, duration * 1000);
+    }
+
+    audio.onended = () => {
+      internalStop();
+    };
+
+    return { success: true, mode: 'mp3' };
   } catch (error) {
-    console.warn('Synthesized alarm playback blocked or failed:', error);
+    console.warn(`HTML5 Audio playback for ${mp3Path} failed:`, error);
     return { success: false, mode: 'blocked' };
   }
 }
 
-// Backwards compatibility alias
-export const playSignalAlarm = playSynthesizedAlarm;
+// Backwards compatibility alias: plays the given signal sound file
+export async function playSignalAlarm(volume = 0.8, _ringtone?: AlertRingtone) {
+  return playAlarm('signal', { volume });
+}
 
 export function isWithinClientQuietHours(
   start: string,

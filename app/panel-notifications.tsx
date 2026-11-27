@@ -3,11 +3,9 @@
 import Link from 'next/link';
 import { useEffect, useState, useRef } from 'react';
 import {
-  ALERT_RINGTONES,
   playAlarm,
   stopAlarm,
   type AlarmDuration,
-  type AlertRingtone,
 } from './notification-audio';
 import {
   loadStoredAlarmPreferences,
@@ -725,33 +723,6 @@ export function PanelNotifications({
               >
                 {soundPlaying ? '⏹ Stop Alarm (Playing)' : '⏹ Stop Alarm'}
               </button>
-            </div>
-
-            {/* Tone Selector */}
-            <div>
-              <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4, fontSize: 12 }}>
-                <span>Alert Ringtone:</span>
-              </div>
-              <select
-                value={draftPreferences.ringtone || 'custom-mp3'}
-                onChange={(e) => updatePreference('ringtone', e.target.value as AlertRingtone)}
-                style={{
-                  width: '100%',
-                  padding: '6px 8px',
-                  borderRadius: 6,
-                  border: '1px solid var(--surface-border)',
-                  background: 'var(--surface)',
-                  color: 'var(--text-primary)',
-                  fontSize: 12,
-                  cursor: 'pointer',
-                }}
-              >
-                {ALERT_RINGTONES.map((rt) => (
-                  <option key={rt.value} value={rt.value}>
-                    {rt.label}
-                  </option>
-                ))}
-              </select>
             </div>
 
             {/* Volume Slider */}

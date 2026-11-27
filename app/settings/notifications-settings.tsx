@@ -2,11 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import {
-  ALERT_RINGTONES,
-  getSelectedAlertRingtone,
   playSignalAlarm,
-  setSelectedAlertRingtone as persistAlertRingtone,
-  type AlertRingtone,
 } from '../notification-audio';
 
 type Preferences = {
@@ -73,7 +69,6 @@ export function NotificationsSettings() {
   const [busy, setBusy] = useState(true);
   const [saving, setSaving] = useState(false);
   const [soundUnlocked, setSoundUnlocked] = useState(false);
-  const [selectedRingtone, setSelectedRingtone] = useState<AlertRingtone>('coin-drop');
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
 
@@ -85,7 +80,6 @@ export function NotificationsSettings() {
         if (!response.ok || !body.data) throw new Error(body.error ?? 'Notification preferences unavailable.');
         if (active) {
           setPreferences(body.data);
-          setSelectedRingtone(getSelectedAlertRingtone());
         }
       })
       .catch((reason: unknown) => {
@@ -99,7 +93,7 @@ export function NotificationsSettings() {
     setPreferences((current) => ({ ...current, [key]: value }));
   }
 
-  async function save(nextPreferences = preferences, nextRingtone = selectedRingtone) {
+  async function save(nextPreferences = preferences) {
     setSaving(true);
     setMessage('');
     setError('');
@@ -113,8 +107,6 @@ export function NotificationsSettings() {
       const body = await response.json() as { data?: Preferences; error?: string };
       if (!response.ok || !body.data) throw new Error(body.error ?? 'Notification preferences could not be saved.');
       setPreferences(body.data);
-      setSelectedRingtone(nextRingtone);
-      persistAlertRingtone(nextRingtone);
       setMessage('Notification preferences saved.');
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : 'Notification preferences could not be saved.');
@@ -191,21 +183,21 @@ export function NotificationsSettings() {
   async function enableSound() {
     setError('');
     try {
-      await playSignalAlarm(preferences.alarm_volume, selectedRingtone);
+      await playSignalAlarm(preferences.alarm_volume);
       setSoundUnlocked(true);
-      await save({ ...preferences, sound_enabled: true }, selectedRingtone);
+      await save({ ...preferences, sound_enabled: true });
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : 'Sound could not be enabled.');
     }
   }
 
-  async function previewRingtone() {
+  async function testAlarm() {
     setError('');
     try {
-      await playSignalAlarm(preferences.alarm_volume, selectedRingtone);
+      await playSignalAlarm(preferences.alarm_volume);
       setSoundUnlocked(true);
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : 'Ringtone preview failed.');
+      setError(reason instanceof Error ? reason.message : 'Alarm playback failed.');
     }
   }
 
@@ -246,17 +238,7 @@ export function NotificationsSettings() {
       <div><strong>Sound alarm</strong><p className="muted">{preferences.sound_enabled ? 'Enabled after browser interaction.' : 'Sound remains off until explicitly enabled.'}</p></div>
       <label className="notification-toggle"><input type="checkbox" checked={preferences.sound_enabled} onChange={(event) => update('sound_enabled', event.target.checked)} /> Sound ON/OFF</label>
       {!soundUnlocked && <button type="button" className="button-secondary" onClick={() => void enableSound()}>Enable Sound</button>}
-      <div className="alert-ringtone-control">
-        <label htmlFor="alert-ringtone">Alert Ringtone</label>
-        <select id="alert-ringtone" value={selectedRingtone} onChange={(event) => {
-          const ringtone = ALERT_RINGTONES.find((option) => option.value === event.target.value);
-          if (ringtone) setSelectedRingtone(ringtone.value);
-        }}>
-          {ALERT_RINGTONES.map((ringtone) => <option key={ringtone.value} value={ringtone.value}>{ringtone.label}</option>)}
-        </select>
-        <button type="button" className="button-secondary" onClick={() => void previewRingtone()} aria-label={`Preview ${ALERT_RINGTONES.find((ringtone) => ringtone.value === selectedRingtone)?.label ?? 'selected'} ringtone`}>▶ Preview</button>
-      </div>
-      <button type="button" className="button-secondary" onClick={() => void previewRingtone()}>Test Alarm</button>
+      <button type="button" className="button-secondary" onClick={() => void testAlarm()}>Test Alarm</button>
     </div>
     <div className="notification-preference-grid">
       {([
