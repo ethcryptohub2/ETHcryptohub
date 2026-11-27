@@ -2,7 +2,6 @@ import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { BinanceFuturesError, createBinanceEnvironmentAdapter, getFuturesBalance, tradingExecutionGate, type TradingEnvironment } from './binance-futures';
 import { query } from './db';
-import { getFullPositionTakeProfit } from './binance-execution-policy';
 import {
   buildCloseAllAlgoOrderParameters,
   cancelBinanceAlgoOrder,
@@ -29,6 +28,11 @@ import {
   type ExecutionScope,
   type LifecycleExecution,
 } from './execution-lifecycle';
+import {
+  computeAdaptiveProtection,
+  validateSmartEntryFilters,
+  type MarketCandle,
+} from './adaptive-protection';
 
 type Signal = {
   id: string;
@@ -529,6 +533,96 @@ async function assertStrategyRiskLimits(
   }
 }
 
+async function resolveActualFill(
+  adapter: Awaited<ReturnType<typeof createBinanceEnvironmentAdapter>>,
+  symbol: string,
+  orderId: string,
+  clientOrderId?: string,
+  maxRetries = 3,
+): Promise<{ fillPrice: string; commissionUsdt: number }> {
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    try {
+      const tradesRaw: unknown = await adapter.request('GET', '/fapi/v1/userTrades', {
+        symbol,
+        orderId,
+      });
+      const tradesSchema = z.array(z.object({
+        price: z.string(),
+        qty: z.string(),
+        commission: z.string().optional(),
+        commissionAsset: z.string().optional(),
+      }));
+      const parsedTrades = tradesSchema.safeParse(tradesRaw);
+      if (parsedTrades.success && parsedTrades.data.length > 0) {
+        let totalQuote = 0;
+        let totalQty = 0;
+        let totalCommission = 0;
+        for (const t of parsedTrades.data) {
+          const p = Number(t.price);
+          const q = Number(t.qty);
+          if (p > 0 && q > 0) {
+            totalQuote += p * q;
+            totalQty += q;
+            if (t.commission && t.commissionAsset === 'USDT') {
+              totalCommission += Number(t.commission);
+            }
+          }
+        }
+        if (totalQty > 0 && totalQuote > 0) {
+          return {
+            fillPrice: (totalQuote / totalQty).toFixed(8),
+            commissionUsdt: totalCommission,
+          };
+        }
+      }
+    } catch (tradeErr) {
+      console.warn(`[resolveActualFill] userTrades attempt ${attempt} warning:`, tradeErr);
+    }
+
+    try {
+      const orderRaw: unknown = await adapter.request('GET', '/fapi/v1/order', {
+        symbol,
+        orderId,
+        ...(clientOrderId ? { origClientOrderId: clientOrderId } : {}),
+      });
+      const orderSchema = z.object({
+        avgPrice: z.string().optional(),
+        cumQuote: z.string().optional(),
+        executedQty: z.string().optional(),
+      });
+      const parsedOrder = orderSchema.safeParse(orderRaw);
+      if (parsedOrder.success) {
+        const avgP = Number(parsedOrder.data.avgPrice ?? 0);
+        if (avgP > 0) {
+          return {
+            fillPrice: avgP.toFixed(8),
+            commissionUsdt: 0,
+          };
+        }
+        const cumQ = Number(parsedOrder.data.cumQuote ?? 0);
+        const execQ = Number(parsedOrder.data.executedQty ?? 0);
+        if (cumQ > 0 && execQ > 0) {
+          return {
+            fillPrice: (cumQ / execQ).toFixed(8),
+            commissionUsdt: 0,
+          };
+        }
+      }
+    } catch (orderErr) {
+      console.warn(`[resolveActualFill] order query attempt ${attempt} warning:`, orderErr);
+    }
+
+    if (attempt < maxRetries) {
+      await new Promise((resolve) => setTimeout(resolve, attempt * 250));
+    }
+  }
+
+  throw new BinanceFuturesError(
+    'Exchange reported market order filled, but authenticated fill price query returned zero or unindexed fills. Refusing to record 0 fill price.',
+    502,
+  );
+}
+
 async function computeOrder(
   signal: Signal,
   userId: number,
@@ -579,7 +673,10 @@ async function computeOrder(
   })).safeParse(leverageData);
   if (!brackets.success) throw new BinanceFuturesError('Binance returned invalid leverage limits.');
   const maxLeverage = Math.max(...(brackets.data.find((item) => item.symbol === signal.symbol)?.brackets.map((item) => item.initialLeverage) ?? []));
-  if (!maxLeverage || profile.leverage > maxLeverage) {
+  
+  // Safe Demo test constraints: 1x leverage, max 100 USDT notional, max 0.5% risk
+  const effectiveLeverage = Math.min(profile.leverage || 1, 1);
+  if (!maxLeverage || effectiveLeverage > maxLeverage) {
     throw new BinanceFuturesError(`Selected leverage exceeds this pair's Binance limit (${maxLeverage || 'unavailable'}x).`, 422);
   }
 
@@ -587,46 +684,130 @@ async function computeOrder(
   const stop = Number(signal.initial_stop);
   const equity = Number(balance.walletBalance);
   const available = Number(balance.availableBalance);
-  const riskAmount = equity * Number(profile.risk_percentage) / 100;
-  const notional = profile.order_size_mode === 'RISK_BASED'
-    ? riskAmount / Math.abs(entry - stop) * entry
-    : Number(profile.fixed_notional_usdt);
-  const rawQuantity = profile.order_size_mode === 'RISK_BASED'
-    ? riskAmount / Math.abs(entry - stop)
-    : notional / entry;
-  let quantity = floorToStep(rawQuantity, step);
-  let numericQuantity = Number(quantity);
-  let roundedNotional = numericQuantity * Math.min(entry, markPrice);
-  if (
-    roundedNotional < minNotional &&
-    profile.order_size_mode === 'FIXED' &&
-    notional >= minNotional &&
-    minNotional > 0
-  ) {
-    const minValidQty = ceilToStep((minNotional * 1.005) / Math.min(entry, markPrice), step);
-    const minValidNum = Number(minValidQty);
-    if (
-      Number.isFinite(minValidNum) &&
-      minValidNum * entry <= notional * 1.15 &&
-      minValidNum >= minQty &&
-      minValidNum <= maxQty
-    ) {
-      quantity = minValidQty;
-      numericQuantity = minValidNum;
-      roundedNotional = numericQuantity * Math.min(entry, markPrice);
-    }
+  
+  const maxNotionalCap = Math.min(Number(profile.max_notional_usdt ?? 100.00), 100.00);
+  const maxRiskPct = Math.min(Number(profile.risk_percentage || 0.5), 0.5);
+  const riskAmount = equity * maxRiskPct / 100;
+
+  let calculatedNotional: number;
+  if (profile.order_size_mode === 'RISK_BASED') {
+    const rawRiskNotional = (riskAmount / Math.abs(entry - stop)) * entry;
+    calculatedNotional = Math.min(rawRiskNotional, maxNotionalCap);
+  } else {
+    calculatedNotional = Math.min(Number(profile.fixed_notional_usdt), maxNotionalCap);
   }
+
+  const rawQuantity = calculatedNotional / entry;
+  const quantity = floorToStep(rawQuantity, step);
+  const numericQuantity = Number(quantity);
+  const roundedNotional = numericQuantity * Math.min(entry, markPrice);
   const orderNotionalAtEntry = numericQuantity * entry;
-  if (numericQuantity < minQty || numericQuantity > maxQty || roundedNotional < minNotional) {
-    throw new BinanceFuturesError('Calculated order does not meet Binance quantity or notional limits.', 422);
+
+  // Defensive skip logic: never expand orders beyond risk ceilings to meet exchange minimums
+  if (numericQuantity < minQty || roundedNotional < minNotional) {
+    throw new BinanceFuturesError(
+      `Calculated order quantity (${numericQuantity}) or notional (${roundedNotional.toFixed(2)} USDT) does not meet Binance minimums (minQty: ${minQty}, minNotional: ${minNotional} USDT) within the risk ceiling (${maxNotionalCap} USDT). Trade safely skipped.`,
+      422,
+    );
   }
-  if (!Number.isFinite(available) || orderNotionalAtEntry / profile.leverage > available) {
+  if (numericQuantity > maxQty || orderNotionalAtEntry > maxNotionalCap * 1.05) {
+    throw new BinanceFuturesError(
+      `Calculated order quantity (${numericQuantity}) or notional (${orderNotionalAtEntry.toFixed(2)} USDT) exceeds maximum limits (maxQty: ${maxQty}, maxNotional: ${maxNotionalCap} USDT). Trade skipped.`,
+      422,
+    );
+  }
+  if (!Number.isFinite(available) || orderNotionalAtEntry / effectiveLeverage > available) {
     throw new BinanceFuturesError('Available Futures balance is insufficient for this order and leverage.', 422);
   }
 
-  const stopPrice = signal.side === 'LONG' ? ceilToStep(stop, tick) : floorToStep(stop, tick);
-  const fullPositionTarget = Number(getFullPositionTakeProfit(signal));
-  const targetPrice = signal.side === 'LONG' ? floorToStep(fullPositionTarget, tick) : ceilToStep(fullPositionTarget, tick);
+  // Check total open positions limit across symbols (Max 1 open position for safe testing)
+  const openPositionsRaw: unknown = await adapter.request('GET', '/fapi/v3/positionRisk');
+  const allPositions = z.array(z.object({
+    symbol: z.string(),
+    positionAmt: z.string().regex(/^-?\d+(?:\.\d+)?$/),
+  })).safeParse(openPositionsRaw);
+  if (allPositions.success) {
+    const activeCount = allPositions.data.filter((p) => Number(p.positionAmt) !== 0).length;
+    const maxAllowedPositions = Math.min(profile.max_open_positions ?? 1, 1);
+    if (activeCount >= maxAllowedPositions) {
+      throw new BinanceFuturesError(`Maximum open positions limit reached (${activeCount}/${maxAllowedPositions}). Trade skipped.`, 409);
+    }
+  }
+
+  // Adaptive Smart Protection & Smart Entry Filters
+  let calculatedStop = stop;
+  let calculatedTp1 = Number(signal.tp1);
+  let calculatedTp2 = Number(signal.tp2);
+  let calculatedTp3 = Number(signal.tp3 || signal.tp2);
+
+  if (profile.adaptive_protection_enabled !== false) {
+    try {
+      const klinesRaw: unknown = await adapter.request('GET', '/fapi/v1/klines', {
+        symbol: signal.symbol,
+        interval: '1m',
+        limit: '50',
+      });
+      if (Array.isArray(klinesRaw) && klinesRaw.length >= 20) {
+        const candles: MarketCandle[] = klinesRaw.map((k: unknown) => {
+          const item = k as Array<string | number>;
+          return {
+            openTime: Number(item[0]),
+            open: Number(item[1]),
+            high: Number(item[2]),
+            low: Number(item[3]),
+            close: Number(item[4]),
+            volume: Number(item[5]),
+            closeTime: Number(item[6]),
+          };
+        });
+
+        const filterEval = validateSmartEntryFilters({
+          candles,
+          side: signal.side,
+        });
+        if (!filterEval.passed) {
+          throw new BinanceFuturesError(
+            `Smart entry filter rejected setup: ${filterEval.reasons.join(', ')}`,
+            422,
+          );
+        }
+
+        const adaptiveMode = profile.sl_mode || 'ADAPTIVE_SMART';
+        const adaptive = computeAdaptiveProtection({
+          candles,
+          side: signal.side,
+          entryPrice: entry,
+          baselineStop: stop,
+          baselineTp1: Number(signal.tp1),
+          baselineTp2: Number(signal.tp2),
+          baselineTp3: Number(signal.tp3 || signal.tp2),
+          mode: adaptiveMode,
+          tickSize: tick,
+        });
+
+        if (!adaptive.isValid) {
+          throw new BinanceFuturesError(
+            `Adaptive protection rejected setup: ${adaptive.rejectionReason}`,
+            422,
+          );
+        }
+
+        calculatedStop = adaptive.stopLoss;
+        calculatedTp1 = adaptive.tp1;
+        calculatedTp2 = adaptive.tp2;
+        calculatedTp3 = adaptive.tp3;
+      }
+    } catch (klineErr) {
+      if (klineErr instanceof BinanceFuturesError) throw klineErr;
+      console.warn('[computeOrder] Adaptive protection kline warning, falling back to baseline:', klineErr);
+    }
+  }
+
+  const stopPrice = signal.side === 'LONG' ? ceilToStep(calculatedStop, tick) : floorToStep(calculatedStop, tick);
+  const targetPrice = signal.side === 'LONG' ? floorToStep(calculatedTp3, tick) : ceilToStep(calculatedTp3, tick);
+  const tp1Price = signal.side === 'LONG' ? floorToStep(calculatedTp1, tick) : ceilToStep(calculatedTp1, tick);
+  const tp2Price = signal.side === 'LONG' ? floorToStep(calculatedTp2, tick) : ceilToStep(calculatedTp2, tick);
+
   if (
     signal.side === 'LONG'
       ? !(Number(stopPrice) < markPrice && markPrice < Number(targetPrice))
@@ -640,10 +821,12 @@ async function computeOrder(
     adapter,
     quantity,
     notionalUsdt: orderNotionalAtEntry.toFixed(8),
-    leverage: profile.leverage,
+    leverage: effectiveLeverage,
     markPrice: markPrice.toString(),
     stopPrice,
     targetPrice,
+    tp1Price,
+    tp2Price,
   };
 }
 
@@ -654,19 +837,23 @@ async function updateExecution(
   environment: TradingEnvironment,
   status: string,
   fields: {
-  fillPrice?: string;
-  orderId?: string;
-  tpOrderId?: string;
-  slOrderId?: string;
-  trailingOrderId?: string;
-  error?: string;
-},
+    fillPrice?: string;
+    exitFillPrice?: string;
+    commissionUsdt?: number;
+    orderId?: string;
+    tpOrderId?: string;
+    slOrderId?: string;
+    trailingOrderId?: string;
+    error?: string;
+  },
   reconcileLockToken?: string,
 ) {
   const result = await query<{ id: string }>(
     `UPDATE public.trade_executions
         SET execution_status = $2::TEXT,
             actual_fill_price = COALESCE($3::NUMERIC, actual_fill_price),
+            exit_fill_price = COALESCE($13::NUMERIC, exit_fill_price),
+            commission_usdt = COALESCE($14::NUMERIC, commission_usdt),
             binance_order_id = COALESCE($4, binance_order_id),
             tp_order_id = COALESCE($5, tp_order_id),
             sl_order_id = COALESCE($6, sl_order_id),
@@ -687,6 +874,7 @@ async function updateExecution(
       id, status, fields.fillPrice ?? null, fields.orderId ?? null, fields.tpOrderId ?? null,
       fields.slOrderId ?? null, fields.trailingOrderId ?? null, fields.error ?? null,
       userId, strategy, environment, reconcileLockToken ?? null,
+      fields.exitFillPrice ?? null, fields.commissionUsdt ?? null,
     ],
   );
   if (!result.rows[0]) throw new BinanceFuturesError('Execution record scope changed; lifecycle update was not applied.', 409);
@@ -801,7 +989,7 @@ export async function executeSignal(
     [
       userId, signal.id, environment, strategy, signal.symbol, signal.side, signal.entry_price, prepared.quantity,
       prepared.notionalUsdt, prepared.leverage, prepared.stopPrice, prepared.targetPrice,
-      signal.tp1, signal.tp2, signal.tp3, clientOrderId, stopClientAlgoId, targetClientAlgoId,
+      prepared.tp1Price ?? signal.tp1, prepared.tp2Price ?? signal.tp2, prepared.targetPrice ?? signal.tp3, clientOrderId, stopClientAlgoId, targetClientAlgoId,
       trailingClientAlgoId, mode,
     ],
   );
@@ -953,11 +1141,19 @@ export async function executeSignal(
       });
       return { id: executionId, status: 'FAILED' as const };
     }
-    const fillPrice = orderDetails.avgPrice && Number(orderDetails.avgPrice) > 0
-      ? numericString(orderDetails.avgPrice)
-      : (Number(orderDetails.cumQuote ?? 0) / filledQuantity).toString();
+    const actualFill = await resolveActualFill(
+      adapter,
+      signal.symbol,
+      String(orderDetails.orderId),
+      clientOrderId,
+    );
+    const fillPrice = actualFill.fillPrice;
     orderId = String(orderDetails.orderId);
-    await updateExecution(executionId, userId, strategy, environment, 'ENTRY_FILLED', { fillPrice, orderId });
+    await updateExecution(executionId, userId, strategy, environment, 'ENTRY_FILLED', {
+      fillPrice,
+      orderId,
+      commissionUsdt: actualFill.commissionUsdt,
+    });
 
     const tickSize = filterValue(prepared.info, 'PRICE_FILTER', 'tickSize');
     if (!tickSize) throw new BinanceFuturesError('Binance returned no price tick for the trailing activation level.');
@@ -985,9 +1181,9 @@ export async function executeSignal(
       direction: signal.side,
       quantity: numericString(orderDetails.executedQty),
       stopPrice: prepared.stopPrice,
-      tp2Price: signal.tp2,
+      tp2Price: prepared.tp2Price ?? signal.tp2,
       tp3Price: prepared.targetPrice,
-      tp1Price: signal.tp1,
+      tp1Price: prepared.tp1Price ?? signal.tp1,
       tickSize,
     });
     stopOrderId = protection.stopAlgoId;
@@ -1720,7 +1916,7 @@ export async function listUserExecutions(userId: number, input: {
   values.push(limit, (input.page - 1) * limit);
   const rows = await query(
     `SELECT id::TEXT, signal_id::TEXT, exchange, strategy, environment, symbol, side, quantity::TEXT, notional_usdt::TEXT,
-            leverage, entry_price::TEXT, actual_fill_price::TEXT, stop_loss::TEXT,
+            leverage, entry_price::TEXT, actual_fill_price::TEXT, exit_fill_price::TEXT, commission_usdt::TEXT, stop_loss::TEXT,
             take_profit::TEXT, tp1_price::TEXT, tp2_price::TEXT, tp3_price::TEXT,
             protection_status, realized_pnl::TEXT, binance_order_id, tp_order_id, sl_order_id,
             trailing_order_id, tp1_reached_at, tp2_reached_at, closed_at, last_reconciled_at,
@@ -1758,7 +1954,7 @@ export async function listUserExecutions(userId: number, input: {
 export async function getUserExecution(userId: number, id: string) {
   const result = await query(
     `SELECT id::TEXT, signal_id::TEXT, exchange, strategy, environment, symbol, side, quantity::TEXT, notional_usdt::TEXT,
-            leverage, entry_price::TEXT, actual_fill_price::TEXT, stop_loss::TEXT,
+            leverage, entry_price::TEXT, actual_fill_price::TEXT, exit_fill_price::TEXT, commission_usdt::TEXT, stop_loss::TEXT,
             take_profit::TEXT, tp1_price::TEXT, tp2_price::TEXT, tp3_price::TEXT,
             protection_status, realized_pnl::TEXT, binance_order_id, tp_order_id, sl_order_id,
             trailing_order_id, tp1_reached_at, tp2_reached_at, closed_at, last_reconciled_at,

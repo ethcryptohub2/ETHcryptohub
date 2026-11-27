@@ -1391,7 +1391,7 @@ function StandardSignals({
                                 {/* Section 1: Trade Levels & Dynamic Targets */}
                                 <div className="drawer-card">
                                   <h4 className="drawer-card-title">
-                                    <span>🎯 Trade Targets (Dynamic R:R)</span>
+                                    <span>🎯 Trade Targets (Adaptive Smart Protection)</span>
                                     <span style={{ color: '#10b981' }}>R:R {riskRewardRatio}</span>
                                   </h4>
                                   <div className="drawer-metric-row">
@@ -1399,20 +1399,24 @@ function StandardSignals({
                                     <strong>{entryZone ? `$${formatPrice(entryZone.low)} – $${formatPrice(entryZone.high)}` : item.setup ? `$${formatPrice(item.setup.entryPrice)}` : 'Awaiting confirmation'}</strong>
                                   </div>
                                   <div className="drawer-metric-row">
-                                    <span>Invalidation / Stop Loss:</span>
+                                    <span>Adaptive Stop Loss (Structure + ATR):</span>
                                     <strong style={{ color: '#ef4444' }}>{item.setup ? `$${formatPrice(item.setup.initialStop)}` : '—'}</strong>
                                   </div>
                                   <div className="drawer-metric-row">
-                                    <span>Take Profit 1 (1.5R):</span>
+                                    <span>Take Profit 1 (1.0R Level):</span>
                                     <strong style={{ color: '#10b981' }}>{item.setup?.tp1 ? `$${formatPrice(item.setup.tp1)}` : '—'}</strong>
                                   </div>
                                   <div className="drawer-metric-row">
-                                    <span>Take Profit 2 (2.5R):</span>
+                                    <span>Take Profit 2 (1.75R Runner):</span>
                                     <strong style={{ color: '#10b981' }}>{item.setup?.tp2 ? `$${formatPrice(item.setup.tp2)}` : '—'}</strong>
                                   </div>
                                   <div className="drawer-metric-row">
-                                    <span>Take Profit 3 (4.0R Close):</span>
+                                    <span>Take Profit 3 (2.75R Full Close):</span>
                                     <strong style={{ color: '#10b981' }}>{item.setup?.tp3 ? `$${formatPrice(item.setup.tp3)}` : '—'}</strong>
+                                  </div>
+                                  <div className="drawer-metric-row">
+                                    <span>Protection Status:</span>
+                                    <span style={{ fontSize: 10, padding: '2px 6px', borderRadius: 4, background: '#f0fdf4', color: '#166534', fontWeight: 700 }}>ADAPTIVE SMART ARMED</span>
                                   </div>
                                 </div>
 
@@ -1525,7 +1529,11 @@ function StandardSignals({
           </div>
         ) : (
           <div style={{ textAlign: 'center', padding: '32px 16px' }}>
-            {filterTab === 'ready' && !tableSearch ? (
+            {!data || error ? (
+              <p className="muted" role="status">
+                {loading ? 'Loading saved scanner results…' : 'Scanner results are unavailable. Refresh to check again.'}
+              </p>
+            ) : filterTab === 'ready' && !tableSearch ? (
               <ScannerRadar
                 state={isScanning ? 'SCANNING' : (scanResult ? (scanResult.qualifiedCount > 0 ? 'SCAN_COMPLETED' : 'NO_QUALIFIED_SIGNALS') : (loading ? 'FETCHING_MARKET_DATA' : 'WAITING'))}
                 scannedCount={scanResult?.scannedCount ?? candidates.length}

@@ -152,6 +152,7 @@ const fixedDemoSignedPaths = {
     '/fapi/v3/positionRisk',
     '/fapi/v1/positionSide/dual',
     '/fapi/v1/order',
+    '/fapi/v1/userTrades',
     '/fapi/v1/algoOrder',
     '/fapi/v1/openAlgoOrders',
   ]),

@@ -137,7 +137,7 @@ export function verifyBinanceAlgoOrder(
   if (!parsed.success) return null;
   const actual = parsed.data;
   if (
-    actual.algoStatus !== 'NEW' ||
+    (actual.algoStatus !== 'NEW' && actual.algoStatus !== 'WORKING') ||
     actual.clientAlgoId !== expected.clientAlgoId ||
     actual.algoType !== expected.algoType ||
     actual.symbol !== expected.symbol ||
@@ -152,7 +152,6 @@ export function verifyBinanceAlgoOrder(
       !sameDecimal(actual.triggerPrice, expected.triggerPrice) ||
       actual.workingType !== expected.workingType ||
       String(actual.closePosition).toLowerCase() !== 'true' ||
-      (actual.reduceOnly !== undefined && String(actual.reduceOnly).toLowerCase() === 'true') ||
       (actual.quantity !== undefined && !sameDecimal(actual.quantity, '0'))
     ) return null;
   } else if (
@@ -221,6 +220,7 @@ export async function cancelBinanceAlgoOrder(
 export async function submitAndVerifyBinanceAlgoOrder(
   adapter: BinanceAlgoAdapter,
   parameters: BinanceAlgoParameters,
+  options: { maxQueryRetries?: number; retryDelayMs?: number } = {},
 ): Promise<string> {
   const validated = validateBinanceAlgoParameters(parameters);
   let algoId: string | undefined;
@@ -244,25 +244,49 @@ export async function submitAndVerifyBinanceAlgoOrder(
     submitError = error;
   }
 
+  const maxRetries = options.maxQueryRetries ?? 3;
+  const initialDelay = options.retryDelayMs ?? 250;
   let reconciled: unknown;
-  try {
-    reconciled = await queryBinanceAlgoOrder(
-      adapter,
-      validated.symbol,
-      algoId ? { algoId } : { clientAlgoId: validated.clientAlgoId },
-    );
-  } catch (queryError) {
-    if (submitError === undefined) throw queryError;
-    const queryCode = typeof queryError === 'object' && queryError !== null && 'exchangeCode' in queryError
-      ? queryError.exchangeCode
+  let lastQueryError: unknown;
+
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    try {
+      reconciled = await queryBinanceAlgoOrder(
+        adapter,
+        validated.symbol,
+        algoId ? { algoId } : { clientAlgoId: validated.clientAlgoId },
+      );
+      if (reconciled) {
+        lastQueryError = undefined;
+        break;
+      }
+    } catch (queryError) {
+      lastQueryError = queryError;
+      const queryCode = typeof queryError === 'object' && queryError !== null && 'exchangeCode' in queryError
+        ? queryError.exchangeCode
+        : undefined;
+      // If order was submitted and returned -2013 or -1021, retry with backoff to handle indexing latency
+      if (attempt < maxRetries && (queryCode === -2013 || queryCode === -1021)) {
+        await new Promise((resolve) => setTimeout(resolve, initialDelay * Math.pow(2, attempt)));
+        continue;
+      }
+      break;
+    }
+  }
+
+  if (lastQueryError !== undefined) {
+    if (submitError === undefined) throw lastQueryError;
+    const queryCode = typeof lastQueryError === 'object' && lastQueryError !== null && 'exchangeCode' in lastQueryError
+      ? lastQueryError.exchangeCode
       : undefined;
     const submitMessage = submitError instanceof Error ? submitError.message : 'Unknown submission error.';
     if (queryCode === -2013) throw submitError;
-    const queryMessage = queryError instanceof Error ? queryError.message : 'Unknown query error.';
+    const queryMessage = lastQueryError instanceof Error ? lastQueryError.message : 'Unknown query error.';
     throw new BinanceAlgoOrderError(
       `Algo order outcome is unknown. Submission failed (${submitMessage}); query failed (${queryMessage}). Do not submit a duplicate.`,
     );
   }
+
   const verifiedAlgoId = verifyBinanceAlgoOrder(reconciled, validated);
   if (!verifiedAlgoId || (algoId !== undefined && verifiedAlgoId !== algoId)) {
     throw new BinanceAlgoOrderError(

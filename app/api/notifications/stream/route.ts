@@ -38,6 +38,8 @@ export async function GET(request: NextRequest) {
                JOIN public.signal_events e ON e.id = n.event_id
                JOIN public.market_signals s ON s.id = n.signal_id
               WHERE n.user_id = $1 AND n.created_at > $2::TIMESTAMPTZ
+                AND (e.actor_user_id = n.user_id OR
+                  (e.actor_user_id IS NULL AND e.event_type NOT IN ('ENTRY_MARKED_AS_ENTERED', 'TRADE_CLOSED')))
               ORDER BY n.created_at ASC LIMIT 20`,
             [userId, lastCheckedTime],
           );

@@ -12,6 +12,10 @@ export type StrategyProfile = {
   risk_percentage: string;
   order_size_mode: 'FIXED' | 'RISK_BASED';
   fixed_notional_usdt: string;
+  max_notional_usdt?: string;
+  sl_mode?: 'BASELINE' | 'ATR' | 'MARKET_STRUCTURE' | 'ADAPTIVE_SMART';
+  adaptive_protection_enabled?: boolean;
+  trailing_protection_enabled?: boolean;
   leverage: number;
   max_open_positions: number | null;
   max_daily_loss_percent: string | null;
@@ -73,7 +77,12 @@ export async function getStrategyProfiles(userId: number): Promise<StrategyProfi
   await ensureUserProfiles(userId);
   const result = await query<StrategyRow>(
     `SELECT strategy, exchange, environment, enabled, execution_mode, risk_percentage::TEXT,
-            order_size_mode, fixed_notional_usdt::TEXT, leverage, max_open_positions,
+            order_size_mode, fixed_notional_usdt::TEXT,
+            COALESCE(max_notional_usdt, 100.00)::TEXT AS max_notional_usdt,
+            COALESCE(sl_mode, 'ADAPTIVE_SMART') AS sl_mode,
+            COALESCE(adaptive_protection_enabled, true) AS adaptive_protection_enabled,
+            COALESCE(trailing_protection_enabled, true) AS trailing_protection_enabled,
+            leverage, max_open_positions,
             max_daily_loss_percent::TEXT, auto_execution_enabled, emergency_stop_enabled, updated_at
        FROM public.user_strategy_settings
       WHERE user_id = $1
@@ -118,9 +127,10 @@ export async function saveStrategyProfile(userId: number, profile: StrategyProfi
   const result = await query<StrategyRow>(
     `INSERT INTO public.user_strategy_settings (
        user_id, strategy, exchange, environment, enabled, execution_mode, risk_percentage,
-       order_size_mode, fixed_notional_usdt, leverage, max_open_positions,
+       order_size_mode, fixed_notional_usdt, max_notional_usdt, sl_mode, adaptive_protection_enabled,
+       trailing_protection_enabled, leverage, max_open_positions,
        max_daily_loss_percent, auto_execution_enabled, emergency_stop_enabled, updated_at
-     ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, NOW())
+     ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, NOW())
      ON CONFLICT (user_id, strategy) DO UPDATE SET
        exchange = EXCLUDED.exchange,
        environment = EXCLUDED.environment,
@@ -129,6 +139,10 @@ export async function saveStrategyProfile(userId: number, profile: StrategyProfi
        risk_percentage = EXCLUDED.risk_percentage,
        order_size_mode = EXCLUDED.order_size_mode,
        fixed_notional_usdt = EXCLUDED.fixed_notional_usdt,
+       max_notional_usdt = EXCLUDED.max_notional_usdt,
+       sl_mode = EXCLUDED.sl_mode,
+       adaptive_protection_enabled = EXCLUDED.adaptive_protection_enabled,
+       trailing_protection_enabled = EXCLUDED.trailing_protection_enabled,
        leverage = EXCLUDED.leverage,
        max_open_positions = EXCLUDED.max_open_positions,
        max_daily_loss_percent = EXCLUDED.max_daily_loss_percent,
@@ -136,12 +150,22 @@ export async function saveStrategyProfile(userId: number, profile: StrategyProfi
        emergency_stop_enabled = EXCLUDED.emergency_stop_enabled,
        updated_at = NOW()
      RETURNING strategy, exchange, environment, enabled, execution_mode, risk_percentage::TEXT,
-       order_size_mode, fixed_notional_usdt::TEXT, leverage, max_open_positions,
+       order_size_mode, fixed_notional_usdt::TEXT,
+       COALESCE(max_notional_usdt, 100.00)::TEXT AS max_notional_usdt,
+       COALESCE(sl_mode, 'ADAPTIVE_SMART') AS sl_mode,
+       COALESCE(adaptive_protection_enabled, true) AS adaptive_protection_enabled,
+       COALESCE(trailing_protection_enabled, true) AS trailing_protection_enabled,
+       leverage, max_open_positions,
        max_daily_loss_percent::TEXT, auto_execution_enabled, emergency_stop_enabled, updated_at`,
     [
       userId, profile.strategy, profile.exchange, profile.environment,
       profile.enabled, profile.execution_mode, profile.risk_percentage,
-      profile.order_size_mode, profile.fixed_notional_usdt, profile.leverage,
+      profile.order_size_mode, profile.fixed_notional_usdt,
+      profile.max_notional_usdt ?? '100.00',
+      profile.sl_mode ?? 'ADAPTIVE_SMART',
+      profile.adaptive_protection_enabled ?? true,
+      profile.trailing_protection_enabled ?? true,
+      profile.leverage,
       profile.max_open_positions, profile.max_daily_loss_percent,
       profile.auto_execution_enabled, profile.emergency_stop_enabled,
     ],

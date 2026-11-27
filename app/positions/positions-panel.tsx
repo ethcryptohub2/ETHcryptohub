@@ -19,6 +19,8 @@ type ExecutionItem = {
   leverage: number;
   entry_price: string;
   actual_fill_price: string | null;
+  exit_fill_price?: string | null;
+  commission_usdt?: string | null;
   stop_loss: string;
   take_profit: string;
   tp1_price: string;
@@ -242,7 +244,25 @@ export function PositionsPanel() {
                           {exec.side}
                         </span>
                       </td>
-                      <td>{exec.actual_fill_price && Number(exec.actual_fill_price) > 0 ? formatPrice(exec.actual_fill_price) : 'Pending confirmation'}</td>
+                      <td>
+                        {exec.actual_fill_price && Number(exec.actual_fill_price) > 0 ? (
+                          <>
+                            <div>{formatPrice(exec.actual_fill_price)}</div>
+                            {exec.exit_fill_price && Number(exec.exit_fill_price) > 0 && (
+                              <small style={{ display: 'block', fontSize: 10, color: 'var(--text-muted)' }}>
+                                Exit: {formatPrice(exec.exit_fill_price)}
+                              </small>
+                            )}
+                            {exec.commission_usdt && Number(exec.commission_usdt) > 0 && (
+                              <small style={{ display: 'block', fontSize: 9, color: 'var(--text-muted)' }}>
+                                Fee: ${Number(exec.commission_usdt).toFixed(4)}
+                              </small>
+                            )}
+                          </>
+                        ) : (
+                          <span style={{ color: 'var(--text-muted)', fontSize: 11 }}>Pending</span>
+                        )}
+                      </td>
                       <td>
                         {formatPrice(exec.quantity)}
                         <small style={{ display: 'block', fontSize: 10, color: 'var(--text-muted)' }}>
@@ -261,8 +281,16 @@ export function PositionsPanel() {
                             fontSize: 10,
                             fontWeight: 600,
                             fontFamily: 'DM Mono',
-                            background: exec.execution_status === 'PROTECTED' ? '#f0fdf4' : exec.execution_status === 'CLOSED' ? 'var(--surface-raised)' : '#fef2f2',
-                            color: exec.execution_status === 'PROTECTED' ? '#166534' : exec.execution_status === 'CLOSED' ? 'var(--text-muted)' : '#991b1b',
+                            background:
+                              exec.execution_status === 'PROTECTED' ? '#f0fdf4' :
+                              exec.execution_status === 'ENTRY_FILLED' ? '#fefce8' :
+                              exec.execution_status === 'EXECUTING' ? '#eff6ff' :
+                              exec.execution_status === 'CLOSED' ? 'var(--surface-raised)' : '#fef2f2',
+                            color:
+                              exec.execution_status === 'PROTECTED' ? '#166534' :
+                              exec.execution_status === 'ENTRY_FILLED' ? '#854d0e' :
+                              exec.execution_status === 'EXECUTING' ? '#1e40af' :
+                              exec.execution_status === 'CLOSED' ? 'var(--text-muted)' : '#991b1b',
                           }}
                         >
                           {exec.execution_status}

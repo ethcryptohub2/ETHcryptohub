@@ -13,7 +13,7 @@ type DemoBalance = {
   synchronizedAt?: string;
 };
 
-export function BinanceForm({ onCredentialChange }: { onCredentialChange?: () => void } = {}) {
+export function BinanceForm() {
   const [environment, setEnvironment] = useState<Environment>('DEMO');
   const [configured, setConfigured] = useState(false);
   const [environmentConfirmationRequired, setEnvironmentConfirmationRequired] = useState(false);
@@ -77,7 +77,6 @@ export function BinanceForm({ onCredentialChange }: { onCredentialChange?: () =>
         if (!controller.signal.aborted && data) {
           setDemoBalance(data);
           setBalanceError('');
-          setLastVerifiedAt((prev) => prev ?? data.synchronizedAt ?? new Date().toISOString());
         }
       })
       .catch((err) => {
@@ -135,7 +134,7 @@ export function BinanceForm({ onCredentialChange }: { onCredentialChange?: () =>
         }),
       });
       const body = (await response.json()) as {
-        data?: { configured?: boolean; connected?: boolean; environment?: Environment };
+        data?: { configured?: boolean; connected?: boolean; environment?: Environment; lastVerifiedAt?: string };
         code?: string;
         error?: string;
       };
@@ -170,21 +169,25 @@ export function BinanceForm({ onCredentialChange }: { onCredentialChange?: () =>
       const label = environment === 'DEMO' ? 'Demo' : 'Live';
       if (action === 'test') {
         if (body.data?.connected !== true) throw new Error('Binance returned no account verification result.');
-        setLastVerifiedAt(new Date().toISOString());
+        setLastVerifiedAt(body.data.lastVerifiedAt ?? null);
         setBalanceError('');
-        setMessage(`✓ ${label} Binance account-read permission verified. Virtual balance accessible. No orders were placed.`);
-        fetch('/api/binance/futures/balance?environment=DEMO', { cache: 'no-store' })
-          .then(async (res) => {
-            const bal = (await res.json()) as { data?: DemoBalance };
-            if (res.ok && bal.data) setDemoBalance(bal.data);
-          })
-          .catch(() => {});
+        setMessage(`✓ ${label} Binance account-read permission verified. No orders were placed.`);
+        try {
+          const balanceResponse = await fetch('/api/binance/futures/balance?environment=DEMO', { cache: 'no-store' });
+          const balance = (await balanceResponse.json()) as { data?: DemoBalance; error?: string };
+          if (!balanceResponse.ok || !balance.data) {
+            throw new Error(balance.error ?? 'Binance Demo balance snapshot unavailable.');
+          }
+          setDemoBalance(balance.data);
+        } catch (reason) {
+          setDemoBalance(null);
+          setBalanceError(reason instanceof Error ? reason.message : 'Balance unavailable');
+        }
       } else if (action === 'remove') {
         setMessage(`${label} credentials removed.`);
       } else {
         setMessage(`${label} credentials encrypted and saved with AES-256-GCM.`);
       }
-      onCredentialChange?.();
       if (typeof window !== 'undefined') {
         window.dispatchEvent(new Event('smartexit-exchange-credential-synced'));
       }
@@ -236,7 +239,7 @@ export function BinanceForm({ onCredentialChange }: { onCredentialChange?: () =>
         >
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 8 }}>
             <span className="mono" style={{ fontWeight: 600, color: 'var(--accent)' }}>
-              BINANCE FUTURES DEMO &amp; TESTNET SANDBOX
+              BINANCE FUTURES DEMO SANDBOX
             </span>
             <span
               style={{
@@ -249,11 +252,11 @@ export function BinanceForm({ onCredentialChange }: { onCredentialChange?: () =>
                 color: configured ? '#166534' : 'var(--text-muted)',
               }}
             >
-              {configured
+              {!storageReady ? 'STATUS UNAVAILABLE' : configured
                 ? lastVerifiedAt
-                  ? '✓ CONNECTED & VERIFIED'
-                  : '● CONFIGURED'
-                : '○ NOT CONFIGURED'}
+                  ? 'ACCOUNT READ VERIFIED'
+                  : 'KEYS SAVED'
+                : 'NO CONFIRMED KEYS'}
             </span>
           </div>
           <p className="muted" style={{ margin: 0, fontSize: 13 }}>
@@ -291,7 +294,7 @@ export function BinanceForm({ onCredentialChange }: { onCredentialChange?: () =>
             }}
           >
             <span style={{ fontSize: 13, color: 'var(--text-muted)' }}>
-              ○ <strong>Not Connected:</strong> No Binance Demo credentials are saved yet.
+              {storageReady ? 'No confirmed Binance Demo credentials are saved.' : 'Binance Demo credential status is unavailable.'}
             </span>
             <small className="muted">Enter API key and secret below to connect virtual sandbox</small>
           </div>
@@ -328,8 +331,8 @@ export function BinanceForm({ onCredentialChange }: { onCredentialChange?: () =>
             <div>
               <small className="muted" style={{ display: 'block', fontSize: 11 }}>POSITIONS &amp; SYNC</small>
               <span style={{ fontSize: 12, fontFamily: 'DM Mono', color: 'var(--text-muted)' }}>
-                {openPositionsCount !== null ? `${openPositionsCount} open · ` : ''}
-                {demoBalance.lastUpdatedAt ? new Date(demoBalance.lastUpdatedAt).toLocaleTimeString() : 'Live'}
+                {openPositionsCount !== null ? `${openPositionsCount} open` : 'Position count unavailable'}
+                {demoBalance.synchronizedAt ? ` · Balance read at ${new Date(demoBalance.synchronizedAt).toLocaleTimeString()}` : ''}
               </span>
             </div>
           </div>
@@ -351,7 +354,7 @@ export function BinanceForm({ onCredentialChange }: { onCredentialChange?: () =>
             </div>
             <p className="muted" style={{ margin: 0, fontSize: 13 }}>
               {balanceError
-                ? `Connection status: ${balanceError}`
+                ? `Balance unavailable: ${balanceError}`
                 : 'Awaiting balance synchronization from Binance Demo API. Click "Test Demo Account Access" below to request an instant connection check.'}
             </p>
           </div>
@@ -418,7 +421,7 @@ export function BinanceForm({ onCredentialChange }: { onCredentialChange?: () =>
               onChange={(e) => setApiKey(e.target.value)}
               minLength={20}
               maxLength={128}
-              placeholder="Paste Binance Futures Demo / Testnet API Key"
+              placeholder="Paste Binance Futures Demo API Key"
               required
             />
           </label>
@@ -432,7 +435,7 @@ export function BinanceForm({ onCredentialChange }: { onCredentialChange?: () =>
               onChange={(e) => setApiSecret(e.target.value)}
               minLength={20}
               maxLength={128}
-              placeholder="Paste Binance Futures Demo / Testnet API Secret"
+              placeholder="Paste Binance Futures Demo API Secret"
               required
             />
           </label>

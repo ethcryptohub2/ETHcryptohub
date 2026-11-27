@@ -533,6 +533,7 @@ async function dispatchSignalEvents(settings: NotificationSystemSettings) {
     id: string;
     signal_id: string;
     event_type: string;
+    actor_user_id: number | null;
     payload: Record<string, unknown>;
     symbol: string;
     side: string;
@@ -544,7 +545,7 @@ async function dispatchSignalEvents(settings: NotificationSystemSettings) {
     tp3: string;
     legacy_signal_event: boolean;
   }>(
-    `SELECT e.id, e.signal_id, e.event_type, e.payload, s.symbol, s.side, s.setup_score,
+    `SELECT e.id, e.signal_id, e.event_type, e.actor_user_id, e.payload, s.symbol, s.side, s.setup_score,
             s.entry_price, s.initial_stop, s.tp1, s.tp2, s.tp3,
             e.event_type = 'SIGNAL_GENERATED' AND EXISTS (
               SELECT 1 FROM public.signal_events legacy
@@ -556,7 +557,9 @@ async function dispatchSignalEvents(settings: NotificationSystemSettings) {
       ORDER BY e.id ASC LIMIT 100`,
   );
   for (const event of events.rows) {
-    if (!settings.enabled || event.legacy_signal_event || event.event_type === 'ENTRY_OPEN') {
+    const personalRecord = event.event_type === 'ENTRY_MARKED_AS_ENTERED' || event.event_type === 'TRADE_CLOSED';
+    if (!settings.enabled || event.legacy_signal_event || event.event_type === 'ENTRY_OPEN' ||
+        (personalRecord && event.actor_user_id == null)) {
       await query('UPDATE public.signal_events SET processed_at = NOW() WHERE id = $1', [event.id]);
       continue;
     }
@@ -584,8 +587,10 @@ async function dispatchSignalEvents(settings: NotificationSystemSettings) {
          LEFT JOIN public.user_notification_preferences p ON p.user_id = u.id
          JOIN public.subscriptions entitlement ON entitlement.user_id = u.id
         WHERE u.is_active = 1 AND u.is_email_verified = 1
+          AND ($1::INTEGER IS NULL OR u.id = $1)
           AND (entitlement.premium_expires_at > NOW()
             OR (entitlement.premium_started_at IS NULL AND entitlement.trial_expires_at > NOW()))`,
+      [event.actor_user_id ?? null],
     );
 
     for (const user of users.rows) {
@@ -667,8 +672,12 @@ async function deliverPendingPushes() {
          SELECT d.notification_id, d.subscription_id
            FROM public.push_delivery_attempts d
            JOIN public.user_signal_notifications n ON n.id = d.notification_id
+           JOIN public.signal_events e ON e.id = n.event_id
+           JOIN public.push_subscriptions p ON p.id = d.subscription_id AND p.user_id = n.user_id
            JOIN public.subscriptions entitlement ON entitlement.user_id = n.user_id
           WHERE d.attempts < 4
+            AND (e.actor_user_id = n.user_id OR
+              (e.actor_user_id IS NULL AND e.event_type NOT IN ('ENTRY_MARKED_AS_ENTERED', 'TRADE_CLOSED')))
             AND (entitlement.premium_expires_at > NOW()
               OR (entitlement.premium_started_at IS NULL AND entitlement.trial_expires_at > NOW()))
             AND (
@@ -713,14 +722,16 @@ async function deliverPendingPushes() {
                 COALESCE(pref.do_not_disturb, FALSE) AS do_not_disturb
            FROM public.push_delivery_attempts d
            JOIN public.user_signal_notifications n ON n.id = d.notification_id
-           JOIN public.push_subscriptions p ON p.id = d.subscription_id
+           JOIN public.push_subscriptions p ON p.id = d.subscription_id AND p.user_id = n.user_id
            JOIN public.signal_events e ON e.id = n.event_id
            JOIN public.market_signals s ON s.id = n.signal_id
            LEFT JOIN public.user_notification_preferences pref ON pref.user_id = n.user_id
           WHERE (d.notification_id, d.subscription_id) IN (
             SELECT item.notification_id, item.subscription_id
             FROM jsonb_to_recordset($1::JSONB) AS item(notification_id BIGINT, subscription_id BIGINT)
-          )`,
+          )
+            AND (e.actor_user_id = n.user_id OR
+              (e.actor_user_id IS NULL AND e.event_type NOT IN ('ENTRY_MARKED_AS_ENTERED', 'TRADE_CLOSED')))`,
         [JSON.stringify(keys)],
       );
       deliveries = rows.rows;

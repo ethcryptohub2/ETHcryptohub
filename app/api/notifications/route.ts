@@ -21,11 +21,18 @@ export async function GET() {
            JOIN public.signal_events e ON e.id = n.event_id
            JOIN public.market_signals s ON s.id = n.signal_id
           WHERE n.user_id = $1
+            AND (e.actor_user_id = n.user_id OR
+              (e.actor_user_id IS NULL AND e.event_type NOT IN ('ENTRY_MARKED_AS_ENTERED', 'TRADE_CLOSED')))
           ORDER BY n.created_at DESC LIMIT 100`,
         [user.id],
       ),
       query<{ count: string }>(
-        'SELECT COUNT(*)::TEXT AS count FROM public.user_signal_notifications WHERE user_id = $1 AND read_at IS NULL',
+        `SELECT COUNT(*)::TEXT AS count
+           FROM public.user_signal_notifications n
+           JOIN public.signal_events e ON e.id = n.event_id
+          WHERE n.user_id = $1 AND n.read_at IS NULL
+            AND (e.actor_user_id = n.user_id OR
+              (e.actor_user_id IS NULL AND e.event_type NOT IN ('ENTRY_MARKED_AS_ENTERED', 'TRADE_CLOSED')))`,
         [user.id],
       ),
     ]);

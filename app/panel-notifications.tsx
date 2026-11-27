@@ -85,7 +85,15 @@ function eventBadge(event: NotificationItem) {
       isExecution: true,
     };
   }
-  if (type.includes('ENTRY_MARKED') || type.includes('ENTERED') || type.includes('FILLED')) {
+  if (type === 'ENTRY_MARKED_AS_ENTERED' || type === 'TRADE_CLOSED') {
+    return {
+      label: type === 'TRADE_CLOSED' ? 'RECORDED TRADE CLOSED' : 'RECORDED ENTRY',
+      color: 'var(--text-secondary)',
+      bg: 'var(--surface-raised)',
+      isSignal: false,
+    };
+  }
+  if (type.includes('FILLED') || type === 'CONFIRMED_DEMO_EXECUTION') {
     return {
       label: 'CONFIRMED EXECUTION',
       color: '#3b82f6',

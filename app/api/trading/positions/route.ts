@@ -14,8 +14,9 @@ const positionSchema = z.array(z.object({
   entryPrice: z.string().regex(/^\d+(?:\.\d+)?$/),
   markPrice: z.string().regex(/^\d+(?:\.\d+)?$/),
   unRealizedProfit: z.string().regex(/^-?\d+(?:\.\d+)?$/),
-  leverage: z.string().regex(/^\d+$/),
-  positionSide: z.string(),
+  // Binance Position Information V3 omits leverage. Some responses still include it.
+  leverage: z.string().regex(/^\d+$/).nullish(),
+  positionSide: z.enum(['BOTH', 'LONG', 'SHORT']),
 }));
 
 export async function GET(request?: NextRequest) {
@@ -32,9 +33,22 @@ export async function GET(request?: NextRequest) {
     if (!parsed.success) throw new BinanceFuturesError('Binance returned an invalid position response.');
     const positions = parsed.data
       .filter((position) => Number(position.positionAmt) !== 0)
-      .map((position) => ({ ...position, environment: settings.active_environment }));
+      .map((position) => ({
+        ...position,
+        entryPrice: Number(position.entryPrice) > 0 ? position.entryPrice : null,
+        leverage: position.leverage && Number(position.leverage) > 0 ? position.leverage : null,
+        direction: position.positionSide === 'BOTH'
+          ? Number(position.positionAmt) > 0 ? 'LONG' : 'SHORT'
+          : position.positionSide,
+        environment: settings.active_environment,
+      }));
     return Response.json({
-      data: { environment: settings.active_environment, virtualFunds: settings.active_environment === 'DEMO', positions },
+      data: {
+        exchange: 'BINANCE',
+        environment: settings.active_environment,
+        virtualFunds: settings.active_environment === 'DEMO',
+        positions,
+      },
     }, { headers: { 'Cache-Control': 'no-store' } });
   } catch (error) {
     const status = error instanceof AuthError || error instanceof BinanceFuturesError ? error.status : 503;

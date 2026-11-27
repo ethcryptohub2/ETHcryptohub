@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useState, type FormEvent } from 'react';
+import { useEffect, useState, type FormEvent } from 'react';
 import { BinanceForm } from './binance-form';
 
 type EnvironmentOption = {
@@ -23,54 +23,25 @@ type CredentialStatus = {
   updatedAt: string | null;
 };
 
-export function getExchangeBadge(params: {
-  exchange: string;
-  environment: string;
-  configured: boolean;
-  lastVerifiedAt?: string | null;
-  hasError?: boolean;
-  switchEnabled?: boolean;
-  isLiveMode?: boolean;
-  adapterComplete?: boolean;
-  lastOrderVerified?: boolean;
-}) {
-  const {
-    exchange,
-    environment,
-    configured,
-    lastVerifiedAt,
-    hasError,
-    switchEnabled = true,
-    isLiveMode = false,
-    adapterComplete = exchange === 'BINANCE' || exchange === 'BYBIT',
-    lastOrderVerified = false,
-  } = params;
+function getExchangeBadge(status?: { configured?: boolean; lastVerifiedAt?: string | null }) {
+  if (status?.configured && status.lastVerifiedAt) {
+    return { label: 'ACCOUNT READ VERIFIED', color: '#15803d', bg: '#f0fdf4' };
+  }
+  const label = !status ? 'STATUS UNAVAILABLE' :
+    status.configured ? 'KEYS SAVED' : 'NO CONFIRMED KEYS';
+  return { label, color: 'var(--text-muted)', bg: 'var(--surface-raised)' };
+}
 
-  if (isLiveMode || environment === 'LIVE') {
-    return { label: '🔒 LIVE LOCKED', color: '#991b1b', bg: '#fee2e2' };
-  }
-  if (!switchEnabled) {
-    return { label: '○ DISABLED', color: 'var(--text-muted)', bg: 'var(--surface-raised)' };
-  }
-  if (!configured) {
-    return { label: '○ NOT CONFIGURED', color: '#6b7280', bg: 'var(--surface-raised)' };
-  }
-  if (hasError) {
-    return { label: '✕ CREDENTIALS INVALID', color: '#b91c1c', bg: '#fef2f2' };
-  }
-  if (!adapterComplete) {
-    return { label: '⚠ ADAPTER INCOMPLETE', color: '#b45309', bg: '#fffbeb' };
-  }
-  if (lastOrderVerified) {
-    return { label: '✓ DEMO ORDER VERIFIED', color: '#047857', bg: '#ecfdf5' };
-  }
-  if (lastVerifiedAt && switchEnabled) {
-    return { label: '● DEMO EXECUTION ENABLED', color: '#166534', bg: '#f0fdf4' };
-  }
-  if (lastVerifiedAt) {
-    return { label: '● DEMO CONNECTED', color: '#15803d', bg: '#f0fdf4' };
-  }
-  return { label: '● CONFIGURED', color: '#15803d', bg: '#f0fdf4' };
+const sandboxProviders = [
+  { id: 'BINANCE', name: 'Binance', environment: 'DEMO' },
+  { id: 'BYBIT', name: 'Bybit', environment: 'DEMO' },
+  { id: 'OKX', name: 'OKX', environment: 'DEMO' },
+  { id: 'BITGET', name: 'Bitget', environment: 'DEMO' },
+  { id: 'GATE', name: 'Gate.io', environment: 'TESTNET' },
+] as const;
+
+function sandboxEnvironment(exchange: ExchangeOption) {
+  return exchange.environments.find((environment) => environment.environment === (exchange.exchange === 'GATE' ? 'TESTNET' : 'DEMO'));
 }
 
 async function getCsrfToken() {
@@ -108,15 +79,11 @@ function GenericExchangeCredentials({
   name,
   environment,
   requiresPassphrase = false,
-  switchEnabled = true,
-  onCredentialChange,
 }: {
   exchange: string;
   name: string;
   environment: 'DEMO' | 'TESTNET';
   requiresPassphrase?: boolean;
-  switchEnabled?: boolean;
-  onCredentialChange?: () => void;
 }) {
   const [status, setStatus] = useState<CredentialStatus | null>(null);
   const [apiKey, setApiKey] = useState('');
@@ -126,16 +93,7 @@ function GenericExchangeCredentials({
   const [error, setError] = useState('');
   const [message, setMessage] = useState('');
 
-  const badgeInfo = getExchangeBadge({
-    exchange,
-    environment,
-    configured: Boolean(status?.configured),
-    lastVerifiedAt: status?.lastVerifiedAt,
-    hasError: Boolean(error),
-    switchEnabled,
-    isLiveMode: false,
-    adapterComplete: exchange === 'BINANCE' || exchange === 'BYBIT',
-  });
+  const badgeInfo = getExchangeBadge(status ?? undefined);
 
   useEffect(() => {
     let active = true;
@@ -194,7 +152,6 @@ function GenericExchangeCredentials({
             ? `${name} ${environment} credentials removed.`
             : `${name} ${environment} credentials encrypted and saved with AES-256-GCM.`,
       );
-      onCredentialChange?.();
       if (typeof window !== 'undefined') {
         window.dispatchEvent(new Event('smartexit-exchange-credential-synced'));
       }
@@ -241,7 +198,7 @@ function GenericExchangeCredentials({
         </div>
         <h3 style={{ margin: '4px 0 0' }}>{name} {environment} API Configuration</h3>
         <p className="muted" style={{ margin: 0, fontSize: 13 }}>
-          {status?.configured
+          {!status ? 'Credential status is unavailable until the account check completes.' : status.configured
             ? `Configured ${status.maskedApiKey ?? ''} · ${status.lastVerifiedAt ? `Last verified ${new Date(status.lastVerifiedAt).toLocaleString()}` : 'Not tested yet'}`
             : status?.environmentConfirmationRequired
               ? `A legacy credential exists. Re-enter a dedicated ${name} ${environment} key before connecting.`
@@ -333,133 +290,71 @@ function GenericExchangeCredentials({
 }
 
 export function ExchangeConnections() {
-  const [exchanges, setExchanges] = useState<ExchangeOption[]>([
-    {
-      exchange: 'BINANCE',
-      name: 'Binance',
-      environments: [
-        { environment: 'DEMO', enabled: true, supported: true, available: true, customerTradingReady: true },
-        { environment: 'LIVE', enabled: false, supported: true, available: false, customerTradingReady: false },
-      ],
-    },
-    { exchange: 'BYBIT', name: 'Bybit', environments: [{ environment: 'DEMO', enabled: true, supported: true, available: true, customerTradingReady: true }] },
-    { exchange: 'OKX', name: 'OKX', environments: [{ environment: 'DEMO', enabled: true, supported: true, available: true, customerTradingReady: true }] },
-    { exchange: 'BITGET', name: 'Bitget', environments: [{ environment: 'DEMO', enabled: true, supported: true, available: true, customerTradingReady: true }] },
-    { exchange: 'GATE', name: 'Gate.io', environments: [{ environment: 'TESTNET', enabled: true, supported: true, available: true, customerTradingReady: true }] },
-  ]);
-  const [selected, setSelected] = useState('BINANCE');
+  const [exchanges, setExchanges] = useState<ExchangeOption[]>([]);
+  const [selected, setSelected] = useState<(typeof sandboxProviders)[number]['id']>('BINANCE');
   const [error, setError] = useState('');
   const [activeMode, setActiveMode] = useState<'demo' | 'live'>('demo');
-  const [exchangeSwitches, setExchangeSwitches] = useState<Record<string, boolean>>(() => {
-    const defaults: Record<string, boolean> = {
-      BINANCE: true,
-      BYBIT: true,
-      OKX: false,
-      BITGET: false,
-      GATE: true,
-    };
-    if (typeof window === 'undefined') return defaults;
-    try {
-      const stored = window.localStorage.getItem('smartexit_exchange_switches');
-      if (stored) return { ...defaults, ...(JSON.parse(stored) as Record<string, boolean>) };
-    } catch {}
-    return defaults;
-  });
+  const [pendingSwitch, setPendingSwitch] = useState<string | null>(null);
 
-  const toggleExchangeSwitch = (exchangeId: string) => {
-    const nextValue = !exchangeSwitches[exchangeId];
-    const targetEnv = exchangeId === 'GATE' ? 'TESTNET' : 'DEMO';
-    setExchangeSwitches((prev) => {
-      const next = { ...prev, [exchangeId]: nextValue };
-      try {
-        localStorage.setItem('smartexit_exchange_switches', JSON.stringify(next));
-      } catch {}
-      return next;
-    });
-    void (async () => {
-      try {
-        const csrfToken = await getCsrfToken();
-        const res = await fetch('/api/exchanges', {
-          method: 'PUT',
-          headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken },
-          body: JSON.stringify({ exchange: exchangeId, environment: targetEnv, enabled: nextValue }),
-        });
-        if (!res.ok) {
-          throw new Error('Could not persist exchange execution switch.');
-        }
-        setError('');
-      } catch (err) {
-        setError(err instanceof Error ? err.message : 'Could not update exchange switch.');
+  async function toggleExchangeSwitch(exchange: string, environment: 'DEMO' | 'TESTNET', currentValue: boolean | undefined) {
+    if (pendingSwitch || currentValue === undefined) return;
+    setPendingSwitch(exchange);
+    try {
+      const csrfToken = await getCsrfToken();
+      const response = await fetch('/api/exchanges', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken },
+        body: JSON.stringify({ exchange, environment, enabled: !currentValue }),
+      });
+      const body = (await response.json()) as { data?: { autoTradeEnabled?: boolean }; error?: string };
+      const saved = body.data?.autoTradeEnabled;
+      if (!response.ok || typeof saved !== 'boolean') {
+        throw new Error(body.error ?? 'Could not save the automatic execution preference.');
       }
-    })();
-  };
+      setExchanges((providers) => providers.map((provider) => provider.exchange !== exchange ? provider : {
+        ...provider,
+        environments: provider.environments.map((option) => option.environment !== environment ? option : {
+          ...option,
+          userAutoTradeEnabled: saved,
+        }),
+      }));
+      setError('');
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : 'Could not save the automatic execution preference.');
+    } finally {
+      setPendingSwitch(null);
+    }
+  }
 
   useEffect(() => {
-    let active = true;
-    const syncSwitchesFromProviders = (providerList: ExchangeOption[]) => {
-      setExchangeSwitches((prev) => {
-        const merged = { ...prev };
-        for (const p of providerList) {
-          const demoEnv = p.environments.find((e) => e.environment === 'DEMO' || e.environment === 'TESTNET');
-          if (demoEnv && typeof demoEnv.userAutoTradeEnabled === 'boolean') {
-            merged[p.exchange] = demoEnv.userAutoTradeEnabled;
-          }
-        }
-        return merged;
-      });
-    };
-    void fetch('/api/exchanges', { cache: 'no-store' })
-      .then(async (response) => {
+    const controller = new AbortController();
+    async function readProviders() {
+      try {
+        const response = await fetch('/api/exchanges', { cache: 'no-store', signal: controller.signal });
         const body = (await response.json()) as { data?: ExchangeOption[]; error?: string };
-        const providerList = body.data;
-        if (!response.ok || !providerList) throw new Error(body.error ?? 'Exchange list unavailable.');
-        if (active) {
-          setExchanges(providerList);
-          syncSwitchesFromProviders(providerList);
-          setSelected((previous) =>
-            providerList.some((item) => item.exchange === previous) ? previous : 'BINANCE',
-          );
+        if (!response.ok || !body.data) throw new Error(body.error ?? 'Exchange list unavailable.');
+        if (!controller.signal.aborted) {
+          setExchanges(body.data);
           setError('');
         }
-      })
-      .catch((reason: unknown) => {
-        if (active) setError(reason instanceof Error ? reason.message : 'Exchange list unavailable.');
-      });
-    const handleCredentialSync = () => {
-      void fetch('/api/exchanges', { cache: 'no-store' })
-        .then(async (response) => {
-          const body = (await response.json()) as { data?: ExchangeOption[] };
-          if (body.data) {
-            setExchanges(body.data);
-            syncSwitchesFromProviders(body.data);
-          }
-        })
-        .catch(() => {});
-    };
-    if (typeof window !== 'undefined') {
-      window.addEventListener('smartexit-exchange-credential-synced', handleCredentialSync);
-    }
-    return () => {
-      active = false;
-      if (typeof window !== 'undefined') {
-        window.removeEventListener('smartexit-exchange-credential-synced', handleCredentialSync);
+      } catch (reason) {
+        if (!controller.signal.aborted) {
+          setExchanges([]);
+          setError(reason instanceof Error ? reason.message : 'Exchange list unavailable.');
+        }
       }
+    }
+    const handleCredentialSync = () => { void readProviders(); };
+    handleCredentialSync();
+    window.addEventListener('smartexit-exchange-credential-synced', handleCredentialSync);
+    return () => {
+      controller.abort();
+      window.removeEventListener('smartexit-exchange-credential-synced', handleCredentialSync);
     };
   }, []);
 
-  const refreshExchanges = useCallback(() => {
-    void fetch('/api/exchanges', { cache: 'no-store' })
-      .then(async (response) => {
-        const body = (await response.json()) as { data?: ExchangeOption[] };
-        if (body.data) setExchanges(body.data);
-      })
-      .catch(() => {});
-  }, []);
-
-  const chosen = exchanges.find((exchange) => exchange.exchange === selected);
-  const demo = chosen?.environments.find(
-    (environment) => environment.environment === 'DEMO' || environment.environment === 'TESTNET',
-  );
+  const environments = new Map(exchanges.map((exchange) => [exchange.exchange, sandboxEnvironment(exchange)] as const));
+  const chosen = sandboxProviders.find((exchange) => exchange.id === selected)!;
 
   return (
     <section className="stack">
@@ -496,7 +391,7 @@ export function ExchangeConnections() {
             </span>
           </div>
           <small className="muted" style={{ fontSize: 12 }}>
-            Execute directly on remote exchange Demo/Testnet APIs across 5 connected providers. Zero internal simulation.
+            Manage sandbox credentials and verify account access on supported providers.
           </small>
         </div>
 
@@ -540,24 +435,16 @@ export function ExchangeConnections() {
       >
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 10, marginBottom: 14 }}>
           <div>
-            <strong style={{ fontSize: 14, display: 'block' }}>Multi-Exchange Execution Switches</strong>
+            <strong style={{ fontSize: 14, display: 'block' }}>Automatic Execution Preferences</strong>
             <small className="muted" style={{ fontSize: 12 }}>
-              Enable or disable parallel execution independently for each exchange. Qualified signals fan out to ALL active destinations.
+              These saved preferences apply only when the provider and automatic execution are enabled by the platform.
             </small>
-          </div>
-          <div className="mono" style={{ fontSize: 11, background: 'var(--surface)', padding: '4px 10px', borderRadius: 6, border: '1px solid var(--surface-border)' }}>
-            Active: <strong style={{ color: 'var(--accent)' }}>{Object.values(exchangeSwitches).filter(Boolean).length} / 5</strong> · Aggregate Risk Cap: <strong>5.0%</strong>
           </div>
         </div>
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 10 }}>
-          {[
-            { id: 'BINANCE', name: 'Binance Futures Demo', env: 'DEMO' },
-            { id: 'BYBIT', name: 'Bybit Demo', env: 'DEMO' },
-            { id: 'OKX', name: 'OKX Demo', env: 'DEMO' },
-            { id: 'BITGET', name: 'Bitget Demo', env: 'DEMO' },
-            { id: 'GATE', name: 'Gate.io Futures', env: 'TESTNET' },
-          ].map((item) => {
-            const isEnabled = Boolean(exchangeSwitches[item.id]);
+          {sandboxProviders.map((item) => {
+            const preference = environments.get(item.id)?.userAutoTradeEnabled;
+            const isEnabled = preference === true;
             return (
               <div
                 key={item.id}
@@ -574,11 +461,14 @@ export function ExchangeConnections() {
               >
                 <div>
                   <strong style={{ fontSize: 12, display: 'block' }}>{item.id}</strong>
-                  <small className="muted" style={{ fontSize: 10 }}>{item.env}</small>
+                  <small className="muted" style={{ fontSize: 10 }}>{item.environment}</small>
                 </div>
                 <button
                   type="button"
-                  onClick={() => toggleExchangeSwitch(item.id)}
+                  aria-label={`${item.name} automatic execution preference`}
+                  aria-pressed={preference}
+                  disabled={pendingSwitch !== null || preference === undefined}
+                  onClick={() => void toggleExchangeSwitch(item.id, item.environment, preference)}
                   style={{
                     padding: '4px 8px',
                     fontSize: 10,
@@ -591,7 +481,7 @@ export function ExchangeConnections() {
                     color: isEnabled ? '#fff' : 'var(--text-muted)',
                   }}
                 >
-                  {isEnabled ? '● ON' : '○ OFF'}
+                  {pendingSwitch === item.id ? 'Saving…' : preference === undefined ? 'Unavailable' : isEnabled ? 'ON' : 'OFF'}
                 </button>
               </div>
             );
@@ -664,28 +554,16 @@ export function ExchangeConnections() {
       {activeMode !== 'live' && (
         <>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 14 }}>
-            {exchanges.map((exchange) => {
-              const isSelected = exchange.exchange === selected;
-              const isEnabled = Boolean(exchangeSwitches[exchange.exchange]);
-              const envOption = exchange.environments.find(
-                (e) => e.environment === (exchange.exchange === 'GATE' ? 'TESTNET' : 'DEMO'),
-              );
-              const isConfigured = Boolean(
-                (envOption as { configured?: boolean })?.configured ||
-                ((envOption as { configuredAccounts?: number })?.configuredAccounts &&
-                (envOption as { configuredAccounts?: number }).configuredAccounts! > 0),
-              );
-              const cardBadge = getExchangeBadge({
-                exchange: exchange.exchange,
-                environment: exchange.exchange === 'GATE' ? 'TESTNET' : 'DEMO',
-                configured: isConfigured,
-                lastVerifiedAt: envOption?.lastVerifiedAt ?? null,
-                switchEnabled: isEnabled,
-                adapterComplete: exchange.exchange === 'BINANCE' || exchange.exchange === 'BYBIT',
-              });
+            {sandboxProviders.map((exchange) => {
+              const isSelected = exchange.id === selected;
+              const envOption = environments.get(exchange.id);
+              const cardBadge = getExchangeBadge(envOption);
+              const tradeStatus = !envOption ? 'Provider status unavailable' :
+                envOption.available && envOption.customerTradingReady ? 'Provider enabled for customer trading' :
+                  'Customer trading unavailable';
               return (
                 <button
-                  key={exchange.exchange}
+                  key={exchange.id}
                   type="button"
                   className="card"
                   style={{
@@ -700,11 +578,11 @@ export function ExchangeConnections() {
                     gap: 6,
                     color: 'inherit',
                   }}
-                  onClick={() => setSelected(exchange.exchange)}
+                  onClick={() => setSelected(exchange.id)}
                 >
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                     <span className="mono" style={{ color: isSelected ? 'var(--accent)' : 'var(--text-muted)' }}>
-                      {exchange.exchange}
+                      {exchange.id}
                     </span>
                     <span
                       style={{
@@ -721,7 +599,7 @@ export function ExchangeConnections() {
                     </span>
                   </div>
                   <strong style={{ fontSize: 16 }}>{exchange.name}</strong>
-                  <small className="muted">USDⓈ-M Perpetual Futures</small>
+                  <small className="muted">{exchange.environment} · {tradeStatus}</small>
                 </button>
               );
             })}
@@ -731,15 +609,14 @@ export function ExchangeConnections() {
 
           {/* Selected Exchange Form */}
           {selected === 'BINANCE' ? (
-            <BinanceForm onCredentialChange={refreshExchanges} />
+            <BinanceForm />
           ) : (
             <GenericExchangeCredentials
+              key={selected}
               exchange={selected}
-              name={chosen?.name ?? selected}
-              environment={(demo?.environment as 'DEMO' | 'TESTNET') ?? (selected === 'GATE' ? 'TESTNET' : 'DEMO')}
+              name={chosen.name}
+              environment={chosen.environment}
               requiresPassphrase={selected === 'OKX' || selected === 'BITGET'}
-              switchEnabled={Boolean(exchangeSwitches[selected])}
-              onCredentialChange={refreshExchanges}
             />
           )}
         </>

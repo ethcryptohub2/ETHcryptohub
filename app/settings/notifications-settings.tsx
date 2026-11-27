@@ -49,6 +49,11 @@ const defaultPreferences: Preferences = {
   do_not_disturb: false,
 };
 
+export function notificationPreferencePayload(preferences: Preferences) {
+  const fields = Object.keys(defaultPreferences) as Array<keyof Preferences>;
+  return Object.fromEntries(fields.map((field) => [field, preferences[field]]));
+}
+
 async function csrfToken() {
   const response = await fetch('/api/csrf', { cache: 'no-store' });
   const body = await response.json() as { data?: { csrfToken: string } };
@@ -103,7 +108,7 @@ export function NotificationsSettings() {
       const response = await fetch('/api/notifications/preferences', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrf },
-        body: JSON.stringify(nextPreferences),
+        body: JSON.stringify(notificationPreferencePayload(nextPreferences)),
       });
       const body = await response.json() as { data?: Preferences; error?: string };
       if (!response.ok || !body.data) throw new Error(body.error ?? 'Notification preferences could not be saved.');

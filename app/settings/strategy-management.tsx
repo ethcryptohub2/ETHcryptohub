@@ -14,6 +14,10 @@ type Profile = {
   risk_percentage: string;
   order_size_mode: 'FIXED' | 'RISK_BASED';
   fixed_notional_usdt: string;
+  max_notional_usdt?: string;
+  sl_mode?: 'BASELINE' | 'ATR' | 'MARKET_STRUCTURE' | 'ADAPTIVE_SMART';
+  adaptive_protection_enabled?: boolean;
+  trailing_protection_enabled?: boolean;
   leverage: number;
   max_open_positions: number | null;
   max_daily_loss_percent: string | null;
@@ -107,6 +111,10 @@ export function StrategyManagement() {
         risk_percentage: profile.risk_percentage,
         order_size_mode: profile.order_size_mode,
         fixed_notional_usdt: profile.fixed_notional_usdt,
+        max_notional_usdt: profile.max_notional_usdt ?? '100.00',
+        sl_mode: profile.sl_mode ?? 'ADAPTIVE_SMART',
+        adaptive_protection_enabled: profile.adaptive_protection_enabled ?? true,
+        trailing_protection_enabled: profile.trailing_protection_enabled ?? true,
         leverage: profile.leverage,
         max_open_positions: profile.max_open_positions,
         max_daily_loss_percent: profile.max_daily_loss_percent,
@@ -218,13 +226,27 @@ export function StrategyManagement() {
             <label>Maximum daily loss (% of account equity)
               <input inputMode="decimal" value={profile.max_daily_loss_percent ?? ''} onChange={(event) => update(profile.strategy, { max_daily_loss_percent: event.target.value || null })} />
             </label>
+            <label>Protection SL/TP Mode
+              <select value={profile.sl_mode ?? 'ADAPTIVE_SMART'} onChange={(event) => update(profile.strategy, { sl_mode: event.target.value as Profile['sl_mode'] })}>
+                <option value="ADAPTIVE_SMART">Adaptive Smart (Structure + ATR)</option>
+                <option value="MARKET_STRUCTURE">Market Structure (Swing High/Low)</option>
+                <option value="ATR">ATR Volatility Band</option>
+                <option value="BASELINE">Signal Baseline</option>
+              </select>
+            </label>
+            <label>Max Position Notional Cap (USDT)
+              <input inputMode="decimal" value={profile.max_notional_usdt ?? '100.00'} onChange={(event) => update(profile.strategy, { max_notional_usdt: event.target.value })} />
+            </label>
           </div>
 
           <div className="strategy-actions">
+            <label className="notification-toggle"><input type="checkbox" checked={profile.adaptive_protection_enabled ?? true} onChange={(event) => update(profile.strategy, { adaptive_protection_enabled: event.target.checked })} /> Adaptive Smart SL/TP</label>
+            <label className="notification-toggle"><input type="checkbox" checked={profile.trailing_protection_enabled ?? true} onChange={(event) => update(profile.strategy, { trailing_protection_enabled: event.target.checked })} /> Trailing SL</label>
             <label className="notification-toggle"><input type="checkbox" checked={profile.auto_execution_enabled} disabled={!profile.enabled || profile.execution_mode !== 'AUTOMATIC' || profile.environment === 'LIVE' || profile.emergency_stop_enabled} onChange={(event) => update(profile.strategy, { auto_execution_enabled: event.target.checked })} /> Automatic execution</label>
             <label className="notification-toggle"><input type="checkbox" checked={profile.emergency_stop_enabled} onChange={(event) => update(profile.strategy, { emergency_stop_enabled: event.target.checked, auto_execution_enabled: event.target.checked ? false : profile.auto_execution_enabled })} /> Emergency stop</label>
             <label className="notification-toggle"><input type="checkbox" checked={profile.enabled} disabled={profile.emergency_stop_enabled || profile.environment === 'LIVE' || (profile.exchange !== 'BINANCE' && !profile.enabled)} onChange={(event) => update(profile.strategy, { enabled: event.target.checked, auto_execution_enabled: event.target.checked ? profile.auto_execution_enabled : false })} /> Strategy enabled</label>
             <button type="submit" disabled={busy}>{busy ? 'Saving…' : 'Save strategy'}</button>
+            <button type="button" className="secondary" disabled={busy} onClick={() => update(profile.strategy, { sl_mode: 'ADAPTIVE_SMART', adaptive_protection_enabled: true, trailing_protection_enabled: true, max_notional_usdt: '100.00', leverage: 1, risk_percentage: '0.5' })}>Reset Defaults</button>
           </div>
           <p className="muted strategy-note">Connection status: {profile.exchange === 'BINANCE' ? 'subject to Binance Demo provider and deployment verification gates' : `${exchangeNames[profile.exchange]} customer adapter not ready`}. Live order execution is locked. Execution remains locked pending approved remote Demo lifecycle verification and staging identity checks.</p>
         </form>;
