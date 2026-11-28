@@ -417,6 +417,7 @@ export function PanelNavigation() {
       icon: 'system',
       items: [
         { href: '/admin', label: 'Command Center', icon: 'overview' },
+        { href: '/admin/trade-performance', label: 'Trade Performance Report', icon: 'performance' },
         { href: '/admin/exchanges', label: 'Exchange Control', icon: 'exchange' },
         { href: '/admin/exchanges/testing', label: 'Demo Testing Lab', icon: 'exchange' },
         { href: '/admin/intelligence', label: 'Feed & Exchange Readiness', icon: 'activity' },
