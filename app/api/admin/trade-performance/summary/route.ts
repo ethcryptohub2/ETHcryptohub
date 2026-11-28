@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { AuthError, requireAdmin } from '@/lib/auth';
 import { getTradePerformanceAnalytics, DateFilterType, PerformanceFilterParams } from '@/lib/trade-performance-analytics';
-import { getSyncCheckpoint, getUnmatchedExchangeTrades } from '@/lib/trade-performance-reconciliation';
+import { getSyncCheckpoint, getUnmatchedExchangeTrades, reconcileBinanceDemoReporting } from '@/lib/trade-performance-reconciliation';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -30,6 +30,15 @@ export async function GET(request: NextRequest) {
       getSyncCheckpoint(),
       getUnmatchedExchangeTrades(30),
     ]);
+
+    // Background incremental exchange sync if checkpoint is stale or older than 60 seconds
+    const lastSyncMs = syncCheckpoint.syncedAt ? new Date(syncCheckpoint.syncedAt).getTime() : 0;
+    const isStale = !lastSyncMs || (Date.now() - lastSyncMs) > 60_000;
+    if (isStale) {
+      reconcileBinanceDemoReporting({ force: false }).catch((err) => {
+        console.warn('[TradePerformance] Background incremental reconciliation notice:', err instanceof Error ? err.message : err);
+      });
+    }
 
     return NextResponse.json(
       {

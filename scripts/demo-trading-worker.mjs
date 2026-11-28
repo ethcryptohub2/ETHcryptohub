@@ -280,6 +280,16 @@ export async function executeBusinessTick(environment, options = {}) {
       }
     }
 
+    // Reconcile Trade Performance reporting data directly from Binance API
+    try {
+      const reportingMod = await import('../lib/trade-performance-reconciliation.ts');
+      if (typeof reportingMod.reconcileBinanceDemoReporting === 'function') {
+        await reportingMod.reconcileBinanceDemoReporting({ force: false });
+      }
+    } catch (recErr) {
+      console.warn('[Worker] Trade performance reporting reconciliation notice:', recErr instanceof Error ? recErr.message : recErr);
+    }
+
     const durationMs = typeof scanResult.durationMs === 'number' ? scanResult.durationMs : Date.now() - startedMs;
     return {
       pipelineStatus: safeMode ? 'SAFE_MODE_EXECUTED' : 'EXECUTED_DEMO',

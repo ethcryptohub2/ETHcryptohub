@@ -282,10 +282,9 @@ export function TradePerformanceView({ adminEmail }: { adminEmail: string }) {
   const handleReconcile = async (fullBackfill = false) => {
     setReconciling(true);
     try {
-      const csrfToken = document.cookie
-        .split('; ')
-        .find((row) => row.startsWith('csrf='))
-        ?.split('=')[1] || '';
+      const csrfRes = await fetch('/api/csrf', { cache: 'no-store' });
+      const csrfData = (await csrfRes.json()) as { data?: { csrfToken: string } };
+      const csrfToken = csrfData.data?.csrfToken || '';
 
       const res = await fetch('/api/admin/trade-performance/reconcile', {
         method: 'POST',
