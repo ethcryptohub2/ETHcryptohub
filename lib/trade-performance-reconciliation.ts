@@ -129,6 +129,20 @@ export async function getSyncCheckpoint(): Promise<{
   error?: string;
   updatedAt: string | null;
 }> {
+  let dbReconciled = 0;
+  let dbOpenPositions = 0;
+  try {
+    const dbCounts = await query<{ reconciled: string; open_pos: string }>(
+      `SELECT 
+         COUNT(*) FILTER (WHERE reconciliation_status = 'RECONCILED')::text as reconciled,
+         COUNT(*) FILTER (WHERE execution_status IN ('ENTRY_FILLED', 'PROTECTED', 'PROTECTION_FAILED'))::text as open_pos
+       FROM public.trade_executions
+      WHERE exchange = 'BINANCE' AND environment = 'DEMO'`,
+    );
+    dbReconciled = Number(dbCounts.rows[0]?.reconciled || 0);
+    dbOpenPositions = Number(dbCounts.rows[0]?.open_pos || 0);
+  } catch {}
+
   try {
     const res = await query<{
       value_json: {
@@ -143,12 +157,13 @@ export async function getSyncCheckpoint(): Promise<{
       `SELECT value_json, updated_at FROM public.app_settings WHERE key = 'binance_demo_trade_performance_sync'`,
     );
     if (res.rows[0]) {
+      const v = res.rows[0].value_json;
       return {
-        syncedAt: res.rows[0].value_json?.syncedAt ?? null,
-        status: res.rows[0].value_json?.status ?? 'OK',
-        reconciledCount: res.rows[0].value_json?.reconciledCount ?? 0,
-        openPositionsCount: res.rows[0].value_json?.openPositionsCount ?? 0,
-        error: res.rows[0].value_json?.error,
+        syncedAt: v?.syncedAt ?? null,
+        status: v?.status ?? 'OK',
+        reconciledCount: (v?.reconciledCount && v.reconciledCount > 0) ? v.reconciledCount : dbReconciled,
+        openPositionsCount: (v?.openPositionsCount !== undefined && v.openPositionsCount > 0) ? v.openPositionsCount : dbOpenPositions,
+        error: v?.error,
         updatedAt: res.rows[0].updated_at,
       };
     }
@@ -156,8 +171,8 @@ export async function getSyncCheckpoint(): Promise<{
   return {
     syncedAt: null,
     status: 'OK',
-    reconciledCount: 0,
-    openPositionsCount: 0,
+    reconciledCount: dbReconciled,
+    openPositionsCount: dbOpenPositions,
     updatedAt: null,
   };
 }
@@ -640,19 +655,23 @@ export async function reconcileBinanceDemoReporting(options: {
 
   // Update synchronization checkpoint
   const isStale = !anyUserSucceeded;
+  const prevCheckpoint = await getSyncCheckpoint();
+  const effectiveReconciled = anyUserSucceeded ? totalReconciled : prevCheckpoint.reconciledCount;
+  const effectiveOpenPositions = anyUserSucceeded ? totalOpenPositions : prevCheckpoint.openPositionsCount;
+
   await saveSyncCheckpoint({
-    syncedAt: anyUserSucceeded ? startedAt : (await getSyncCheckpoint()).syncedAt ?? startedAt,
+    syncedAt: anyUserSucceeded ? startedAt : (prevCheckpoint.syncedAt ?? startedAt),
     status: isStale ? 'STALE' : 'OK',
-    reconciledCount: totalReconciled,
-    openPositionsCount: totalOpenPositions,
+    reconciledCount: effectiveReconciled,
+    openPositionsCount: effectiveOpenPositions,
     error: syncError,
   });
 
   return {
     ok: anyUserSucceeded,
-    syncedAt: startedAt,
-    reconciledCount: totalReconciled,
-    openPositionsCount: totalOpenPositions,
+    syncedAt: anyUserSucceeded ? startedAt : (prevCheckpoint.syncedAt ?? startedAt),
+    reconciledCount: effectiveReconciled,
+    openPositionsCount: effectiveOpenPositions,
     unmatchedCount: totalUnmatched,
     isStale,
     staleReason: isStale ? (syncError ?? 'Exchange communication failure') : undefined,

@@ -275,39 +275,39 @@ export async function getTradePerformanceAnalytics(
 
   // Build SQL filters
   const conditions: string[] = [
-    `exchange = 'BINANCE'`,
-    `environment = 'DEMO'`,
+    `te.exchange = 'BINANCE'`,
+    `te.environment = 'DEMO'`,
     // Exclude rejected, failed entry orders, unfilled paper signals
-    `execution_status IN ('ENTRY_FILLED', 'PROTECTED', 'PROTECTION_FAILED', 'CLOSED')`,
+    `te.execution_status IN ('ENTRY_FILLED', 'PROTECTED', 'PROTECTION_FAILED', 'CLOSED')`,
   ];
   const queryParams: (string | number | boolean | null)[] = [];
   let paramIdx = 1;
 
   if (params.customerId && params.customerId !== 'ALL') {
-    conditions.push(`user_id = $${paramIdx++}`);
+    conditions.push(`te.user_id = $${paramIdx++}`);
     queryParams.push(Number(params.customerId));
   }
 
   if (params.strategy && params.strategy !== 'ALL') {
-    conditions.push(`strategy = $${paramIdx++}`);
+    conditions.push(`te.strategy = $${paramIdx++}`);
     queryParams.push(params.strategy);
   }
 
   if (params.symbol && params.symbol !== 'ALL') {
-    conditions.push(`symbol = $${paramIdx++}`);
+    conditions.push(`te.symbol = $${paramIdx++}`);
     queryParams.push(params.symbol.trim().toUpperCase());
   }
 
   if (params.direction && params.direction !== 'ALL') {
-    conditions.push(`side = $${paramIdx++}`);
+    conditions.push(`te.side = $${paramIdx++}`);
     queryParams.push(params.direction);
   }
 
   if (params.status && params.status !== 'ALL') {
     if (params.status === 'OPEN') {
-      conditions.push(`execution_status IN ('ENTRY_FILLED', 'PROTECTED', 'PROTECTION_FAILED')`);
+      conditions.push(`te.execution_status IN ('ENTRY_FILLED', 'PROTECTED', 'PROTECTION_FAILED')`);
     } else if (params.status === 'CLOSED') {
-      conditions.push(`execution_status = 'CLOSED'`);
+      conditions.push(`te.execution_status = 'CLOSED'`);
     }
   }
 
@@ -317,14 +317,14 @@ export async function getTradePerformanceAnalytics(
   // 'both': trades either opened or closed during period
   if (dateRange.startUtc && dateRange.endUtc) {
     if (periodMode === 'opened') {
-      conditions.push(`created_at >= $${paramIdx++}::TIMESTAMPTZ AND created_at <= $${paramIdx++}::TIMESTAMPTZ`);
+      conditions.push(`te.created_at >= $${paramIdx++}::TIMESTAMPTZ AND te.created_at <= $${paramIdx++}::TIMESTAMPTZ`);
       queryParams.push(dateRange.startUtc, dateRange.endUtc);
     } else if (periodMode === 'closed') {
-      conditions.push(`closed_at IS NOT NULL AND closed_at >= $${paramIdx++}::TIMESTAMPTZ AND closed_at <= $${paramIdx++}::TIMESTAMPTZ`);
+      conditions.push(`te.closed_at IS NOT NULL AND te.closed_at >= $${paramIdx++}::TIMESTAMPTZ AND te.closed_at <= $${paramIdx++}::TIMESTAMPTZ`);
       queryParams.push(dateRange.startUtc, dateRange.endUtc);
     } else {
       conditions.push(
-        `((created_at >= $${paramIdx}::TIMESTAMPTZ AND created_at <= $${paramIdx + 1}::TIMESTAMPTZ) OR (closed_at IS NOT NULL AND closed_at >= $${paramIdx}::TIMESTAMPTZ AND closed_at <= $${paramIdx + 1}::TIMESTAMPTZ))`,
+        `((te.created_at >= $${paramIdx}::TIMESTAMPTZ AND te.created_at <= $${paramIdx + 1}::TIMESTAMPTZ) OR (te.closed_at IS NOT NULL AND te.closed_at >= $${paramIdx}::TIMESTAMPTZ AND te.closed_at <= $${paramIdx + 1}::TIMESTAMPTZ))`,
       );
       queryParams.push(dateRange.startUtc, dateRange.endUtc);
       paramIdx += 2;

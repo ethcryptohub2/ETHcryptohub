@@ -171,12 +171,14 @@ interface UnmatchedTrade {
 }
 
 interface SyncCheckpoint {
-  lastSyncAt: string | null;
+  syncedAt?: string | null;
+  lastSyncAt?: string | null;
   reconciledCount: number;
   openPositionsCount: number;
   unmatchedCount: number;
   isStale: boolean;
   staleReason?: string;
+  error?: string;
   lastError?: string;
 }
 
@@ -543,8 +545,46 @@ export function TradePerformanceView({ adminEmail }: { adminEmail: string }) {
     return syncCheckpoint?.isStale === true;
   }, [syncCheckpoint]);
 
+  const lastSyncTime = syncCheckpoint?.syncedAt || syncCheckpoint?.lastSyncAt;
+
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 20, width: '100%', overflowX: 'hidden' }}>
+      <style>{`
+        @media (max-width: 640px) {
+          .perf-summary-grid {
+            grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+            gap: 8px !important;
+          }
+          .perf-summary-grid .card {
+            padding: 10px 12px !important;
+          }
+          .perf-summary-grid .card span {
+            font-size: 10px !important;
+          }
+          .perf-summary-grid .card div {
+            font-size: 16px !important;
+            margin-top: 2px !important;
+          }
+          .perf-summary-grid .card small {
+            font-size: 9px !important;
+          }
+        }
+        @media print {
+          header.topbar, .perf-no-print, button {
+            display: none !important;
+          }
+          main.shell {
+            padding: 0 !important;
+            max-width: 100% !important;
+          }
+          .card {
+            box-shadow: none !important;
+            border: 1px solid #ccc !important;
+            break-inside: avoid;
+          }
+        }
+      `}</style>
+
       {/* Hero Section */}
       <section className="hero" style={{ paddingBottom: 16 }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: 12 }}>
@@ -567,7 +607,7 @@ export function TradePerformanceView({ adminEmail }: { adminEmail: string }) {
             </p>
           </div>
 
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <div className="perf-no-print" style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
             <button
               type="button"
               className="button-secondary"
@@ -575,6 +615,14 @@ export function TradePerformanceView({ adminEmail }: { adminEmail: string }) {
               style={{ fontSize: 12, padding: '8px 14px' }}
             >
               📊 Export CSV
+            </button>
+            <button
+              type="button"
+              className="button-secondary"
+              onClick={() => window.print()}
+              style={{ fontSize: 12, padding: '8px 14px' }}
+            >
+              📄 Download PDF
             </button>
             <button
               type="button"
@@ -614,7 +662,7 @@ export function TradePerformanceView({ adminEmail }: { adminEmail: string }) {
           gap: 10,
           fontSize: 12,
         }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
             <span style={{
               width: 8,
               height: 8,
@@ -624,17 +672,22 @@ export function TradePerformanceView({ adminEmail }: { adminEmail: string }) {
             }} />
             <span>
               {isStale ? (
-                <strong style={{ color: '#ef4444' }}>Stale Data Warning: </strong>
+                <strong style={{ color: '#ef4444' }}>Sync Notice: </strong>
               ) : (
                 <strong style={{ color: 'var(--text-success)' }}>Exchange Sync Active: </strong>
               )}
-              {syncCheckpoint?.lastSyncAt
-                ? `Last synchronized with Binance Demo at ${fmtDate(syncCheckpoint.lastSyncAt)}`
+              {lastSyncTime
+                ? `Last synchronized with Binance Demo at ${fmtDate(lastSyncTime)}`
                 : 'Initial sync pending…'}
             </span>
             {syncCheckpoint?.reconciledCount !== undefined && (
               <span className="mono" style={{ color: 'var(--text-muted)' }}>
                 ({syncCheckpoint.reconciledCount} executions reconciled · {syncCheckpoint.openPositionsCount} positions open)
+              </span>
+            )}
+            {syncCheckpoint?.error && (
+              <span style={{ color: '#f87171', fontSize: 11 }}>
+                [{syncCheckpoint.error}]
               </span>
             )}
           </div>
@@ -927,9 +980,9 @@ export function TradePerformanceView({ adminEmail }: { adminEmail: string }) {
         {/* 4 Groups of Summary Cards */}
         <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
           {/* Group 1: Financial Bottom Line & PnL */}
-          <div style={{
+          <div className="perf-summary-grid" style={{
             display: 'grid',
-            gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))',
+            gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))',
             gap: 12,
           }}>
             {/* Card 1: Net Realized PnL */}
@@ -1007,9 +1060,9 @@ export function TradePerformanceView({ adminEmail }: { adminEmail: string }) {
           </div>
 
           {/* Group 2: Volume, Win Rate & Profit Factor */}
-          <div style={{
+          <div className="perf-summary-grid" style={{
             display: 'grid',
-            gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))',
+            gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))',
             gap: 12,
           }}>
             {/* Card 7: Total Executed Trades */}
@@ -1073,9 +1126,9 @@ export function TradePerformanceView({ adminEmail }: { adminEmail: string }) {
           </div>
 
           {/* Group 3: Win / Loss / Breakeven Counts & Averages */}
-          <div style={{
+          <div className="perf-summary-grid" style={{
             display: 'grid',
-            gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))',
+            gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))',
             gap: 12,
           }}>
             {/* Card 13: Winning Trades */}
@@ -1125,9 +1178,9 @@ export function TradePerformanceView({ adminEmail }: { adminEmail: string }) {
           </div>
 
           {/* Group 4: Milestone Hits & Exit Types */}
-          <div style={{
+          <div className="perf-summary-grid" style={{
             display: 'grid',
-            gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))',
+            gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))',
             gap: 12,
           }}>
             {/* Card 18: TP1 Hit Count */}

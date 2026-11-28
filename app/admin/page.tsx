@@ -29,6 +29,9 @@ export default async function AdminPage() {
           Platform supervision, exchange gate controls, quantitative scanner management, user authorization, and system diagnostics.
         </p>
         <div className="links">
+          <Link href="/admin/trade-performance" className="button" style={{ background: '#10b981', color: '#fff', border: '1px solid #059669', fontWeight: 600 }}>
+            📈 Trade Performance Report
+          </Link>
           <Link href="/admin/exchanges" className="button">
             Exchange Control
           </Link>
@@ -45,6 +48,9 @@ export default async function AdminPage() {
       <section className="card" style={{ marginBottom: 20, padding: '14px 18px' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
           <span className="mono" style={{ color: 'var(--text-muted)', marginRight: 6 }}>SECTIONS:</span>
+          <Link href="/admin/trade-performance" className="button-secondary" style={{ padding: '6px 12px', fontSize: 12, border: '1px solid #10b981', color: '#10b981', fontWeight: 600 }}>
+            📈 Trade Performance Report
+          </Link>
           <a href="#system-diagnostics" className="button-secondary" style={{ padding: '6px 12px', fontSize: 12 }}>
             Diagnostics
           </a>
