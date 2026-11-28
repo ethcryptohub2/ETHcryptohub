@@ -14,7 +14,7 @@ services:
     branch: functional-staging
     buildCommand: npm ci --include=dev && npm run build
     startCommand: npm start
-    autoDeploy: false
+    autoDeploy: true
     healthCheckPath: /
     envVars:
       - key: NODE_ENV
